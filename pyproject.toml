@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cellstraightener"
+version = "0.1.0"
+description = "Denoising scRNA-seq in a smart and efficient way."
+readme = {file = "README.md", content-type = "text/markdown"}
+license = {file = "LICENSE"}
+authors = [
+    {name = "Joseph Rich", email = "josephrich98@gmail.com"}
+]
+maintainers = [
+    {name = "Joseph Rich", email = "josephrich98@gmail.com"}
+]
+requires-python = ">=3.9"
+keywords = ["bioinformatics", "single-cell", "scRNA-seq", "denoising", "data-analysis"]
+classifiers = [
+    "Environment :: Console",
+    "Framework :: Jupyter",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Utilities"
+]
+dependencies = [
+    "numpy",
+    "pandas",
+    "scipy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "black[jupyter]>=22.0.0",
+    "isort>=6.0.0",
+    "toml>=0.10.2",
+    "flake8>=7.0.0",
+    "bandit>=1.8.2",
+    "pympler>=1.1"
+]
+analysis = [
+    "nbval>=0.10.0",
+    "nbdime>=4.0.2",
+    "ipython>=8.0.0",
+]
+
+
+[project.urls]
+"Homepage" = "https://github.com/pachterlab/cellstraightener"
+
+[tool.setuptools.packages.find]
+include = ["cellstraightener*"]
+
+[tool.setuptools.package-data]
+cellstraightener = ["*.txt", "*.md", "*.csv"]  # Ensure additional files like data or docs are included
+
+[project.scripts]
+cellstraightener = "cellstraightener.main:main"  # This replaces the console_scripts entry
