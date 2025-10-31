@@ -3,37 +3,12 @@
 import numpy as np
 import pandas as pd
 import logging
+import anndata as ad
 import scipy.sparse as sp
 from scipy.stats import poisson, nbinom
-from .utils import setup_logger, determine_cutoff_umi_for_expected_cells
+from .utils import setup_logger, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
 
-def denoise_counts_celltype_ambient():
-    pass
-
-import numpy as np
-
-#!!! write
-valid_empty_droplet_methods = {"threshold"}
-def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
-    """
-    input: adata
-    output: adata with adata.obs: is_empty
-      - is_empty: boolean indicating whether each cell is an empty droplet or not. This is inferred using a simple heuristic: if the total counts for a cell are below a certain threshold (e.g., 100), it is considered an empty droplet. This threshold can be adjusted based on the dataset and expected cell types.
-    """
-    logger = setup_logger(verbose=verbose, quiet=quiet)
-    if method == "threshold":
-        if umi_cutoff is None:
-            if expected_cells is None:
-                raise ValueError("For method 'threshold', either umi_cutoff or expected_cells must be provided.")
-            umi_cutoff = determine_cutoff_umi_for_expected_cells(adata, expected_cells)
-        adata.obs["is_empty"] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
-    #!!! add more methods here
-    else:
-        raise ValueError(f"Invalid method {method!r} for inferring empty droplets. Valid methods are: {valid_empty_droplet_methods}")
-
-    return adata
-
-def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", verbose=0, quiet=False):
+def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
     """
     input: adata with adata.obs: is_empty (optional)
     output: adata with adata.obs: is_empty, and adata.var: ambient_fraction
@@ -42,10 +17,11 @@ def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", verbose
     """
     logger = setup_logger(verbose=verbose, quiet=quiet)
 
+    # adata = adata.copy()
     # Ensure we have is_empty
     if "is_empty" not in adata.obs:
         logger.info("Inferring empty droplets since 'is_empty' not found in adata.obs.")
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, verbose=verbose, quiet=quiet)
+        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
 
     is_empty = adata.obs["is_empty"].values
 
@@ -71,21 +47,7 @@ def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", verbose
     logger.info("Added 'ambient_fraction' to adata.var.")
     return adata
 
-#!!! write
-def infer_celltype(adata, empty_droplet_method="threshold", verbose=0, quiet=False):
-    """
-    input: adata with adata.obs: is_empty (optional)
-    output: adata with adata.obs: is_empty, celltype
-      - is_empty: boolean indicating whether each cell is an empty droplet or not. If not present, it will be inferred using infer_empty_droplets().
-      - celltype: string indicating the cell type of each cell.
-    """
-    logger = setup_logger(verbose=verbose, quiet=quiet)
-    if "is_empty" not in adata.obs.columns:
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, verbose=verbose, quiet=quiet)
-    adata["celltype"] = "1"
-    return adata
-
-def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", verbose=0, quiet=False):
+def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
     """
     input: adata with adata.obs: is_empty (optional), celltype
     output: adata with adata.obs: is_empty, celltype, and adata.uns: celltype_profile
@@ -97,10 +59,12 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
 
     if celltype_key not in adata.obs:
         raise KeyError(f"{celltype_key!r} not found in adata.obs")
+    
+    # adata = adata.copy()
 
     if "is_empty" not in adata.obs.columns:
         logger.info("Inferring empty droplets since 'is_empty' not found in adata.obs.")
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, verbose=verbose, quiet=quiet)
+        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
 
     # Extract matrix and group info
     X = adata.X
@@ -136,14 +100,14 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     return adata
 
 
-def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_iter=40, beta=0.3, eps=1e-9, empty_droplet_method="threshold", cell_ambient_fraction=0.01, verbose=0, quiet=False):
+def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_iter=40, beta=0.3, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, verbose=0, quiet=False):
     """
     EM on *real* cells only, with:
       - ambient fixed to the true ambient
       - empty-vs-real fixed to the true empties
     This is to test whether the p_k and alpha_i parts are behaving.
 
-    adata must have:
+    adata (an anndata object or path to h5ad file) must have:
     - adata.X
     - adata.obs:
       - celltype: cell type labels for each cell
@@ -158,13 +122,27 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_it
 
     """
     logger = setup_logger(verbose=verbose, quiet=quiet)
+
+    if isinstance(adata, str):
+        if adata.endswith(".h5ad"):
+            logger.info(f"Loading adata from {adata!r}")
+            adata = ad.read_h5ad(adata)
+        else:
+            raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file or an AnnData object.")
+    elif isinstance(adata, ad.AnnData):
+        pass
+        # adata = adata.copy()
+    else:
+        raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file or an AnnData object.")
     
     if "celltype" not in adata.obs.columns:
         raise KeyError("adata.obs must have column celltype.")
     
+    # adata = adata.copy()
+    
     if "is_empty" not in adata.obs.columns:
         logger.info("adata.obs does not have 'is_empty' column. Inferring empty droplets using infer_empty_droplets().")
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, verbose=verbose, quiet=quiet)
+        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
 
     if "ambient" not in adata.var.columns:
         adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method, verbose=verbose, quiet=quiet)

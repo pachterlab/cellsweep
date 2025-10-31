@@ -219,41 +219,79 @@ def plot_per_cell_correlation(adata1, adata2, title="Per-cell Expression Correla
     if not show:
         plt.close()
 
-def run_scanpy_preprocessing_and_clustering(adata):
-    adata = adata.copy()
+def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, max_mt_percentage=25, n_top_genes=2000):
+    # adata = adata.copy()
 
-    sc.pp.filter_cells(adata, min_genes=100)
-    sc.pp.filter_genes(adata, min_cells=3)
-    
-    adata.var["mt"] = adata.var_names.str.upper().startswith("MT-")
+    sc.pp.filter_cells(adata, min_genes=min_genes)
+    sc.pp.filter_genes(adata, min_cells=min_cells)
+
+    adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True)
-    adata = adata[adata.obs.pct_counts_mt < 5, :]
+    adata = adata[adata.obs.pct_counts_mt < max_mt_percentage, :]
 
     adata.layers["counts"] = adata.X.copy()
     sc.pp.normalize_total(adata)
     sc.pp.log1p(adata)
-    
-    sc.pp.highly_variable_genes(adata, n_top_genes=2000, batch_key="sample")
+
+    sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes)
     sc.tl.pca(adata)
     sc.pp.neighbors(adata)
     sc.tl.leiden(adata, flavor="igraph", n_iterations=2)
 
-def determine_cell_types(adata, method="celltypist", model_pkl=None):
+valid_empty_droplet_methods = {"threshold"}
+def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
+    """
+    input: adata
+    output: adata with adata.obs: is_empty
+      - is_empty: boolean indicating whether each cell is an empty droplet or not. This is inferred using a simple heuristic: if the total counts for a cell are below a certain threshold (e.g., 100), it is considered an empty droplet. This threshold can be adjusted based on the dataset and expected cell types.
+    """
+    logger = setup_logger(verbose=verbose, quiet=quiet)
+    # adata = adata.copy()
+    if method == "threshold":
+        if umi_cutoff is None:
+            if expected_cells is None:
+                raise ValueError("For method 'threshold', either umi_cutoff or expected_cells must be provided.")
+            umi_cutoff = determine_cutoff_umi_for_expected_cells(adata, expected_cells)
+        adata.obs["is_empty"] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
+    #!!! add more methods here
+    else:
+        raise ValueError(f"Invalid method {method!r} for inferring empty droplets. Valid methods are: {valid_empty_droplet_methods}")
+
+    return adata
+
+def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_column="is_empty", model_pkl=None, verbose=0, quiet=False):
     """
     Adds a 'celltype' column to adata.obs based on the specified method.
     """
-    adata = adata.copy()
+    logger = setup_logger(verbose=verbose, quiet=quiet)
+    # adata = adata.copy()
+    
+    # Identify real cells if present
+    if filter_empty and empty_column in adata.obs.columns:
+        real_mask = ~adata.obs[empty_column].astype(bool)
+        adata_real = adata[real_mask].copy()
+    else:
+        real_mask = np.ones(adata.n_obs, dtype=bool)
+        adata_real = adata
+
     if method == "celltypist":
         import celltypist
         if model_pkl is None:
             raise ValueError("model_pkl must be provided when method is 'celltypist'.")
         celltypist.models.download_models(force_update = False)
-        predictions = celltypist.annotate(adata, model=model_pkl, majority_voting=True)
+        predictions = celltypist.annotate(adata_real, model=model_pkl, majority_voting=True)
         pred_labels = predictions.predicted_labels[['majority_voting']]
-        pred_labels = pred_labels.reindex(adata.obs_names)  # reorder to match adata.obs index
-        adata.obs['celltype'] = pred_labels['majority_voting'].values
+        pred_labels = pred_labels.reindex(adata_real.obs_names)  # reorder to match adata_real.obs index
+        adata_real.obs['celltype'] = pred_labels['majority_voting'].values
     else:
         raise ValueError(f"Unknown method {method} for determining cell types.")
+    
+    if filter_empty and empty_column in adata.obs.columns:
+        adata.obs["celltype"] = np.nan
+        adata.obs.loc[real_mask, "celltype"] = pred_labels["majority_voting"].values
+    else:
+        adata = adata_real
+
     return adata
 
 def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, celltype_column_name="celltype", wompwomp_env="wompwomp_env", wompwomp_path="wompwomp"):

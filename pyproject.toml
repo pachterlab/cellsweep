@@ -51,7 +51,8 @@ analysis = [
     "anndata",
     "scanpy",
     "seaborn",
-    "matplotlib"
+    "matplotlib",
+    "celltypist",
 ]
 
 

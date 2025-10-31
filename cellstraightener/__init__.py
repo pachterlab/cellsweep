@@ -1,6 +1,5 @@
 """cellstraightener package initialization module."""
 
-from .poisson_nb import denoise_counts_poisson_nb
 from .celltype_ambient import denoise_count_matrix
 # from .utils import *  # only imports what is in __all__ in .utils/__init__.py
 
