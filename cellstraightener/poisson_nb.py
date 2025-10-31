@@ -6,7 +6,7 @@ from scipy.stats import poisson, nbinom
 import anndata as ad
 from .utils import setup_logger
 
-def denoise_counts_poisson_nb(C, empty_threshold: int = 10, eps: float = 0.5, max_iter: int = 100, C_out: str = None, verbose = 0, quiet = False) -> pd.DataFrame:
+def denoise_counts_poisson_nb(C, empty_threshold: int = 10, eps: float = 0.5, tol: float = 1e-4, max_iter: int = 100, C_out: str = None, verbose = 0, quiet = False) -> pd.DataFrame:
     """
     Denoise a count matrix by modeling ambient noise as Poisson and cell signal as Negative Binomial.
     Args:
@@ -34,47 +34,60 @@ def denoise_counts_poisson_nb(C, empty_threshold: int = 10, eps: float = 0.5, ma
     else:
         raise ValueError("C must be a pd.DataFrame, anndata, or path to an .h5ad/.h5 file.")
 
+    # Identify empty vs non-empty droplets
     total_counts = C.sum(axis=1)
     empty_idx = total_counts < empty_threshold
     cell_idx = ~empty_idx
 
-    # 1 Estimate Poisson λ_g from empty droplets
+    # 1. Initial ambient Poisson λ_g
     lambda_g = C.loc[empty_idx].mean(axis=0) + eps
 
-    # 2 Estimate initial NB parameters from non-empty droplets
-    X_cell = C.loc[cell_idx] - lambda_g  # subtract ambient estimate
+    # 2. Initial NB estimates for non-empty droplets
+    X_cell = C.loc[cell_idx] - lambda_g
     X_cell[X_cell < 0] = 0
     mu_g = X_cell.mean(axis=0)
     var_g = X_cell.var(axis=0)
-    r_g = (mu_g ** 2) / (var_g - mu_g + eps)  # method-of-moments for NB
+    r_g = np.maximum((mu_g ** 2) / (var_g - mu_g + eps), eps)  # avoid negatives
 
-    # 3 EM refinement
+    # 3. EM refinement
     C_cell = C.loc[cell_idx].copy()
-    tol = 1e-4  # relative tolerance for convergence
-    prev_mu, prev_r = None, None
+    prev_mu, prev_r, prev_lambda = None, None, None
 
-    for i in range(max_iter):  # max iterations
-        # E-step
+    for i in range(max_iter):
+        # ---------- E-step ----------
+        # Expected ambient (Poisson) counts
         noise_exp = poisson.mean(lambda_g)
         signal_exp = C_cell - noise_exp
         signal_exp[signal_exp < 0] = 0
 
-        # M-step
+        # ---------- M-step ----------
+        # Update NB parameters (signal component)
         mu_g_new = signal_exp.mean(axis=0)
         var_g_new = signal_exp.var(axis=0)
-        r_g_new = (mu_g_new ** 2) / (var_g_new - mu_g_new + eps)
+        r_g_new = np.maximum((mu_g_new ** 2) / (var_g_new - mu_g_new + eps), eps)
 
-        # check convergence (element-wise relative change)
+        # Update Poisson λ_g from low-count quantile (adaptive)
+        lambda_update = np.clip(signal_exp.quantile(0.05, axis=0), 0, None)
+        lambda_g_new = 0.7 * lambda_g + 0.3 * lambda_update  # exponential moving average
+
+        # ---------- Convergence check ----------
         if prev_mu is not None:
-            mu_diff = np.mean(np.abs(mu_g_new - prev_mu) / (prev_mu + eps))
-            r_diff = np.mean(np.abs(r_g_new - prev_r) / (prev_r + eps))
-            if mu_diff < tol and r_diff < tol:
+            mu_diff = np.nanmean(np.abs(mu_g_new - prev_mu) / (prev_mu + eps))
+            r_diff = np.nanmean(np.abs(r_g_new - prev_r) / (prev_r + eps))
+            lam_diff = np.nanmean(np.abs(lambda_g_new - prev_lambda) / (prev_lambda + eps))
+            delta = max(mu_diff, r_diff, lam_diff)
+            if delta < tol:
                 if verbose:
-                    logger.info(f"EM converged at iteration {i+1} (Δμ={mu_diff:.2e}, Δr={r_diff:.2e})")
+                    logger.info(f"Converged at iteration {i+1} (Δ={delta:.2e})")
                 break
 
-        prev_mu, prev_r = mu_g_new.copy(), r_g_new.copy()
-        mu_g, r_g = mu_g_new, r_g_new
+        # ---------- Update ----------
+        mu_g, r_g, lambda_g = mu_g_new, r_g_new, lambda_g_new
+        prev_mu, prev_r, prev_lambda = mu_g.copy(), r_g.copy(), lambda_g.copy()
+
+        if verbose and i > 0 and (i+1) % 10 == 0:
+            logger.info(f"Iteration {i+1:02d}: Δμ={mu_diff:.2e}, Δr={r_diff:.2e}, Δλ={lam_diff:.2e}")
+
     else:
         if verbose:
             logger.info("Reached max EM iterations without convergence.")
