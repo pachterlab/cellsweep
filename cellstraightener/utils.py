@@ -7,9 +7,53 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 import scanpy as sc
+import logging
+from datetime import datetime
 import anndata as ad
 from scipy.stats import pearsonr
 from upsetplot import from_contents, UpSet
+
+def setup_logger(log_dir = None, log_level = None, verbose = 0, quiet = False):
+    if log_level is None:        
+        if quiet or verbose < -1:  # -q
+            log_level = logging.CRITICAL
+        elif verbose == -1:
+            log_level = logging.ERROR
+        elif verbose == 0:  # no -q/-v
+            log_level = logging.WARNING
+        elif verbose == 1:  # -v (and not -q)
+            log_level = logging.INFO
+        elif verbose >= 2:  # -vv (and not -q)
+            log_level = logging.DEBUG
+        else:
+            raise ValueError(f"Invalid verbose level {verbose}. Use -q for quiet, -v for verbose, and -vv for very verbose.")
+    
+    start_time_string = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    
+    if log_dir:
+        os.makedirs(log_dir, exist_ok=True)
+        log_file_path = os.path.join(log_dir, f"{start_time_string}.log")
+
+        if os.path.exists(log_file_path):
+            raise FileExistsError(f"Log file {log_file_path} already exists. Please choose a different run name.")
+        print(f"Logging to {log_file_path}")
+
+    logger = logging.getLogger(__name__)
+    logger.propagate = False
+    logger.setLevel(log_level)
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", "%H:%M:%S")
+
+    if not logger.hasHandlers():
+        console_handler = logging.StreamHandler()
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+
+        if log_dir:
+            file_handler = logging.FileHandler(log_file_path)
+            file_handler.setFormatter(formatter)
+            logger.addHandler(file_handler)
+
+    return logger
 
 
 def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None, title: str = None, show: bool = True):
@@ -41,6 +85,54 @@ def take_adata_cell_gene_intersection(adata1, adata2):
     adata1 = adata1[adata2.obs_names, adata2.var_names]
 
     return adata1_sub, adata2_sub
+
+def knee_plot(adata, expected_cells=None, out_path=None, show=True):
+    # Compute total counts per barcode
+    knee = np.sort(np.ravel(adata.X.sum(axis=1)))[::-1]
+    barcodes = np.arange(1, len(knee) + 1)
+
+    # Create figure and axes
+    fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
+
+    # Plot (x=barcodes, y=knee)
+    ax.plot(barcodes, knee, linewidth=2, color="gray")
+
+    if expected_cells is not None:
+        cutoff_umi = knee[expected_cells - 1]
+
+        # Correct axes
+        ax.axvline(x=expected_cells, color="k", ls="--", linewidth=1.5)
+        ax.axhline(y=cutoff_umi, color="k", ls="--", linewidth=1.5)
+
+        # Keep only barcodes up to expected_cells
+        keep_mask = barcodes <= expected_cells
+        ax.plot(barcodes[keep_mask], knee[keep_mask], linewidth=2, color="blue")
+
+        print(f"UMI cutoff for expected cells ({expected_cells}): {cutoff_umi:.2f}")
+
+    # Log scales
+    ax.set_xscale("log")
+    ax.set_yscale("log")
+
+    # Auto axis limits based on data range
+    ax.set_xlim(barcodes.min(), barcodes.max())
+    # ax.set_ylim(knee.min(), knee.max())
+    ax.set_ylim(1, knee.max())
+
+    # Labels and styling
+    ax.set_title("Knee Plot", fontsize=18)
+    ax.set_xlabel("Barcodes", fontsize=18)
+    ax.set_ylabel("UMI counts per barcode", fontsize=18)
+    ax.grid(True, which="both", color="lightgray")
+    ax.set_axisbelow(True)
+    ax.tick_params(axis="both", labelsize=14)
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight")
+    if not show:
+        plt.close()
+
+
 
 def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, show_cell_names=True, show_gene_names=True, seed=42, title="Expression Difference Heatmap", out_path=None, show=True):
     np.random.seed(seed)
