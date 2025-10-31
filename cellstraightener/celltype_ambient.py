@@ -100,7 +100,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     return adata
 
 
-def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_iter=40, beta=0.3, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, verbose=0, quiet=False):
+def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_iter=40, beta=0.3, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name = "Empty Droplet", verbose=0, quiet=False):
     """
     EM on *real* cells only, with:
       - ambient fixed to the true ambient
@@ -151,18 +151,27 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_it
         logger.info("adata.uns does not have 'celltype_profile'. Inferring cell type profiles using infer_celltype_profile().")
         adata = infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=empty_droplet_method, verbose=verbose, quiet=quiet)
 
-    X = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)  #!!! densify - fix later
+    # X = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)  #!!! densify - fix later
     X = adata.X.astype(float)
     N, G = X.shape
+    K = adata.uns["celltype_profile"].shape[0]
 
     a = adata.var["ambient_fraction"].copy()           # FIXED ambient
     is_empty = adata.obs["is_empty"].copy()   # FIXED empties
     z_true = adata.obs["celltype"].copy()
+    z_true_str_to_int = {ct: i for i, ct in enumerate(adata.uns["celltype_profile"].index)}
 
     # work only on real cells
     real_mask = ~is_empty
+    real_mask = np.asarray(real_mask)   # convert from Series → ndarray
     Xr = X[real_mask]           # (Nr, G)
     Nr = Xr.shape[0]
+
+    #!!! densify
+    if sp.issparse(Xr):
+        Xr = Xr.toarray()  # convert to dense numpy.ndarray
+    else:
+        Xr = np.asarray(Xr)  # ensure d
 
     # initial cell-type profiles: from truth
     p = adata.uns["celltype_profile"].copy()   # (K, G)
@@ -170,8 +179,8 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_it
     # initial responsibilities: from truth if available
     gamma_type = np.zeros((Nr, K))
     for j, i in enumerate(np.where(real_mask)[0]):
-        if z_true[i] >= 0:
-            gamma_type[j, z_true[i]] = 1.0
+        if z_true[i] != empty_droplet_celltype_name:
+            gamma_type[j, z_true_str_to_int[z_true[i]]] = 1.0
         else:
             gamma_type[j] = 1.0 / K
 
@@ -182,6 +191,9 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_it
         adata.obs.loc[~real_mask, "cell_ambient_fraction"] = 1.0
     alpha = adata.obs["cell_ambient_fraction"][real_mask].copy()
 
+    alpha = np.asarray(alpha)
+    a = np.asarray(a)
+    p = np.asarray(p)
     loglike_prev = -np.inf
 
     for it in range(max_iter):
@@ -190,9 +202,7 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_it
         # --- E step on real cells ---
         log_p_type = np.zeros((Nr, K))
         for k in range(K):
-            pi_j = alpha[:, None] * a + (1 - alpha)[:, None] * (
-                (1 - beta) * p[k] + beta * m
-            )
+            pi_j = alpha[:, None] * a + (1 - alpha)[:, None] * ((1 - beta) * p[k] + beta * m)
             pi_j = np.clip(pi_j, eps, 1.0)
             pi_j /= pi_j.sum(axis=1, keepdims=True)
             log_p_type[:, k] = np.sum(Xr * np.log(pi_j), axis=1)
@@ -243,7 +253,7 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_it
         adata.layers["raw"] = adata.X.copy()
 
     # --- Reconstruct expected clean matrix ---
-    X_hat = np.zeros_like(X)
+    X_hat = np.zeros((N, G), dtype=float)
     real_mask = ~is_empty
 
     # For each real cell, compute expected signal from its inferred mixture
@@ -255,10 +265,13 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_it
         pi_j /= pi_j.sum()  # normalize per gene
         X_hat[j] = X[j].sum() * pi_j  # rescale to same total counts
 
-    # Empties are pure ambient
-    X_hat[~real_mask] = X[~real_mask].sum(axis=1)[:, None] * a
+    # # Empties are pure ambient
+    # X_hat[~real_mask] = X[~real_mask].toarray() if sp.issparse(X) else X[~real_mask]
 
     adata.X = X_hat
+    assert adata.X.shape == (adata.n_obs, adata.n_vars)
+    assert len(adata.obs) == len(is_empty) == len(alpha_hat) == len(z_hat)
+    assert adata.var.shape[0] == len(a) == p.shape[1]
 
     # --- Add inferred parameters back into obs/var/uns ---
     adata.obs["is_empty_hat"] = is_empty

@@ -3,6 +3,7 @@
 import os
 import subprocess
 import numpy as np
+from scipy.stats import gaussian_kde
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -82,7 +83,8 @@ def take_adata_cell_gene_intersection(adata1, adata2):
     adata2_sub = adata2[common_cells, common_genes].copy()
 
     # ensure same cell/gene order
-    adata1 = adata1[adata2.obs_names, adata2.var_names]
+    adata1_sub = adata1_sub[common_cells, common_genes].copy()
+    adata2_sub = adata2_sub[common_cells, common_genes].copy()
 
     return adata1_sub, adata2_sub
 
@@ -141,12 +143,15 @@ def knee_plot(adata, expected_cells=None, out_path=None, show=True):
 
 def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, show_cell_names=True, show_gene_names=True, seed=42, title="Expression Difference Heatmap", out_path=None, show=True):
     np.random.seed(seed)
-    adata1, adata2 = adata1.copy(), adata2.copy()
+    # adata1, adata2 = adata1.copy(), adata2.copy()
     adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
     
     # convert to dense
     X1 = adata1.X.toarray() if hasattr(adata1.X, "toarray") else np.array(adata1.X)
     X2 = adata2.X.toarray() if hasattr(adata2.X, "toarray") else np.array(adata2.X)
+
+    if X1.shape != X2.shape:
+        raise ValueError(f"Shape mismatch: {X1.shape} vs {X2.shape}")
 
     # difference matrix
     diff = X1 - X2
@@ -193,8 +198,56 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
     else:
         plt.close()
 
+def plot_matrix_scatterplot(adata1, adata2, title="Expression Scatterplot", sample_frac=1.0, seed=42, out_path=None, show=True):
+    # adata1, adata2 = adata1.copy(), adata2.copy()
+    adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
+
+    X1 = adata1.X.toarray() if hasattr(adata1.X, "toarray") else np.array(adata1.X)
+    X2 = adata2.X.toarray() if hasattr(adata2.X, "toarray") else np.array(adata2.X)
+
+    if X1.shape != X2.shape:
+        raise ValueError(f"Shape mismatch: {X1.shape} vs {X2.shape}")
+    
+    # --- flatten both ---
+    x = X1.ravel()
+    y = X2.ravel()
+
+    # --- optionally subsample to avoid millions of points ---
+    if sample_frac < 1.0:
+        np.random.seed(seed)
+        n = int(len(x) * sample_frac)
+        idx = np.random.choice(len(x), n, replace=False)
+        x, y = x[idx], y[idx]
+    else:
+        print(f"Using all {len(x)} points for scatterplot. This may be slow if the dataset is large. Consider setting sample_frac < 1.0 to speed up.")
+
+    # --- compute density (kernel density estimate) ---
+    xy = np.vstack([x, y])
+    z = gaussian_kde(xy)(xy)
+
+    # --- sort by density for nice overlay ---
+    idx = z.argsort()
+    x, y, z = x[idx], y[idx], z[idx]
+
+    # --- plot ---
+    plt.figure(figsize=(6, 6))
+    sc = plt.scatter(x, y, c=z, s=3, cmap="viridis", edgecolor="none")
+    plt.xlabel("adata1.X entries")
+    plt.ylabel("adata2.X entries")
+    plt.title(title)
+    plt.colorbar(sc, label="Density")
+    plt.grid(False)
+    plt.tight_layout()
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+
 def plot_per_cell_correlation(adata1, adata2, title="Per-cell Expression Correlation", out_path=None, show=True):
-    adata1, adata2 = adata1.copy(), adata2.copy()
+    # adata1, adata2 = adata1.copy(), adata2.copy()
     adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
 
     X1 = adata1.X.toarray() if hasattr(adata1.X, "toarray") else np.array(adata1.X)
@@ -287,7 +340,7 @@ def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_co
         raise ValueError(f"Unknown method {method} for determining cell types.")
     
     if filter_empty and empty_column in adata.obs.columns:
-        adata.obs["celltype"] = np.nan
+        adata.obs["celltype"] = "Empty Droplet"
         adata.obs.loc[real_mask, "celltype"] = pred_labels["majority_voting"].values
     else:
         adata = adata_real
