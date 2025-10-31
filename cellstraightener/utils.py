@@ -86,6 +86,11 @@ def take_adata_cell_gene_intersection(adata1, adata2):
 
     return adata1_sub, adata2_sub
 
+def determine_cutoff_umi_for_expected_cells(adata, expected_cells):
+    knee = np.sort(np.ravel(adata.X.sum(axis=1)))[::-1]
+    cutoff_umi = knee[expected_cells - 1]
+    return cutoff_umi
+
 def knee_plot(adata, expected_cells=None, out_path=None, show=True):
     # Compute total counts per barcode
     knee = np.sort(np.ravel(adata.X.sum(axis=1)))[::-1]
