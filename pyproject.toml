@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cellstraightener"
+name = "cellmender"
 version = "0.1.0"
 description = "Denoising scRNA-seq in a smart and efficient way."
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -46,7 +46,6 @@ analysis = [
     "nbval>=0.10.0",
     "nbdime>=4.0.2",
     "ipython>=8.0.0",
-    "cellbender==0.3.2",
     "upsetplot",
     "anndata",
     "scanpy",
@@ -57,13 +56,13 @@ analysis = [
 
 
 [project.urls]
-"Homepage" = "https://github.com/pachterlab/cellstraightener"
+"Homepage" = "https://github.com/pachterlab/cellmender"
 
 [tool.setuptools.packages.find]
-include = ["cellstraightener*"]
+include = ["cellmender*"]
 
 [tool.setuptools.package-data]
-cellstraightener = ["*.txt", "*.md", "*.csv"]  # Ensure additional files like data or docs are included
+cellmender = ["*.txt", "*.md", "*.csv"]  # Ensure additional files like data or docs are included
 
 [project.scripts]
-cellstraightener = "cellstraightener.main:main"  # This replaces the console_scripts entry
+cellmender = "cellmender.main:main"  # This replaces the console_scripts entry

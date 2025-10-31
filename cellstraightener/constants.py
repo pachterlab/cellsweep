@@ -1,1 +1,1 @@
-"""cellstraightener constant values."""
+"""cellmender constant values."""
