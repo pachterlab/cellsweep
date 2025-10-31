@@ -138,23 +138,24 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_it
     if "celltype" not in adata.obs.columns:
         raise KeyError("adata.obs must have column celltype.")
     
-    # adata = adata.copy()
+    adata = adata.copy()
     
     if "is_empty" not in adata.obs.columns:
         logger.info("adata.obs does not have 'is_empty' column. Inferring empty droplets using infer_empty_droplets().")
         adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
 
-    if "ambient" not in adata.var.columns:
+    if "ambient_fraction" not in adata.var.columns:
         adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method, verbose=verbose, quiet=quiet)
 
     if "celltype_profile" not in adata.uns:
         logger.info("adata.uns does not have 'celltype_profile'. Inferring cell type profiles using infer_celltype_profile().")
         adata = infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=empty_droplet_method, verbose=verbose, quiet=quiet)
 
-    X = adata.X.astype(float)  #!!! dense
+    X = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)  #!!! densify - fix later
+    X = adata.X.astype(float)
     N, G = X.shape
 
-    a = adata.var["ambient"].copy()           # FIXED ambient
+    a = adata.var["ambient_fraction"].copy()           # FIXED ambient
     is_empty = adata.obs["is_empty"].copy()   # FIXED empties
     z_true = adata.obs["celltype"].copy()
 
