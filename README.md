@@ -1,4 +1,4 @@
-# cellstraightener
+# cellmender
 
 To install this notebook:
 conda create -n cellstraightener python=3.10 -y
