@@ -40,15 +40,18 @@ dev = [
     "pytest>=7.0.0",
     "black[jupyter]>=22.0.0",
     "isort>=6.0.0",
-    "toml>=0.10.2",
-    "flake8>=7.0.0",
-    "bandit>=1.8.2",
     "pympler>=1.1"
 ]
 analysis = [
     "nbval>=0.10.0",
     "nbdime>=4.0.2",
     "ipython>=8.0.0",
+    "cellbender==0.3.2",
+    "upsetplot",
+    "anndata",
+    "scanpy",
+    "seaborn",
+    "matplotlib"
 ]
 
 

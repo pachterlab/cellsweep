@@ -156,3 +156,6 @@ config/
 data
 data/
 **/pytest_output/
+notebooks/output
+notebooks/data
+**/ckpt.tar.gz

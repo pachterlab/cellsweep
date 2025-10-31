@@ -3,18 +3,34 @@
 import numpy as np
 import pandas as pd
 from scipy.stats import poisson, nbinom
+import anndata as ad
 
-def denoise_counts_poisson_nb(C: pd.DataFrame, empty_threshold: int = 10, eps: float = 0.5):
+def denoise_counts_poisson_nb(C, empty_threshold: int = 10, eps: float = 0.5, C_out: str =None) -> pd.DataFrame:
     """
     Denoise a count matrix by modeling ambient noise as Poisson and cell signal as Negative Binomial.
     Args:
-        C: pd.DataFrame (droplets x genes)
+        C: pd.DataFrame (droplets x genes) OR anndata OR path to anndata
         empty_threshold: droplets below this total count are treated as empty
         eps: small positive floor to prevent division by zero
     Returns:
         C_denoised: pd.DataFrame (cells x genes)
     """
-    C = C.copy()
+    input_format = None
+    if isinstance(C, str):
+        input_format = "anndata_file"
+        if not C.endswith(".h5ad") and not C.endswith(".h5"):
+            raise ValueError("If C is a string, it must be a path to an .h5ad or .h5 file.")
+        adata = ad.read_h5ad(C) if C.endswith(".h5ad") else ad.read_h5(C)
+        C = pd.DataFrame(adata.X.toarray(), index=adata.obs_names, columns=adata.var_names)
+    elif isinstance(C, ad.AnnData):
+        input_format = "anndata"
+        C = pd.DataFrame(C.X.toarray(), index=C.obs_names, columns=C.var_names)
+    elif isinstance(C, pd.DataFrame):
+        input_format = "dataframe"
+        C = C.copy()
+    else:
+        raise ValueError("C must be a pd.DataFrame, anndata, or path to an .h5ad/.h5 file.")
+
     total_counts = C.sum(axis=1)
     empty_idx = total_counts < empty_threshold
     cell_idx = ~empty_idx
@@ -44,4 +60,14 @@ def denoise_counts_poisson_nb(C: pd.DataFrame, empty_threshold: int = 10, eps: f
 
     # 4 Denoised counts (expected signal)
     C_denoised = (C.loc[cell_idx] - lambda_g).clip(lower=0)
-    return C_denoised
+    if input_format == "anndata_file" or input_format == "anndata":
+        adata_denoised = ad.AnnData(X=C_denoised.values, obs=C_denoised.index.to_frame(), var=C_denoised.columns.to_frame())
+        if C_out:
+            adata_denoised.write_h5ad(C_out)
+        return adata_denoised
+    elif input_format == "dataframe":
+        if C_out:
+            C_denoised.to_csv(C_out)
+        return C_denoised
+    else:
+        raise ValueError("Unexpected input format.")
