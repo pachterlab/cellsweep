@@ -17,7 +17,7 @@ import torch
 import tarfile
 from upsetplot import from_contents, UpSet
 
-def setup_logger(log_dir = None, log_level = None, verbose = 0, quiet = False):
+def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):
     if log_level is None:        
         if quiet or verbose < -1:  # -q
             log_level = logging.CRITICAL
@@ -32,30 +32,33 @@ def setup_logger(log_dir = None, log_level = None, verbose = 0, quiet = False):
         else:
             raise ValueError(f"Invalid verbose level {verbose}. Use -q for quiet, -v for verbose, and -vv for very verbose.")
     
-    start_time_string = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+    if log_file is True:
+        # default log file name with timestamp
+        start_time_string = datetime.now().strftime("%Y_%m_%d_%H_%M_%S")
+        log_file = f"cellmender_log_{start_time_string}.log"
     
-    if log_dir:
-        os.makedirs(log_dir, exist_ok=True)
-        log_file_path = os.path.join(log_dir, f"{start_time_string}.log")
+    if log_file:
+        if os.path.dirname(log_file):
+            os.makedirs(os.path.dirname(log_file), exist_ok=True)
 
-        if os.path.exists(log_file_path):
-            raise FileExistsError(f"Log file {log_file_path} already exists. Please choose a different run name.")
-        print(f"Logging to {log_file_path}")
+        open(log_file, "w").close()  # create or overwrite the log file to ensure it is empty before logging starts. This prevents appending to an existing log file from previous runs, which could lead to confusion when analyzing logs.
+        # if os.path.exists(log_file):
+        #     raise FileExistsError(f"Log file {log_file} already exists. Please choose a different log file name.")
+        print(f"Logging to {log_file}")
 
     logger = logging.getLogger(__name__)
     logger.propagate = False
     logger.setLevel(log_level)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", "%H:%M:%S")
 
-    if not logger.hasHandlers():
-        console_handler = logging.StreamHandler()
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
 
-        if log_dir:
-            file_handler = logging.FileHandler(log_file_path)
-            file_handler.setFormatter(formatter)
-            logger.addHandler(file_handler)
+    if log_file:
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
 
     return logger
 
@@ -477,6 +480,12 @@ def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, ti
     shutil.move("figures/dotplot_processed_tmp.png", out_path_processed)
     os.rmdir("figures")
 
+def count_cellmender_parameters(log_path):
+    with open(log_path, "r") as f:
+        for line in f:
+            if "Number of parameters in the cellmender model" in line:
+                return line.strip()
+    return None
 
 def count_cellbender_parameters(ckpt_tar_path):
     # Extract the tar.gz file

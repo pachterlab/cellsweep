@@ -102,7 +102,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     return adata
 
 
-def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40, beta=0.3, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name = "Empty Droplet", verbose=0, quiet=False):
+def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40, beta=0.3, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name="Empty Droplet", verbose=0, quiet=False, log_file=None):
     """
     EM on *real* cells only, with:
       - ambient fixed to the true ambient
@@ -123,7 +123,7 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40
       - celltype_profile (optional): DataFrame (n_celltypes x n_genes) - mean expression of each gene across all cells of that type. If not present, it will be inferred using infer_celltype_profile().
 
     """
-    logger = setup_logger(verbose=verbose, quiet=quiet)
+    logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
 
     if isinstance(adata, str):
         if adata.endswith(".h5ad"):
@@ -157,9 +157,6 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40
     N, G = X.shape
     K = adata.uns["celltype_profile"].shape[0]
 
-    number_of_parameters = (K * G) + N + K - 1  # p_k (KxG), alpha_i (N), m_k (K-1)
-    logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,}")
-
     a = adata.var["ambient_fraction"].copy()           # FIXED ambient
     is_empty = adata.obs["is_empty"].copy()   # FIXED empties
     z_true = adata.obs["celltype"].copy()
@@ -187,6 +184,9 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40
             gamma_type[j, z_true_str_to_int[z_true[i]]] = 1.0
         else:
             gamma_type[j] = 1.0 / K
+    
+    number_of_parameters = (K * G) + Nr + K - 1  # p_k (KxG), alpha_i (Nr), m_k (K-1)
+    logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (p_k: {K*G:,}, alpha_i: {Nr:,}, m_k: {K-1:,})")
 
     # initial alpha: from truth
     if "cell_ambient_fraction" not in adata.obs.columns:
