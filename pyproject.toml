@@ -52,6 +52,7 @@ analysis = [
     "seaborn",
     "matplotlib",
     "celltypist",
+    "cellbender==0.3.0",
 ]
 
 

@@ -1,6 +1,7 @@
 """Utils"""
 
 import os
+import shutil
 import subprocess
 import numpy as np
 from scipy.stats import gaussian_kde
@@ -198,52 +199,90 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
     else:
         plt.close()
 
-def plot_matrix_scatterplot(adata1, adata2, title="Expression Scatterplot", sample_frac=1.0, seed=42, out_path=None, show=True):
-    # adata1, adata2 = adata1.copy(), adata2.copy()
+def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), s=20, scale="log", alpha=0.6, cmap='viridis', x_axis='adata1', y_axis='adata2', sample_frac=1.0, seed=42, out_path=None, show=True):
     adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
 
     X1 = adata1.X.toarray() if hasattr(adata1.X, "toarray") else np.array(adata1.X)
     X2 = adata2.X.toarray() if hasattr(adata2.X, "toarray") else np.array(adata2.X)
 
-    if X1.shape != X2.shape:
-        raise ValueError(f"Shape mismatch: {X1.shape} vs {X2.shape}")
-    
-    # --- flatten both ---
-    x = X1.ravel()
-    y = X2.ravel()
+    # Flatten matrices to 1D arrays
+    x = np.array(X1).flatten()
+    y = np.array(X2).flatten()
 
-    # --- optionally subsample to avoid millions of points ---
     if sample_frac < 1.0:
         np.random.seed(seed)
         n = int(len(x) * sample_frac)
         idx = np.random.choice(len(x), n, replace=False)
         x, y = x[idx], y[idx]
     else:
-        print(f"Using all {len(x)} points for scatterplot. This may be slow if the dataset is large. Consider setting sample_frac < 1.0 to speed up.")
-
-    # --- compute density (kernel density estimate) ---
+        print(f"Using all {len(x)} points for scatterplot. This may be slow if the dataset is large.")
+    
+    if scale == "log":
+        # Replace 0 values with 0.5 (so they appear at log2(0.5) = -1)
+        x = np.where(x < 0.5, 0.5, x)
+        y = np.where(y < 0.5, 0.5, y)
+    
+    # Calculate density using KDE
     xy = np.vstack([x, y])
     z = gaussian_kde(xy)(xy)
-
-    # --- sort by density for nice overlay ---
+    
+    # Sort by density so densest points are plotted last
     idx = z.argsort()
     x, y, z = x[idx], y[idx], z[idx]
+    
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    # Create scatterplot
+    scatter = ax.scatter(x, y, c=z, s=s, alpha=alpha, cmap=cmap, 
+                        edgecolors='none')
+    
+    # Set equal ranges for x and y axes
+    all_vals = np.concatenate([x, y])
+    vmin, vmax = all_vals.min(), all_vals.max()
+    margin_factor = 1.1
+    ax.set_xlim(vmin / margin_factor, vmax * margin_factor)
+    ax.set_ylim(vmin / margin_factor, vmax * margin_factor)
 
-    # --- plot ---
-    plt.figure(figsize=(6, 6))
-    sc = plt.scatter(x, y, c=z, s=3, cmap="viridis", edgecolor="none")
-    plt.xlabel("adata1.X entries")
-    plt.ylabel("adata2.X entries")
-    plt.title(title)
-    plt.colorbar(sc, label="Density")
-    plt.grid(False)
+    if scale == "log":
+        # Set log scale for both axes
+        ax.set_xscale('log', base=2)
+        ax.set_yscale('log', base=2)
+
+        # Define tick locations at powers of 2
+        xticks = np.logspace(np.floor(np.log2(vmin)), np.ceil(np.log2(vmax)), num=int(np.ceil(np.log2(vmax)) - np.floor(np.log2(vmin))) + 1, base=2)
+        yticks = np.logspace(np.floor(np.log2(vmin)), np.ceil(np.log2(vmax)), num=int(np.ceil(np.log2(vmax)) - np.floor(np.log2(vmin))) + 1, base=2)
+        ax.set_xticks(xticks)
+        ax.set_yticks(yticks)
+
+        # Optionally format tick labels as 2^n
+        ax.get_xaxis().set_major_formatter(plt.FuncFormatter(lambda val, _: f"$2^{{{int(np.log2(val))}}}$"))
+        ax.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda val, _: f"$2^{{{int(np.log2(val))}}}$"))
+    
+    # Add diagonal line for reference
+    ax.plot([vmin / margin_factor, vmax * margin_factor], 
+            [vmin / margin_factor, vmax * margin_factor], 
+            'k--', alpha=0.3, linewidth=1, zorder=0)
+    
+    # Labels and formatting
+    ax.set_xlabel(x_axis, fontsize=12)
+    ax.set_ylabel(y_axis, fontsize=12)
+    ax.set_title(f"{y_axis} vs {x_axis} CellxGene Scatterplot", fontsize=14, fontweight='bold')
+    ax.set_aspect('equal')
+    ax.grid(True, alpha=0.3)
+    
+    # Add colorbar
+    cbar = plt.colorbar(scatter, ax=ax)
+    cbar.set_label('Density', fontsize=11)
+    
     plt.tight_layout()
-    if out_path:
-        plt.savefig(out_path, bbox_inches="tight")
+    if out_path is not None:
+        plt.savefig(out_path, dpi=300)
     if show:
         plt.show()
     else:
         plt.close()
+
 
 
 def plot_per_cell_correlation(adata1, adata2, title="Per-cell Expression Correlation", out_path=None, show=True):
@@ -272,24 +311,48 @@ def plot_per_cell_correlation(adata1, adata2, title="Per-cell Expression Correla
     if not show:
         plt.close()
 
-def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, max_mt_percentage=25, n_top_genes=2000):
-    # adata = adata.copy()
+def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, max_mt_percentage=25, n_top_genes=2000, n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
+    logger = setup_logger(verbose=verbose, quiet=quiet)
+    if min_genes:
+        logger.info(f"Filtering cells with < {min_genes} genes")
+        sc.pp.filter_cells(adata, min_genes=min_genes)
+    if min_cells:
+        logger.info(f"Filtering genes expressed in < {min_cells} cells")
+        sc.pp.filter_genes(adata, min_cells=min_cells)
 
-    sc.pp.filter_cells(adata, min_genes=min_genes)
-    sc.pp.filter_genes(adata, min_cells=min_cells)
+    if max_mt_percentage is not None:
+        logger.info(f"Filtering cells with > {max_mt_percentage}% mitochondrial gene expression. This is done by identifying mitochondrial genes (those starting with 'MT-') and calculating the percentage of counts that come from these genes for each cell. Cells that exceed the specified threshold are filtered out.")
+        adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
+        sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True)
+        adata = adata[adata.obs.pct_counts_mt < max_mt_percentage, :]
 
-    adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
-    sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True)
-    adata = adata[adata.obs.pct_counts_mt < max_mt_percentage, :]
+    if "counts" not in adata.layers:
+        logger.info(f"'counts' layer not found in adata. Creating 'counts' layer from adata.X and normalizing total counts to 1e4. This is done by copying the raw count matrix into a new layer called 'counts' and then applying total-count normalization to ensure that each cell has the same total count (e.g., 10,000). This step is important for downstream analyses that assume normalized data.")
+        adata.layers["counts"] = adata.X.copy()
+        sc.pp.normalize_total(adata, target_sum=1e4)
+    if "log1p" not in adata.uns:
+        logger.info(f"'log1p' not found in adata.uns. Applying log1p transformation to adata.X and storing in 'log1p' layer. This transformation is commonly used to stabilize variance and make the data more normally distributed, which can improve the performance of downstream analyses such as PCA and clustering.")
+        sc.pp.log1p(adata)
 
-    adata.layers["counts"] = adata.X.copy()
-    sc.pp.normalize_total(adata)
-    sc.pp.log1p(adata)
+    if "highly_variable" not in adata.var.columns:
+        logger.info(f"Identifying highly variable genes using 'highly_variable_genes' function. This step identifies the top {n_top_genes} genes that show the most variability across cells, which are often the most informative for downstream analyses like clustering and dimensionality reduction.")
+        sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes)
 
-    sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes)
-    sc.tl.pca(adata)
-    sc.pp.neighbors(adata)
-    sc.tl.leiden(adata, flavor="igraph", n_iterations=2)
+    # check if adata.varm exists
+    if adata.varm is None or "PCs" not in adata.varm:
+        logger.info(f"Running PCA on the log-transformed data using 'pca' function. This step reduces the dimensionality of the data while retaining as much variance as possible. The number of principal components to compute is set to {n_pcs}, and the SVD solver used is 'arpack'. Setting a random state ensures reproducibility of the results.")
+        sc.tl.pca(adata, n_comps=n_pcs, svd_solver="arpack", random_state=seed)
+
+    if adata.obsp is None or "distances" not in adata.obsp:
+        logger.info(f"Computing the neighborhood graph of cells using 'neighbors' function. This step constructs a graph where cells are connected to their nearest neighbors based on the PCA representation. The number of neighbors to consider is set to {n_neighbors}, and the number of principal components used for this step is set to {n_pcs}. This graph is essential for downstream clustering and visualization.")
+        sc.pp.neighbors(adata, n_neighbors=n_neighbors, n_pcs=n_pcs)
+
+    if "leiden" not in adata.obs.columns:
+        logger.info(f"Running Leiden clustering on the neighborhood graph using 'leiden' function. This step identifies clusters of cells based on the connectivity of the graph. The 'flavor' parameter is set to 'igraph', which specifies the underlying algorithm used for clustering. The number of iterations is set to 2, and the resolution parameter controls the granularity of the clusters. Setting a random state ensures reproducibility of the results.")
+        sc.tl.leiden(adata, flavor="igraph", n_iterations=2, resolution=leiden_resolution, random_state=seed)
+
+    logger.info(f"Done!")
+    return adata
 
 valid_empty_droplet_methods = {"threshold"}
 def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
@@ -312,15 +375,20 @@ def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_ce
 
     return adata
 
-def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_column="is_empty", model_pkl=None, verbose=0, quiet=False):
+def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_column="is_empty", umi_cutoff=None, expected_cells=None, model_pkl=None, verbose=0, quiet=False):
     """
     Adds a 'celltype' column to adata.obs based on the specified method.
     """
     logger = setup_logger(verbose=verbose, quiet=quiet)
-    # adata = adata.copy()
+    adata = adata.copy()
     
     # Identify real cells if present
-    if filter_empty and empty_column in adata.obs.columns:
+    empty_droplet_category_name = "Empty Droplet"
+    if filter_empty:
+        logger.info(f"Filtering empty droplets using column '{empty_column}' in adata.obs. If this column is not present, it will be inferred using method '{method}' with umi_cutoff={umi_cutoff} and expected_cells={expected_cells}.")
+        if empty_column not in adata.obs.columns:
+            logger.info(f"'{empty_column}' column not found in adata.obs. Inferring empty droplets using method '{method}' with umi_cutoff={umi_cutoff} and expected_cells={expected_cells}.")
+            adata = infer_empty_droplets(adata, method="threshold", umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
         real_mask = ~adata.obs[empty_column].astype(bool)
         adata_real = adata[real_mask].copy()
     else:
@@ -328,32 +396,39 @@ def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_co
         adata_real = adata
 
     if method == "celltypist":
+        logger.info(f"Running cell type annotation using CellTypist with model_pkl={model_pkl}. This may take some time depending on the size of the dataset and the model used.")
         import celltypist
         if model_pkl is None:
             raise ValueError("model_pkl must be provided when method is 'celltypist'.")
         celltypist.models.download_models(force_update = False)
+        if "counts" not in adata_real.layers:  # normalization
+            logger.info(f"'counts' layer not found in adata_real. Creating 'counts' layer from adata_real.X and normalizing total counts to 1e4.")
+            adata_real.layers["counts"] = adata_real.X.copy()
+            sc.pp.normalize_total(adata_real, target_sum=1e4)
+        if "log1p" not in adata_real.uns:
+            logger.info(f"'log1p' not found in adata_real.uns. Applying log1p transformation to adata_real.X and storing in 'log1p' layer.")
+            sc.pp.log1p(adata_real)
         predictions = celltypist.annotate(adata_real, model=model_pkl, majority_voting=True)
         pred_labels = predictions.predicted_labels[['majority_voting']]
         pred_labels = pred_labels.reindex(adata_real.obs_names)  # reorder to match adata_real.obs index
         adata_real.obs['celltype'] = pred_labels['majority_voting'].values
+        adata.obs["celltype"] = adata_real.obs["celltype"].reindex(adata.obs_names)
+        if filter_empty:
+            adata.obs["celltype"] = adata.obs["celltype"].cat.add_categories([empty_droplet_category_name]).fillna(empty_droplet_category_name)
     else:
         raise ValueError(f"Unknown method {method} for determining cell types.")
-    
-    if filter_empty and empty_column in adata.obs.columns:
-        adata.obs["celltype"] = "Empty Droplet"
-        adata.obs.loc[real_mask, "celltype"] = pred_labels["majority_voting"].values
-    else:
-        adata = adata_real
 
     return adata
 
-def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, celltype_column_name="celltype", wompwomp_env="wompwomp_env", wompwomp_path="wompwomp"):
+def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column="celltype", wompwomp_env="wompwomp_env", wompwomp_path="wompwomp", verbose=0):
+    logger = setup_logger(verbose=verbose)
+    
     if not os.path.exists(wompwomp_path):
         raise ValueError(f"wompwomp_path {wompwomp_path} does not exist.")
 
     for i, ad in enumerate(adatas):
-        if celltype_column_name not in ad.obs.columns:
-            raise ValueError(f"adata at position {i} does not have '{celltype_column_name}' in .obs columns.")
+        if displayed_column not in ad.obs.columns:
+            raise ValueError(f"adata at position {i} does not have '{displayed_column}' in .obs columns.")
 
     if names is None:
         names = [f"adata_{i}" for i in range(len(adatas))]
@@ -368,16 +443,34 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, celltype_column_
     common_barcodes = list(common_barcodes)
     adatas_filtered = [ad[common_barcodes, :].copy() for ad in adatas]
 
-    # Step 3: Extract and merge celltype columns
+    # Step 3: Extract and merge 'displayed_column' columns
     merged_df = pd.concat(
-        [ad.obs['celltype'].rename(name) for ad, name in zip(adatas_filtered, names)],
+        [ad.obs[displayed_column].rename(name) for ad, name in zip(adatas_filtered, names)],
         axis=1
     )
 
     merged_df.to_csv(merged_df_csv)
 
     names_str = " ".join(names)
-    wompwomp_cmd = f"conda run -n {wompwomp_env} {wompwomp_path}/exec/wompwomp plot_alluvial --df {merged_df_csv} --graphing_columns {names_str} --coloring_algorithm left -o {out_path}"
-    print(wompwomp_cmd)
-    # subprocess.run(wompwomp_cmd, shell=True, check=True)
+    conda_run_flag = "-p" if "/" in wompwomp_env else "-n"
+    wompwomp_cmd = f"conda run {conda_run_flag} {wompwomp_env} {wompwomp_path}/exec/wompwomp plot_alluvial --df {merged_df_csv} --graphing_columns {names_str} --coloring_algorithm left -o {out_path}"
+    logger.info(f"Running wompwomp for {displayed_column}")
+    logger.debug(wompwomp_cmd)
+    subprocess.run(wompwomp_cmd, shell=True, check=True)
 
+
+def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
+    common_cells = adata_raw.obs_names.intersection(adata_processed.obs_names)
+    adata_raw_only_cellbender_cells = adata_raw[common_cells].copy()
+    adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[['celltype', 'leiden']], how='left')
+
+    print(title_raw)
+    sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby="leiden", standard_scale="var", save="raw_tmp.png")  # title=title_raw
+    print("------------------------------")
+    print(title_processed)
+    sc.pl.dotplot(adata_processed, marker_genes, groupby="leiden", standard_scale="var", save="processed_tmp.png")  # title=title_processed
+    print("------------------------------")
+
+    shutil.move("figures/dotplot_raw_tmp.png", out_path_raw)
+    shutil.move("figures/dotplot_processed_tmp.png", out_path_processed)
+    os.rmdir("figures")

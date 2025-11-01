@@ -8,6 +8,7 @@ import scipy.sparse as sp
 from scipy.stats import poisson, nbinom
 from .utils import setup_logger, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
 
+#* take the mean expression of each gene across all empty droplets, and normalize to sum to 1.
 def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
     """
     input: adata with adata.obs: is_empty (optional)
@@ -47,6 +48,7 @@ def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cut
     logger.info("Added 'ambient_fraction' to adata.var.")
     return adata
 
+#* Take the mean expression of each gene across all cells of a given cell type, and normalize to sum to 1.
 def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
     """
     input: adata with adata.obs: is_empty (optional), celltype
