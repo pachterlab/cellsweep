@@ -157,6 +157,9 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40
     N, G = X.shape
     K = adata.uns["celltype_profile"].shape[0]
 
+    number_of_parameters = (K * G) + N + K - 1  # p_k (KxG), alpha_i (N), m_k (K-1)
+    logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,}")
+
     a = adata.var["ambient_fraction"].copy()           # FIXED ambient
     is_empty = adata.obs["is_empty"].copy()   # FIXED empties
     z_true = adata.obs["celltype"].copy()
