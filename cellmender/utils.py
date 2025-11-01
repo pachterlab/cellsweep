@@ -13,6 +13,8 @@ import logging
 from datetime import datetime
 import anndata as ad
 from scipy.stats import pearsonr
+import torch
+import tarfile
 from upsetplot import from_contents, UpSet
 
 def setup_logger(log_dir = None, log_level = None, verbose = 0, quiet = False):
@@ -474,3 +476,44 @@ def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, ti
     shutil.move("figures/dotplot_raw_tmp.png", out_path_raw)
     shutil.move("figures/dotplot_processed_tmp.png", out_path_processed)
     os.rmdir("figures")
+
+
+def count_cellbender_parameters(ckpt_tar_path):
+    # Extract the tar.gz file
+    with tarfile.open(ckpt_tar_path, "r:gz") as tar:
+        tar.extractall("./extracted_checkpoint")
+        
+    # List the extracted files to find the actual checkpoint
+    extracted_files = os.listdir("./extracted_checkpoint")
+
+    # Load the actual checkpoint file
+    checkpoint_file = "./extracted_checkpoint/" + extracted_files[0]
+    checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=False)
+
+    state_dict = checkpoint["params"]
+    total_params = sum(p.numel() for p in state_dict.values())
+    
+    # Print architecture information
+    print("\n=== Model Architecture (inferred from state_dict) ===")
+    print(f"Total parameters: {total_params:,}\n")
+    
+    for name, param in state_dict.items():
+        param_count = param.numel()
+        print(f"{name:50s} | Shape: {str(param.shape):20s} | Params: {param_count:,}")
+    
+    # Group by layer (optional)
+    print("\n=== Parameter Summary by Layer ===")
+    layer_counts = {}
+    for name, param in state_dict.items():
+        layer_name = name.split('.')[0]  # Get first part before '.'
+        if layer_name not in layer_counts:
+            layer_counts[layer_name] = 0
+        layer_counts[layer_name] += param.numel()
+    
+    for layer, count in layer_counts.items():
+        print(f"{layer:30s}: {count:,} parameters")
+    
+    # remove the extracted checkpoint directory after loading the checkpoint
+    shutil.rmtree("./extracted_checkpoint")
+
+    return total_params

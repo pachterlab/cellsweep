@@ -102,7 +102,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     return adata
 
 
-def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_iter=40, beta=0.3, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name = "Empty Droplet", verbose=0, quiet=False):
+def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40, beta=0.3, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name = "Empty Droplet", verbose=0, quiet=False):
     """
     EM on *real* cells only, with:
       - ambient fixed to the true ambient
@@ -153,7 +153,6 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", K=3, max_it
         logger.info("adata.uns does not have 'celltype_profile'. Inferring cell type profiles using infer_celltype_profile().")
         adata = infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=empty_droplet_method, verbose=verbose, quiet=quiet)
 
-    # X = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)  #!!! densify - fix later
     X = adata.X.astype(float)
     N, G = X.shape
     K = adata.uns["celltype_profile"].shape[0]
