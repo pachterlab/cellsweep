@@ -316,21 +316,61 @@ def plot_per_cell_correlation(adata1, adata2, title="Per-cell Expression Correla
     if not show:
         plt.close()
 
-def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, max_mt_percentage=25, n_top_genes=2000, n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
+def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
     logger = setup_logger(verbose=verbose, quiet=quiet)
+    logger.info(f"Adata initial shape: {adata.shape}")
+    
+    #* cell filtering
     if min_genes:
         logger.info(f"Filtering cells with < {min_genes} genes")
         sc.pp.filter_cells(adata, min_genes=min_genes)
+        logger.info(f"After filtering cells with < {min_genes} genes, adata shape: {adata.shape}")
+    
+    #* gene filtering
     if min_cells:
         logger.info(f"Filtering genes expressed in < {min_cells} cells")
         sc.pp.filter_genes(adata, min_cells=min_cells)
-
-    if max_mt_percentage is not None:
-        logger.info(f"Filtering cells with > {max_mt_percentage}% mitochondrial gene expression. This is done by identifying mitochondrial genes (those starting with 'MT-') and calculating the percentage of counts that come from these genes for each cell. Cells that exceed the specified threshold are filtered out.")
+        logger.info(f"After filtering genes expressed in < {min_cells} cells, adata shape: {adata.shape}")
+    
+    #* Doublet removal (thresholding)
+    to_remove = np.zeros(adata.n_obs, dtype=bool)
+    if umi_top_percentile_to_remove is not None:
+        logger.info(f"Filtering cells with total UMI counts in the top {umi_top_percentile_to_remove} percentile. This is done by calculating the total UMI counts for each cell and removing those that exceed the specified percentile threshold, which can help to eliminate potential doublets or multiplets that may have artificially high UMI counts.")
+        total_umis = np.ravel(adata.X.sum(axis=1))
+        umi_cutoff = np.percentile(total_umis, 100 - umi_top_percentile_to_remove)
+        # adata = adata[adata.X.sum(axis=1) < umi_cutoff, :].copy()
+        # logger.info(f"After UMI filtering, adata shape: {adata.shape}")
+        to_remove |= (total_umis > umi_cutoff)
+    if unique_genes_top_percentile_to_remove is not None:
+        logger.info(f"Filtering cells with the number of unique genes expressed in the top {unique_genes_top_percentile_to_remove} percentile. This is done by calculating the number of unique genes expressed for each cell and removing those that exceed the specified percentile threshold, which can help to eliminate potential doublets or multiplets that may have artificially high gene diversity.")
+        unique_genes_per_cell = np.ravel((adata.X > 0).sum(axis=1))
+        unique_genes_cutoff = np.percentile(unique_genes_per_cell, 100 - unique_genes_top_percentile_to_remove)
+        # adata = adata[unique_genes_per_cell < unique_genes_cutoff, :].copy()
+        # logger.info(f"After unique gene filtering, adata shape: {adata.shape}")
+        to_remove |= (unique_genes_per_cell > unique_genes_cutoff)
+    
+    #* MT filtering
+    if max_mt_percentage is not None or mt_gene_percentile_to_remove is not None:
         adata.var["mt"] = adata.var_names.str.upper().str.startswith("MT-")
         sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True)
-        adata = adata[adata.obs.pct_counts_mt < max_mt_percentage, :]
+        if mt_gene_percentile_to_remove is not None:
+            logger.info(f"Filtering cells with mitochondrial gene expression in the top {mt_gene_percentile_to_remove} percentile. This is done by calculating the percentage of counts that come from mitochondrial genes for each cell and removing those that exceed the specified percentile threshold, which can help to eliminate cells that may be stressed or dying, as they often have higher mitochondrial gene expression.")
+            mt_cutoff = np.percentile(adata.obs["pct_counts_mt"], 100-mt_gene_percentile_to_remove)
+            # adata = adata[adata.obs["pct_counts_mt"] <= mt_cutoff].copy()
+            # logger.info(f"After mitochondrial gene filtering, adata shape: {adata.shape}")
+            to_remove |= (adata.obs["pct_counts_mt"] > mt_cutoff)
+        if max_mt_percentage is not None:
+            logger.info(f"Filtering cells with > {max_mt_percentage}% mitochondrial gene expression. This is done by identifying mitochondrial genes (those starting with 'MT-') and calculating the percentage of counts that come from these genes for each cell. Cells that exceed the specified threshold are filtered out.")
+            adata = adata[adata.obs.pct_counts_mt < max_mt_percentage, :]
+            logger.info(f"After filtering cells with > {max_mt_percentage}% mitochondrial gene expression, adata shape: {adata.shape}")
+    
+    #* Do the actual percentile filtering based on the combined criteria
+    n_removed = to_remove.sum()
+    if n_removed > 0:
+        adata = adata[~to_remove].copy()
+        logger.info(f"After applying combined filtering criteria (UMI counts, unique genes, mitochondrial percentage), {n_removed} cells were removed. Remaining adata shape: {adata.shape}")
 
+    #* normalization and log transformation
     if "counts" not in adata.layers:
         logger.info(f"'counts' layer not found in adata. Creating 'counts' layer from adata.X and normalizing total counts to 1e4. This is done by copying the raw count matrix into a new layer called 'counts' and then applying total-count normalization to ensure that each cell has the same total count (e.g., 10,000). This step is important for downstream analyses that assume normalized data.")
         adata.layers["counts"] = adata.X.copy()
@@ -339,19 +379,22 @@ def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, m
         logger.info(f"'log1p' not found in adata.uns. Applying log1p transformation to adata.X and storing in 'log1p' layer. This transformation is commonly used to stabilize variance and make the data more normally distributed, which can improve the performance of downstream analyses such as PCA and clustering.")
         sc.pp.log1p(adata)
 
+    #* HGVs
     if "highly_variable" not in adata.var.columns:
         logger.info(f"Identifying highly variable genes using 'highly_variable_genes' function. This step identifies the top {n_top_genes} genes that show the most variability across cells, which are often the most informative for downstream analyses like clustering and dimensionality reduction.")
-        sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes)
+        sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes, flavor="seurat_v3")
 
-    # check if adata.varm exists
+    #* PCA
     if adata.varm is None or "PCs" not in adata.varm:
         logger.info(f"Running PCA on the log-transformed data using 'pca' function. This step reduces the dimensionality of the data while retaining as much variance as possible. The number of principal components to compute is set to {n_pcs}, and the SVD solver used is 'arpack'. Setting a random state ensures reproducibility of the results.")
-        sc.tl.pca(adata, n_comps=n_pcs, svd_solver="arpack", random_state=seed)
+        sc.tl.pca(adata, svd_solver="arpack", random_state=seed)
 
+    #* KNN
     if adata.obsp is None or "distances" not in adata.obsp:
         logger.info(f"Computing the neighborhood graph of cells using 'neighbors' function. This step constructs a graph where cells are connected to their nearest neighbors based on the PCA representation. The number of neighbors to consider is set to {n_neighbors}, and the number of principal components used for this step is set to {n_pcs}. This graph is essential for downstream clustering and visualization.")
         sc.pp.neighbors(adata, n_neighbors=n_neighbors, n_pcs=n_pcs)
 
+    #* Leiden clustering
     if "leiden" not in adata.obs.columns:
         logger.info(f"Running Leiden clustering on the neighborhood graph using 'leiden' function. This step identifies clusters of cells based on the connectivity of the graph. The 'flavor' parameter is set to 'igraph', which specifies the underlying algorithm used for clustering. The number of iterations is set to 2, and the resolution parameter controls the granularity of the clusters. Setting a random state ensures reproducibility of the results.")
         sc.tl.leiden(adata, flavor="igraph", n_iterations=2, resolution=leiden_resolution, random_state=seed)
