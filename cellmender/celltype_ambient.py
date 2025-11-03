@@ -102,7 +102,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     return adata
 
 
-def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40, beta=0.3, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name="Empty Droplet", verbose=0, quiet=False, log_file=None):
+def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40, beta=0.03, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name="Empty Droplet", round_counts=True, verbose=0, quiet=False, log_file=None):
     """
     EM on *real* cells only, with:
       - ambient fixed to the true ambient
@@ -272,6 +272,8 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40
     # # Empties are pure ambient
     # X_hat[~real_mask] = X[~real_mask].toarray() if sp.issparse(X) else X[~real_mask]
 
+    if round_counts:
+        X_hat = np.rint(X_hat).astype(int)
     adata.X = X_hat
     assert adata.X.shape == (adata.n_obs, adata.n_vars)
     assert len(adata.obs) == len(is_empty) == len(alpha_hat) == len(z_hat)
