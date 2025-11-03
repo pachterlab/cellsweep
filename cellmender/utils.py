@@ -463,6 +463,7 @@ def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_co
         adata.obs["celltype"] = adata_real.obs["celltype"].reindex(adata.obs_names)
         if filter_empty:
             adata.obs["celltype"] = adata.obs["celltype"].cat.add_categories([empty_droplet_category_name]).fillna(empty_droplet_category_name)
+    #!!! add more methods here
     else:
         raise ValueError(f"Unknown method {method} for determining cell types.")
 
@@ -473,6 +474,10 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
     
     if not os.path.exists(wompwomp_path):
         raise ValueError(f"wompwomp_path {wompwomp_path} does not exist.")
+    
+    # check if wompwomp_env exists as a path or environment
+    if not (os.path.exists(wompwomp_env) or wompwomp_env in subprocess.run("conda env list", shell=True, capture_output=True, text=True).stdout):
+        raise ValueError(f"wompwomp_env {wompwomp_env} does not exist as a path or conda environment.")
 
     for i, ad in enumerate(adatas):
         if displayed_column not in ad.obs.columns:
@@ -507,16 +512,16 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
     subprocess.run(wompwomp_cmd, shell=True, check=True)
 
 
-def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
+def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
     common_cells = adata_raw.obs_names.intersection(adata_processed.obs_names)
     adata_raw_only_cellbender_cells = adata_raw[common_cells].copy()
-    adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[['celltype', 'leiden']], how='left')
+    adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[[celltype_column, cluster_column]], how='left')
 
     print(title_raw)
-    sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby="leiden", standard_scale="var", save="raw_tmp.png")  # title=title_raw
+    sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby=cluster_column, standard_scale="var", save="raw_tmp.png")  # title=title_raw
     print("------------------------------")
     print(title_processed)
-    sc.pl.dotplot(adata_processed, marker_genes, groupby="leiden", standard_scale="var", save="processed_tmp.png")  # title=title_processed
+    sc.pl.dotplot(adata_processed, marker_genes, groupby=cluster_column, standard_scale="var", save="processed_tmp.png")  # title=title_processed
     print("------------------------------")
 
     shutil.move("figures/dotplot_raw_tmp.png", out_path_raw)

@@ -33,6 +33,7 @@ dependencies = [
     "numpy",
     "pandas",
     "scipy",
+    "anndata"
 ]
 
 [project.optional-dependencies]
@@ -47,14 +48,12 @@ analysis = [
     "nbdime>=4.0.2",
     "ipython>=8.0.0",
     "upsetplot",
-    "anndata",
     "scanpy",
     "seaborn",
     "matplotlib",
     "celltypist",
-    "cellbender==0.3.0",
+    "cellbender==0.3.0"
 ]
-
 
 [project.urls]
 "Homepage" = "https://github.com/pachterlab/cellmender"
