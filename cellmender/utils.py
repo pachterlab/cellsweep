@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import scanpy as sc
 import logging
+from scipy import io, sparse
 from datetime import datetime
 import anndata as ad
 from scipy.stats import pearsonr
@@ -17,8 +18,8 @@ import torch
 import tarfile
 from upsetplot import from_contents, UpSet
 
-def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):
-    if log_level is None:        
+def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):    
+    if log_level is None:
         if quiet or verbose < -1:  # -q
             log_level = logging.CRITICAL
         elif verbose == -1:
@@ -47,6 +48,8 @@ def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):
         print(f"Logging to {log_file}")
 
     logger = logging.getLogger(__name__)
+    if logger.hasHandlers():
+        return logger
     logger.propagate = False
     logger.setLevel(log_level)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", "%H:%M:%S")
@@ -71,6 +74,7 @@ def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None,
         "Method C": ["cell1", "cell4", "cell5"],
     }
     """
+    upset_data_dict = {k: v for k, v in upset_data_dict.items() if v is not None}  # iterate through dict, and if a value is None, skip that entry
     upset_data = from_contents(upset_data_dict)
     ax_dict = UpSet(upset_data, show_counts=True).plot()
     if title:
@@ -316,7 +320,7 @@ def plot_per_cell_correlation(adata1, adata2, title="Per-cell Expression Correla
     if not show:
         plt.close()
 
-def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
+def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, hvg_flavor="seurat_v3", n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
     logger = setup_logger(verbose=verbose, quiet=quiet)
     logger.info(f"Adata initial shape: {adata.shape}")
     
@@ -382,7 +386,8 @@ def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, u
     #* HGVs
     if "highly_variable" not in adata.var.columns:
         logger.info(f"Identifying highly variable genes using 'highly_variable_genes' function. This step identifies the top {n_top_genes} genes that show the most variability across cells, which are often the most informative for downstream analyses like clustering and dimensionality reduction.")
-        sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes, flavor="seurat_v3")
+        layer = "counts" if hvg_flavor == "seurat_v3" else None
+        sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes, flavor=hvg_flavor, layer=layer)
 
     #* PCA
     if adata.varm is None or "PCs" not in adata.varm:
@@ -479,12 +484,21 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
     if not (os.path.exists(wompwomp_env) or wompwomp_env in subprocess.run("conda env list", shell=True, capture_output=True, text=True).stdout):
         raise ValueError(f"wompwomp_env {wompwomp_env} does not exist as a path or conda environment.")
 
-    for i, ad in enumerate(adatas):
-        if displayed_column not in ad.obs.columns:
+    for adata in adatas.copy():
+        if adata is None:
+            if len(names) == len(adatas):
+                names.remove(names[adatas.index(adata)])
+            adatas.remove(adata)
+
+    for i, adata in enumerate(adatas):
+        if displayed_column not in adata.obs.columns:
             raise ValueError(f"adata at position {i} does not have '{displayed_column}' in .obs columns.")
 
     if names is None:
         names = [f"adata_{i}" for i in range(len(adatas))]
+    
+    if len(names) != len(adatas):
+        raise ValueError(f"Length of names ({len(names)}) does not match number of adatas ({len(adatas)}).")
     
     # if not os.path.exists(merged_df_csv):
     # Step 1: Get intersection of barcodes (shared cell IDs)
@@ -513,6 +527,10 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
 
 
 def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
+    if adata_raw is None or adata_processed is None:
+        print("One of the adatas is None, skipping dotplot generation.")
+        return
+
     common_cells = adata_raw.obs_names.intersection(adata_processed.obs_names)
     adata_raw_only_cellbender_cells = adata_raw[common_cells].copy()
     adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[[celltype_column, cluster_column]], how='left')
@@ -574,3 +592,89 @@ def count_cellbender_parameters(ckpt_tar_path):
     shutil.rmtree("./extracted_checkpoint")
 
     return total_params
+
+
+def read_r_matrix_into_anndata(file_prefix):
+    """
+    Read in the matrix output from R SoupX processing into an AnnData object.
+    Assumed files: 
+    1. {file_prefix}.mtx
+    2. {file_prefix}_genes.csv
+    3. {file_prefix}_barcodes.csv
+    """
+    if file_prefix is None:
+        print("No file prefix provided for reading R matrix into AnnData. Returning None.")
+        return None
+
+    for expected_file in [f"{file_prefix}.mtx", f"{file_prefix}_genes.csv", f"{file_prefix}_barcodes.csv"]:
+        if not os.path.exists(expected_file):
+            raise FileNotFoundError(f"Expected file not found: {expected_file}")
+
+    X = io.mmread(f"{file_prefix}.mtx").T.tocsr()
+    genes = pd.read_csv(f"{file_prefix}_genes.csv", header=None)[0].to_list()
+    barcodes = pd.read_csv(f"{file_prefix}_barcodes.csv", header=None)[0].to_list()
+
+    adata = ad.AnnData(X=X)
+    adata.var_names = genes
+    adata.obs_names = barcodes
+    return adata
+
+def check_counts_less_equal(adata_raw, adata_denoised):
+    X_raw = adata_raw.X
+    X_cb = adata_denoised.X
+
+    if sparse.issparse(X_raw):
+        diff_ok = (X_cb <= X_raw).nnz == X_raw.nnz if X_cb.nnz == X_raw.nnz else (X_cb <= X_raw).all()
+    else:
+        diff_ok = np.all(X_cb <= X_raw)
+
+    return diff_ok
+
+# anndata object, h5 path, h5ad path, or matrix directory (containing matrix.mtx, genes.tsv, barcodes.tsv)
+def load_adata(adata, logger=None, verbose=0, quiet=False):
+    if logger is None:
+        logger = setup_logger(verbose=verbose, quiet=quiet)
+    if isinstance(adata, str):
+        if adata.endswith(".h5ad"):
+            logger.info(f"Loading adata from {adata!r}")
+            adata = ad.read_h5ad(adata)
+        elif adata.endswith(".h5"):
+            logger.info(f"Loading adata from {adata!r}")
+            import scanpy as sc
+            adata = sc.read_10x_h5(adata)
+        elif os.path.isdir(adata):
+            import scanpy as sc
+            logger.info(f"Searching recursively for 10x-style dataset under {adata!r}")
+
+            found_dirs = []
+            for root, dirs, files in os.walk(adata):
+                files_lower = [f.lower() for f in files]
+                if "matrix.mtx" in files_lower and "barcodes.tsv" in files_lower and ("genes.tsv" in files_lower or "features.tsv" in files_lower):
+                    found_dirs.append(root)
+
+            if len(found_dirs) == 0:
+                raise FileNotFoundError(f"No valid 10x dataset found under {adata!r}. Expected matrix.mtx, barcodes.tsv, and genes.tsv or features.tsv.")
+            elif len(found_dirs) > 1:
+                raise RuntimeError(
+                    f"Multiple 10x-style datasets found under {adata!r}:\n" +
+                    "\n".join(found_dirs) +
+                    "\nPlease specify one directory explicitly."
+                )
+
+            tenx_dir = found_dirs[0]
+            logger.info(f"Found 10x dataset in {tenx_dir!r}")
+            
+            use_gene_symbols = os.path.exists(os.path.join(tenx_dir, "genes.tsv"))
+            adata = sc.read_10x_mtx(
+                tenx_dir,
+                var_names="gene_symbols" if use_gene_symbols else "gene_ids",
+                make_unique=True
+            )
+        else:
+            raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file, an .h5 file, a matrix-containing directory, or an AnnData object.")
+    elif isinstance(adata, ad.AnnData):
+        pass
+        # adata = adata.copy()
+    else:
+        raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file, an .h5 file, a matrix-containing directory, or an AnnData object.")
+    return adata

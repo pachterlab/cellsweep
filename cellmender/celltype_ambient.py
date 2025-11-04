@@ -1,12 +1,14 @@
 """Denoising count matrices using a Poisson + Negative Binomial model."""
 
+import os
 import numpy as np
 import pandas as pd
 import logging
 import anndata as ad
 import scipy.sparse as sp
-from scipy.stats import poisson, nbinom
-from .utils import setup_logger, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
+from pydantic import validate_call, Field, ConfigDict
+from typing import Annotated
+from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
 
 #* take the mean expression of each gene across all empty droplets, and normalize to sum to 1.
 def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
@@ -125,17 +127,7 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40
     """
     logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
 
-    if isinstance(adata, str):
-        if adata.endswith(".h5ad"):
-            logger.info(f"Loading adata from {adata!r}")
-            adata = ad.read_h5ad(adata)
-        else:
-            raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file or an AnnData object.")
-    elif isinstance(adata, ad.AnnData):
-        pass
-        # adata = adata.copy()
-    else:
-        raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file or an AnnData object.")
+    adata = load_adata(adata, logger=logger)
     
     if "celltype" not in adata.obs.columns:
         raise KeyError("adata.obs must have column celltype.")
