@@ -6,7 +6,7 @@ import pandas as pd
 import logging
 import anndata as ad
 import scipy.sparse as sp
-from pydantic import validate_call, Field
+from pydantic import validate_call, Field, ConfigDict
 from typing import Annotated
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
 
@@ -103,7 +103,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
 
     return adata
 
-@validate_call
+@validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def denoise_count_matrix(
     adata: str | ad.AnnData,
     adata_out: Annotated[str, Field(pattern=r"\.h5ad$")] = "adata_straightened.h5ad",
