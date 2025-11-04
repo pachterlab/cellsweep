@@ -3,19 +3,18 @@
 # --- Parse command-line arguments ---
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 3) {
-  cat("Usage: Rscript run_soupx.R <matrix_tar_files_dir> <adata_obs_csv> <anndata_out>\n")
+  cat("Usage: Rscript run_soupx.R <matrix_tar_files_dir> <adata_obs_csv> <soupx_out_prefix>\n")
   quit(status = 1)
 }
 
 matrix_tar_files_dir <- args[1]
 adata_obs_csv        <- args[2]
-anndata_out          <- args[3]
+soupx_out_prefix  <- args[3]
 
 # --- Load libraries ---
 suppressPackageStartupMessages({
   library(SoupX)
   library(Matrix)
-  library(anndata)
 })
 
 # --- Load obs (clusters) ---
@@ -37,22 +36,9 @@ cat("Adjusting counts...\n")
 out <- adjustCounts(sc)
 
 cat("Writing output matrices...\n")
-# obs (cells) and var (genes) as data frames with proper row names
-obs_df <- data.frame(cell_id = colnames(out), row.names = colnames(out))
-var_df <- data.frame(gene_id = rownames(out), row.names = rownames(out))
+Matrix::writeMM(out, file = paste0(soupx_out_prefix, ".mtx"))
+write.table(rownames(out), file = paste0(soupx_out_prefix, "_genes.csv"), row.names = FALSE, col.names = FALSE, quote = FALSE, sep = ",")
+write.table(colnames(out), file = paste0(soupx_out_prefix, "_barcodes.csv"), row.names = FALSE, col.names = FALSE, quote = FALSE, sep = ",")
 
-ad <- AnnData(
-  X = out,
-  obs = obs_df,
-  var = var_df,
-  uns = list(
-    metadata = list(
-      method = "SoupX",
-      date = Sys.time()
-    )
-  )
-)
-
-write_h5ad(ad, anndata_out)
 
 cat("✅ SoupX completed successfully.\n")

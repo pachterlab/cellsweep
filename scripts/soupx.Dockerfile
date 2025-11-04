@@ -22,7 +22,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install SoupX from CRAN
-RUN R -e 'install.packages(c("anndata", "SoupX"), repos="https://cloud.r-project.org")'
+RUN R -e 'install.packages("SoupX", repos="https://cloud.r-project.org")'
 
 # Set working directory (same as your mounted path)
 WORKDIR /home/ruser/work/cellmender
