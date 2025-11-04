@@ -102,7 +102,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     return adata
 
 
-def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40, beta=0.3, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name="Empty Droplet", verbose=0, quiet=False, log_file=None):
+def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40, beta=0.03, eps=1e-9, integer_out = False, fixed_celltype = False, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name="Empty Droplet", verbose=0, quiet=False, log_file=None):
     """
     EM on *real* cells only, with:
       - ambient fixed to the true ambient
@@ -157,7 +157,7 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40
     N, G = X.shape
     K = adata.uns["celltype_profile"].shape[0]
 
-    a = adata.var["ambient_fraction"].copy()           # FIXED ambient
+    a = adata.var["ambient_fraction"].copy()   # FIXED ambient
     is_empty = adata.obs["is_empty"].copy()   # FIXED empties
     z_true = adata.obs["celltype"].copy()
     z_true_str_to_int = {ct: i for i, ct in enumerate(adata.uns["celltype_profile"].index)}
@@ -167,12 +167,6 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40
     real_mask = np.asarray(real_mask)   # convert from Series → ndarray
     Xr = X[real_mask]           # (Nr, G)
     Nr = Xr.shape[0]
-
-    #!!! densify
-    if sp.issparse(Xr):
-        Xr = Xr.toarray()  # convert to dense numpy.ndarray
-    else:
-        Xr = np.asarray(Xr)  # ensure d
 
     # initial cell-type profiles: from truth
     p = adata.uns["celltype_profile"].copy()   # (K, G)
@@ -199,44 +193,71 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40
     a = np.asarray(a)
     p = np.asarray(p)
     loglike_prev = -np.inf
+    m = X.mean(axis=0) # bulk mean profile
 
     for it in range(max_iter):
-        m = p.mean(axis=0)
-
         # --- E step on real cells ---
-        log_p_type = np.zeros((Nr, K))
-        for k in range(K):
-            pi_j = alpha[:, None] * a + (1 - alpha)[:, None] * ((1 - beta) * p[k] + beta * m)
-            pi_j = np.clip(pi_j, eps, 1.0)
-            pi_j /= pi_j.sum(axis=1, keepdims=True)
-            log_p_type[:, k] = np.sum(Xr * np.log(pi_j), axis=1)
 
-        # normalize over k
-        log_p_type -= log_p_type.max(axis=1, keepdims=True)
-        r = np.exp(log_p_type)
-        r /= r.sum(axis=1, keepdims=True)
-        gamma_type = r
+        # The log probability of cell j assuming cell type k
+        log_p_type = np.zeros((Nr, K))
+
+        # Calculate the log probability given current alpha and beta
+        for k in range(K):
+            pi = alpha[:, None] * a + (1 - alpha)[:, None] * ((1 - beta) * p[k] + beta * m)
+            pi = np.clip(pi, eps, 1.0) # avoid log(0)
+            pi /= pi.sum(axis=1, keepdims=True)
+            log_p_type[:, k] = np.sum(Xr * np.log(pi), axis=1)
+
 
         # --- M step on real cells ---
-        # update p_k
-        for k in range(K):
-            p[k] = (gamma_type[:, k][:, None] * Xr).sum(axis=0) + 1.0  # smoothing
-            p[k] /= p[k].sum()
 
-        # update alpha_j by 1D search
-        for j in range(Nr):
-            mix_cell = (1 - beta) * (gamma_type[j] @ p) + beta * p.mean(axis=0)
-            best_alpha, best_ll = alpha[j], -np.inf
-            for a_try in np.linspace(0, 1, 31):
-                pi_try = a_try * a + (1 - a_try) * mix_cell
-                pi_try = np.clip(pi_try, eps, 1.0)
-                ll = np.sum(Xr[j] * np.log(pi_try))
-                if ll > best_ll:
-                    best_ll, best_alpha = ll, a_try
-            alpha[j] = best_alpha
+        if not fixed_celltype:
+            # softmax to get percent of each cell type based off of log_p as "gamma_type"
+            log_p_type -= log_p_type.max(axis=1, keepdims=True)
+            r = np.exp(log_p_type)
+            r /= r.sum(axis=1, keepdims=True)
+            gamma_type = r
+            
+            # update p_k
+            for k in range(K):
+                p[k] = (gamma_type[:, k][:, None] * Xr).sum(axis=0) + 1.0  # pseudocount
+                p[k] /= p[k].sum()
+
+        # Maximize Alpha and Beta
+        from scipy.optimize import minimize
+
+        # --- objective ---
+        def negS(params):
+            alphas = params[:-1]
+            beta = params[-1]
+            s = (1.0 - beta) * (gamma_type @ p) + beta * m
+            t = alphas[:, None] * a + (1.0 - alphas)[:, None] * s
+            if np.any(t <= 0):
+                return np.inf
+            return -np.sum(Xr * np.log(t))
+
+        # --- analytic gradient ---
+        def grad_negS(params):
+            alphas = params[:-1]
+            beta = params[-1]
+            s = (1.0 - beta) * (gamma_type @ p) + beta * m
+            t = alphas[:, None] * a + (1.0 - alphas)[:, None] * s
+            if np.any(t <= 0):
+                return np.ones_like(params) * np.inf
+
+            dS_dalpha = np.sum(Xr * (a - s) / t, axis=1)
+            dS_dbeta = np.sum((1.0 - alphas)[:, None] * Xr * ((m - (gamma_type @ p))) / t)
+            grad = -np.concatenate([dS_dalpha, [dS_dbeta]])  # negate for minimize()
+            return grad
+        
+        start = np.concatenate([alpha, [beta]])
+        bounds = [(0.0, 1.0)] * (Nr + 1)
+        res = minimize(negS, start, jac=grad_negS, method="L-BFGS-B", bounds=bounds)
+        alpha = res.x[:-1]
+        beta = res.x[-1]
 
         # log-likelihood on real cells
-        loglike = np.sum(np.log(np.exp(log_p_type).sum(axis=1) + eps))
+        loglike = -res.fun
         if verbose:
             print(f"Iter {it+1:2d}: logL(real)={loglike:.3f}")
         if np.abs(loglike - loglike_prev) < 1e-4:
@@ -272,6 +293,8 @@ def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40
     # # Empties are pure ambient
     # X_hat[~real_mask] = X[~real_mask].toarray() if sp.issparse(X) else X[~real_mask]
 
+    if integer_out:
+        X_hat = np.round(X_hat).astype(int)
     adata.X = X_hat
     assert adata.X.shape == (adata.n_obs, adata.n_vars)
     assert len(adata.obs) == len(is_empty) == len(alpha_hat) == len(z_hat)
