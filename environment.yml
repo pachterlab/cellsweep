@@ -8,9 +8,5 @@ dependencies:
   - python==3.10
   - pip
   - r-base
-  - rpy2
-  - r-soupx
-  - bioconductor-decontx
-  - bioconductor-singlecelltk
   - pip:
     - .[analysis]

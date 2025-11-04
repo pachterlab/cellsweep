@@ -79,6 +79,16 @@ def main():  # noqa: C901
         help="Small value to avoid division by zero errors.",
     )
     parser_denoise_count_matrix.add_argument(
+        "--integer_out",
+        action="store_true",
+        help="Round denoised counts to nearest integer.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--fixed_celltype",
+        action="store_true",
+        help="Use fixed cell type annotations from adata.obs['cell_type'] if available.",
+    )
+    parser_denoise_count_matrix.add_argument(
         "--empty_droplet_method",
         type=str,
         default="threshold",
@@ -108,11 +118,6 @@ def main():  # noqa: C901
         type=str,
         default="Empty Droplet",
         help="Cell type name to assign to empty droplets.",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--round_counts",
-        action="store_true",
-        help="Round denoised counts to nearest integer.",
     )
     parser_denoise_count_matrix.add_argument(
         "-v", "--verbose",
@@ -168,12 +173,13 @@ def main():  # noqa: C901
             max_iter=args.max_iter,
             beta=args.beta,
             eps=args.eps,
+            integer_out=args.integer_out,
+            fixed_celltype=args.fixed_celltype,
             empty_droplet_method=args.empty_droplet_method,
             umi_cutoff=args.umi_cutoff,
             expected_cells=args.expected_cells,
             cell_ambient_fraction=args.cell_ambient_fraction,
             empty_droplet_celltype_name=args.empty_droplet_celltype_name,
-            round_counts=args.round_counts,
             verbose=args.verbose,
             log_file=args.log_file,
         )
