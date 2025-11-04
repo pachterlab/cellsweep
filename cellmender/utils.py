@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import scanpy as sc
 import logging
+from scipy import io, sparse
 from datetime import datetime
 import anndata as ad
 from scipy.stats import pearsonr
@@ -71,6 +72,7 @@ def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None,
         "Method C": ["cell1", "cell4", "cell5"],
     }
     """
+    upset_data_dict = {k: v for k, v in upset_data_dict.items() if v is not None}  # iterate through dict, and if a value is None, skip that entry
     upset_data = from_contents(upset_data_dict)
     ax_dict = UpSet(upset_data, show_counts=True).plot()
     if title:
@@ -479,12 +481,21 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
     if not (os.path.exists(wompwomp_env) or wompwomp_env in subprocess.run("conda env list", shell=True, capture_output=True, text=True).stdout):
         raise ValueError(f"wompwomp_env {wompwomp_env} does not exist as a path or conda environment.")
 
-    for i, ad in enumerate(adatas):
-        if displayed_column not in ad.obs.columns:
+    for adata in adatas.copy():
+        if adata is None:
+            if len(names) == len(adatas):
+                names.remove(names[adatas.index(adata)])
+            adatas.remove(adata)
+
+    for i, adata in enumerate(adatas):
+        if displayed_column not in adata.obs.columns:
             raise ValueError(f"adata at position {i} does not have '{displayed_column}' in .obs columns.")
 
     if names is None:
         names = [f"adata_{i}" for i in range(len(adatas))]
+    
+    if len(names) != len(adatas):
+        raise ValueError(f"Length of names ({len(names)}) does not match number of adatas ({len(adatas)}).")
     
     # if not os.path.exists(merged_df_csv):
     # Step 1: Get intersection of barcodes (shared cell IDs)
@@ -513,6 +524,10 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
 
 
 def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
+    if adata_raw is None or adata_processed is None:
+        print("One of the adatas is None, skipping dotplot generation.")
+        return
+
     common_cells = adata_raw.obs_names.intersection(adata_processed.obs_names)
     adata_raw_only_cellbender_cells = adata_raw[common_cells].copy()
     adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[[celltype_column, cluster_column]], how='left')
@@ -574,3 +589,78 @@ def count_cellbender_parameters(ckpt_tar_path):
     shutil.rmtree("./extracted_checkpoint")
 
     return total_params
+
+
+def read_r_matrix_into_anndata(file_prefix):
+    """
+    Read in the matrix output from R SoupX processing into an AnnData object.
+    Assumed files: 
+    1. {file_prefix}.mtx
+    2. {file_prefix}_genes.csv
+    3. {file_prefix}_barcodes.csv
+    """
+    if file_prefix is None:
+        print("No file prefix provided for reading R matrix into AnnData. Returning None.")
+        return None
+
+    for expected_file in [f"{file_prefix}.mtx", f"{file_prefix}_genes.csv", f"{file_prefix}_barcodes.csv"]:
+        if not os.path.exists(expected_file):
+            raise FileNotFoundError(f"Expected file not found: {expected_file}")
+
+    X = io.mmread(f"{file_prefix}.mtx").T.tocsr()
+    genes = pd.read_csv(f"{file_prefix}_genes.csv", header=None)[0].to_list()
+    barcodes = pd.read_csv(f"{file_prefix}_barcodes.csv", header=None)[0].to_list()
+
+    adata = ad.AnnData(X=X)
+    adata.var_names = genes
+    adata.obs_names = barcodes
+    return adata
+
+def check_counts_less_equal(adata_raw, adata_denoised):
+    X_raw = adata_raw.X
+    X_cb = adata_denoised.X
+
+    if sparse.issparse(X_raw):
+        diff_ok = (X_cb <= X_raw).nnz == X_raw.nnz if X_cb.nnz == X_raw.nnz else (X_cb <= X_raw).all()
+    else:
+        diff_ok = np.all(X_cb <= X_raw)
+
+    return diff_ok
+
+# anndata object, h5 path, h5ad path, or matrix directory (containing matrix.mtx, genes.tsv, barcodes.tsv)
+def load_adata(adata, logger=None, verbose=0, quiet=False):
+    if logger is None:
+        logger = setup_logger(verbose=verbose, quiet=quiet)
+    if isinstance(adata, str):
+        if adata.endswith(".h5ad"):
+            logger.info(f"Loading adata from {adata!r}")
+            adata = ad.read_h5ad(adata)
+        elif adata.endswith(".h5"):
+            logger.info(f"Loading adata from {adata!r}")
+            import scanpy as sc
+            adata = sc.read_10x_h5(adata)
+        elif os.path.isdir(adata):
+            logger.info(f"Loading 10x-style dataset from directory {adata!r}")
+            import scanpy as sc
+            mtx_path = os.path.join(adata, "matrix.mtx")
+            barcodes_path = os.path.join(adata, "barcodes.tsv")
+            genes_path = os.path.join(adata, "genes.tsv")
+            features_path = os.path.join(adata, "features.tsv")
+
+            # Detect 10x directory structure
+            if os.path.exists(mtx_path) and (os.path.exists(genes_path) or os.path.exists(features_path)) and os.path.exists(barcodes_path):
+                adata = sc.read_10x_mtx(
+                    adata,
+                    var_names="gene_symbols" if os.path.exists(genes_path) else "gene_ids",
+                    make_unique=True
+                )
+            else:
+                raise ValueError(f"Directory {adata!r} does not contain matrix.mtx + barcodes.tsv + genes.tsv/features.tsv.")
+        else:
+            raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file, an .h5 file, a matrix-containing directory, or an AnnData object.")
+    elif isinstance(adata, ad.AnnData):
+        pass
+        # adata = adata.copy()
+    else:
+        raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file, an .h5 file, a matrix-containing directory, or an AnnData object.")
+    return adata
