@@ -53,8 +53,7 @@ analysis = [
     "seaborn",
     "matplotlib",
     "celltypist",
-    "scikit-misc",
-    "cellbender==0.3.0",
+    "scikit-misc"
 ]
 
 [project.urls]
