@@ -123,24 +123,92 @@ def denoise_count_matrix(
     log_file: str | None = None,
 ):
     """
-    EM on *real* cells only, with:
-      - ambient fixed to the true ambient
-      - empty-vs-real fixed to the true empties
-    This is to test whether the p_k and alpha_i parts are behaving.
+    Denoise a count matrix using an Expectation-Maximization (EM) algorithm that
+    models each observed count as a mixture of ambient RNA and true cell-type signal.
 
-    adata (an anndata object or path to h5ad file) must have:
-    - adata.X
-    - adata.obs:
-      - celltype: cell type labels for each cell
-      - is_empty (optional): boolean indicating whether each cell is an empty droplet or not. If not present, it will be inferred using infer_empty_droplets().
-      - cell_ambient_fraction (optional): fraction of ambient RNA in each cell. If not present, it will be set to a default value (e.g., 0.01) for all cells. Can either pass in a constant, or a vector of length N (number of cells) to specify different ambient fractions for each cell.
+    This function operates on real cells only (excluding identified empty droplets),
+    fixing the ambient expression profile and optionally fixing cell-type assignments.
+    It iteratively estimates latent variables representing per-cell ambient fractions
+    (alpha_i) and per-cell-type expression profiles (p_k), until convergence.
 
-    - adata.var:
-      - ambient (optional): fraction of ambient RNA comprised by each gene
-    
-    - adata.uns
-      - celltype_profile (optional): DataFrame (n_celltypes x n_genes) - mean expression of each gene across all cells of that type. If not present, it will be inferred using infer_celltype_profile().
+    Parameters
+    ----------
+    adata : str | AnnData
+        Either an AnnData object or a path to an `.h5ad` file. Must contain:
+        - `adata.X` : count matrix (cells x genes)
+        - `adata.obs` :
+            * `celltype` : categorical cell-type label for each cell
+            * `is_empty` (optional) : boolean marking empty droplets. If absent,
+              they are inferred using `empty_droplet_method`.
+            * `cell_ambient_fraction` (optional) : fraction of ambient RNA per cell;
+              defaults to `cell_ambient_fraction` argument if missing.
+        - `adata.var` :
+            * `ambient` (optional) : per-gene ambient RNA fraction.
+        - `adata.uns` :
+            * `celltype_profile` (optional) : DataFrame (n_celltypes x n_genes)
+              giving mean expression for each cell type; inferred if absent.
 
+    adata_out : str, default "adata_straightened.h5ad"
+        Path to write the denoised AnnData object (must end with `.h5ad`).
+
+    max_iter : int, default 40
+        Maximum number of EM iterations.
+
+    beta : float, default 0.03
+        Smoothing parameter controlling update strength between iterations.
+
+    eps : float, default 1e-9
+        Numerical stability constant to prevent division by zero or log(0).
+
+    integer_out : bool, default False
+        If True, rounds denoised counts to nearest integer before saving.
+
+    fixed_celltype : bool, default False
+        If True, keeps cell-type assignments fixed during EM updates.
+
+    empty_droplet_method : str, default "threshold"
+        Strategy to infer empty droplets if `is_empty` is not present.
+        Options may include "threshold", "quantile", or model-based approaches.
+
+    umi_cutoff : int | None, default None
+        Optional absolute UMI count threshold for classifying droplets as empty.
+
+    expected_cells : int | None, default None
+        Expected number of real cells, used when estimating thresholds.
+        
+    cell_ambient_fraction : float, default 0.01
+        Default ambient fraction assigned to each cell when missing.
+
+    empty_droplet_celltype_name : str, default "Empty Droplet"
+        Name used in `celltype` to denote empty droplets.
+
+    verbose : int, default 0
+        Verbosity level (-2: silent, 0: normal, 2: debug).
+
+    quiet : bool, default False
+        Suppresses most log output when True.
+
+    log_file : str | None, default None
+        Optional path to save EM iteration logs.
+
+    Returns
+    -------
+    AnnData
+        Denoised AnnData object with updated `adata.X`, and
+        added fields such as:
+        - `adata.layers["denoised"]` : denoised count matrix
+        - `adata.obs["cell_ambient_fraction"]` : estimated ambient fraction per cell
+        - `adata.uns["em_convergence"]` : diagnostics and log-likelihood trace
+
+    Notes
+    -----
+    The EM algorithm proceeds by:
+      1. E-step: Estimate posterior probabilities of counts being ambient vs. true.
+      2. M-step: Update cell-type expression profiles and per-cell ambient fractions.
+      3. Iterate until convergence or reaching `max_iter`.
+
+    Designed primarily for benchmarking correctness of parameter updates rather than
+    for production-level denoising on empty droplets.
     """
     logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
 

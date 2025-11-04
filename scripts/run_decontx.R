@@ -3,19 +3,20 @@
 # --- Parse command-line arguments ---
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 3) {
-  cat("Usage: Rscript run_decontx.R <raw_tar_file_dir> <filtered_tar_file_dir> <decontx_output_prefix>\n")
+  cat("Usage: Rscript run_decontx.R <raw_tar_file_dir> <filtered_tar_file_dir> <anndata_out>\n")
   quit(status = 1)
 }
 
 raw_tar_file_dir      <- args[1]
 filtered_tar_file_dir <- args[2]
-decontx_output_prefix <- args[3]
+anndata_out <- args[3]
 
 # --- Load libraries ---
 suppressPackageStartupMessages({
   library(SingleCellTK)
   library(decontX)
   library(Matrix)
+  library(anndata)
 })
 
 cat("📦 Starting DecontX pipeline...\n")
@@ -44,16 +45,22 @@ sce <- decontX(sce, background = sce.raw)
 cat("Writing corrected count matrix...\n")
 decontx_counts <- assay(sce, "decontXcounts")
 
-Matrix::writeMM(decontx_counts, file = paste0(decontx_output_prefix, ".mtx"))
-write.table(
-rownames(decontx_counts),
-file = paste0(decontx_output_prefix, "_genes.csv"),
-row.names = FALSE, col.names = FALSE, quote = FALSE, sep = ","
+# Create obs / var data frames
+obs_df <- data.frame(cell_id = colnames(decontx_counts), row.names = colnames(decontx_counts))
+var_df <- data.frame(gene_id = rownames(decontx_counts), row.names = rownames(decontx_counts))
+
+ad <- AnnData(
+  X = decontx_counts,
+  obs = obs_df,
+  var = var_df,
+  uns = list(
+    metadata = list(
+      method = "decontX",
+      date = Sys.time()
+    )
+  )
 )
-write.table(
-colnames(decontx_counts),
-file = paste0(decontx_output_prefix, "_barcodes.csv"),
-row.names = FALSE, col.names = FALSE, quote = FALSE, sep = ","
-)
+
+write_h5ad(ad, anndata_out)
 
 cat("✅ DecontX completed successfully.\n")
