@@ -6,7 +6,8 @@ import pandas as pd
 import logging
 import anndata as ad
 import scipy.sparse as sp
-from scipy.stats import poisson, nbinom
+from pydantic import validate_call, Field
+from typing import Annotated
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
 
 #* take the mean expression of each gene across all empty droplets, and normalize to sum to 1.
@@ -102,8 +103,23 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
 
     return adata
 
-
-def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40, beta=0.03, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name="Empty Droplet", round_counts=True, verbose=0, quiet=False, log_file=None):
+@validate_call
+def denoise_count_matrix(
+    adata: str | ad.AnnData,
+    adata_out: Annotated[str, Field(pattern=r"\.h5ad$")] = "adata_straightened.h5ad",
+    max_iter: Annotated[int, Field(gt=0)] = 40,
+    beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
+    eps: Annotated[float, Field(gt=0)] = 1e-9,
+    empty_droplet_method: str = "threshold",
+    umi_cutoff: Annotated[int | None, Field(ge=0)] = None,
+    expected_cells: Annotated[int | None, Field(ge=0)] = None,
+    cell_ambient_fraction: Annotated[float, Field(ge=0, le=1)] = 0.01,
+    empty_droplet_celltype_name: str = "Empty Droplet",
+    round_counts: bool = True,
+    verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
+    quiet: bool = False,
+    log_file: str | None = None,
+):
     """
     EM on *real* cells only, with:
       - ambient fixed to the true ambient
