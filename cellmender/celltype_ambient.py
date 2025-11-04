@@ -94,12 +94,10 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
         else:
             mean_expr[i, :] = subX.mean(axis=0)
 
-    # Store in adata.uns
-    adata.uns["celltype_profile"] = pd.DataFrame(
-        mean_expr,
-        index=unique_cts,
-        columns=adata.var_names
-    )
+    # Store in adata.uns as a numeric matrix and metadata separately
+    adata.uns["celltype_profile"] = mean_expr  # (K × G) matrix
+    adata.uns["celltype_names"] = np.array(unique_cts)  # K-length array
+    adata.uns["celltype_profile_genes"] = np.array(adata.var_names)  # G-length array
 
     return adata
 
@@ -135,7 +133,7 @@ def denoise_count_matrix(
     ----------
     adata : str | AnnData
         Either an AnnData object or a path to an `.h5ad` file. Must contain:
-        - `adata.X` : count matrix (cells x genes)
+        - `adata.X` : cell count matrix (cells x genes)
         - `adata.obs` :
             * `celltype` : categorical cell-type label for each cell
             * `is_empty` (optional) : boolean marking empty droplets. If absent,
@@ -145,8 +143,9 @@ def denoise_count_matrix(
         - `adata.var` :
             * `ambient` (optional) : per-gene ambient RNA fraction.
         - `adata.uns` :
-            * `celltype_profile` (optional) : DataFrame (n_celltypes x n_genes)
-              giving mean expression for each cell type; inferred if absent.
+            * `celltype_profile` (optional) : cell type matrix giving mean expression for each cell type (K x G); inferred if absent.
+            * `celltype_names` (optional) : list of cell type names corresponding to rows of `celltype_profile`.
+            * `celltype_profile_genes` (optional) : list of gene names corresponding to columns of `celltype_profile`.
 
     adata_out : str, default "adata_straightened.h5ad"
         Path to write the denoised AnnData object (must end with `.h5ad`).
@@ -226,7 +225,7 @@ def denoise_count_matrix(
     if "ambient_fraction" not in adata.var.columns:
         adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method, verbose=verbose, quiet=quiet)
 
-    if "celltype_profile" not in adata.uns:
+    if "celltype_profile" not in adata.uns or "celltype_names" not in adata.uns:
         logger.info("adata.uns does not have 'celltype_profile'. Inferring cell type profiles using infer_celltype_profile().")
         adata = infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=empty_droplet_method, verbose=verbose, quiet=quiet)
 
@@ -237,7 +236,7 @@ def denoise_count_matrix(
     a = adata.var["ambient_fraction"].copy()   # FIXED ambient
     is_empty = adata.obs["is_empty"].copy()   # FIXED empties
     z_true = adata.obs["celltype"].copy()
-    z_true_str_to_int = {ct: i for i, ct in enumerate(adata.uns["celltype_profile"].index)}
+    z_true_str_to_int = {ct: i for i, ct in enumerate(adata.uns["celltype_names"])}
 
     # work only on real cells
     real_mask = ~is_empty
