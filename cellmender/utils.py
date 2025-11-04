@@ -18,8 +18,8 @@ import torch
 import tarfile
 from upsetplot import from_contents, UpSet
 
-def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):
-    if log_level is None:        
+def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):    
+    if log_level is None:
         if quiet or verbose < -1:  # -q
             log_level = logging.CRITICAL
         elif verbose == -1:
@@ -48,6 +48,8 @@ def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):
         print(f"Logging to {log_file}")
 
     logger = logging.getLogger(__name__)
+    if logger.hasHandlers():
+        return logger
     logger.propagate = False
     logger.setLevel(log_level)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", "%H:%M:%S")
@@ -318,7 +320,7 @@ def plot_per_cell_correlation(adata1, adata2, title="Per-cell Expression Correla
     if not show:
         plt.close()
 
-def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
+def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, hvg_flavor="seurat_v3", n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
     logger = setup_logger(verbose=verbose, quiet=quiet)
     logger.info(f"Adata initial shape: {adata.shape}")
     
@@ -384,7 +386,8 @@ def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, u
     #* HGVs
     if "highly_variable" not in adata.var.columns:
         logger.info(f"Identifying highly variable genes using 'highly_variable_genes' function. This step identifies the top {n_top_genes} genes that show the most variability across cells, which are often the most informative for downstream analyses like clustering and dimensionality reduction.")
-        sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes, flavor="seurat_v3")
+        layer = "counts" if hvg_flavor == "seurat_v3" else None
+        sc.pp.highly_variable_genes(adata, n_top_genes=n_top_genes, flavor=hvg_flavor, layer=layer)
 
     #* PCA
     if adata.varm is None or "PCs" not in adata.varm:
@@ -640,22 +643,33 @@ def load_adata(adata, logger=None, verbose=0, quiet=False):
             import scanpy as sc
             adata = sc.read_10x_h5(adata)
         elif os.path.isdir(adata):
-            logger.info(f"Loading 10x-style dataset from directory {adata!r}")
             import scanpy as sc
-            mtx_path = os.path.join(adata, "matrix.mtx")
-            barcodes_path = os.path.join(adata, "barcodes.tsv")
-            genes_path = os.path.join(adata, "genes.tsv")
-            features_path = os.path.join(adata, "features.tsv")
+            logger.info(f"Searching recursively for 10x-style dataset under {adata!r}")
 
-            # Detect 10x directory structure
-            if os.path.exists(mtx_path) and (os.path.exists(genes_path) or os.path.exists(features_path)) and os.path.exists(barcodes_path):
-                adata = sc.read_10x_mtx(
-                    adata,
-                    var_names="gene_symbols" if os.path.exists(genes_path) else "gene_ids",
-                    make_unique=True
+            found_dirs = []
+            for root, dirs, files in os.walk(adata):
+                files_lower = [f.lower() for f in files]
+                if "matrix.mtx" in files_lower and "barcodes.tsv" in files_lower and ("genes.tsv" in files_lower or "features.tsv" in files_lower):
+                    found_dirs.append(root)
+
+            if len(found_dirs) == 0:
+                raise FileNotFoundError(f"No valid 10x dataset found under {adata!r}. Expected matrix.mtx, barcodes.tsv, and genes.tsv or features.tsv.")
+            elif len(found_dirs) > 1:
+                raise RuntimeError(
+                    f"Multiple 10x-style datasets found under {adata!r}:\n" +
+                    "\n".join(found_dirs) +
+                    "\nPlease specify one directory explicitly."
                 )
-            else:
-                raise ValueError(f"Directory {adata!r} does not contain matrix.mtx + barcodes.tsv + genes.tsv/features.tsv.")
+
+            tenx_dir = found_dirs[0]
+            logger.info(f"Found 10x dataset in {tenx_dir!r}")
+            
+            use_gene_symbols = os.path.exists(os.path.join(tenx_dir, "genes.tsv"))
+            adata = sc.read_10x_mtx(
+                tenx_dir,
+                var_names="gene_symbols" if use_gene_symbols else "gene_ids",
+                make_unique=True
+            )
         else:
             raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file, an .h5 file, a matrix-containing directory, or an AnnData object.")
     elif isinstance(adata, ad.AnnData):
