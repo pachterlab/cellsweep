@@ -104,7 +104,24 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     return adata
 
 
-def denoise_count_matrix(adata, adata_out="adata_straightened.h5ad", max_iter=40, beta=0.03, eps=1e-9, integer_out = False, fixed_celltype = False, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name="Empty Droplet", verbose=0, quiet=False, log_file=None):
+@validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+def denoise_count_matrix(
+    adata: str | ad.AnnData,
+    adata_out: Annotated[str, Field(pattern=r"\.h5ad$")] = "adata_straightened.h5ad",
+    max_iter: Annotated[int, Field(gt=0)] = 40,
+    beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
+    eps: Annotated[float, Field(gt=0)] = 1e-9,
+    integer_out: bool = False,
+    fixed_celltype: bool = False,
+    empty_droplet_method: str = "threshold",
+    umi_cutoff: Annotated[int | None, Field(ge=0)] = None,
+    expected_cells: Annotated[int | None, Field(ge=0)] = None,
+    cell_ambient_fraction: Annotated[float, Field(ge=0, le=1)] = 0.01,
+    empty_droplet_celltype_name: str = "Empty Droplet",
+    verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
+    quiet: bool = False,
+    log_file: str | None = None,
+):
     """
     EM on *real* cells only, with:
       - ambient fixed to the true ambient
