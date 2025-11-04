@@ -36,6 +36,6 @@ Rscript -e 'remotes::install_local(".")'
 ```
 
 ## Docker
-docker run -p 8888:8888 josephrich98/cellmender:0.1.0
+docker run -it --rm -p 8888:8888 josephrich98/cellmender:0.1.0
 *go to localhost:8888*
 *copy-paste token on login - eg http://localhost:8888/lab?token=<your_token>*
