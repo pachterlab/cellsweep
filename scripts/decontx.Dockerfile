@@ -21,8 +21,7 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Install BiocManager and decontX from CRAN
-R -e 'install.packages(c("BiocManager", "anndata"), repos="https://cloud.r-project.org")'
-R -e 'BiocManager::install(c("singleCellTK", "decontX"), ask=FALSE, update=FALSE, version = "3.22")'
+RUN R -e 'install.packages(c("BiocManager", "anndata"), repos="https://cloud.r-project.org"); BiocManager::install(c("singleCellTK", "decontX"), ask=FALSE, update=FALSE, version = "3.22")'
 
 # Set working directory (same as your mounted path)
 WORKDIR /home/ruser/work/cellmender

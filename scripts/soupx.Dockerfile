@@ -4,7 +4,11 @@ FROM rocker/r-ver:4.5.1
 # Become root to install system dependencies
 USER root
 
-# Optional: install system dependencies needed for building R packages
+# --- Fix Ubuntu GPG verification issue ---
+RUN apt-get update || true && apt-get install -y --no-install-recommends gnupg ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# --- Install system dependencies ---
 RUN apt-get update && apt-get install -y \
     libcurl4-openssl-dev \
     libssl-dev \
