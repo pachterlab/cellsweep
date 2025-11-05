@@ -87,6 +87,12 @@ def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None,
 
 def take_adata_cell_gene_intersection(adata1, adata2):
     """Return copies of adata1 and adata2 with only the intersecting cells and genes."""
+    adata1, adata2 = adata1.copy(), adata2.copy()
+    adata1.obs_names_make_unique()
+    adata2.obs_names_make_unique()
+    adata1.var_names_make_unique()
+    adata2.var_names_make_unique()
+    
     common_cells = adata1.obs_names.intersection(adata2.obs_names)
     common_genes = adata1.var_names.intersection(adata2.var_names)
     adata1_sub = adata1[common_cells, common_genes].copy()
@@ -620,11 +626,13 @@ def read_r_matrix_into_anndata(file_prefix):
     return adata
 
 def check_counts_less_equal(adata_raw, adata_denoised):
+    adata_raw, adata_denoised = take_adata_cell_gene_intersection(adata_raw, adata_denoised)
+    
     X_raw = adata_raw.X
     X_cb = adata_denoised.X
 
     if sparse.issparse(X_raw):
-        diff_ok = (X_cb <= X_raw).nnz == X_raw.nnz if X_cb.nnz == X_raw.nnz else (X_cb <= X_raw).all()
+        diff_ok = not (X_cb > X_raw).nnz
     else:
         diff_ok = np.all(X_cb <= X_raw)
 
