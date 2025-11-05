@@ -7,28 +7,50 @@ import numpy as np
 import pandas as pd
 import anndata as ad
 import scipy.sparse as sp
+from pydantic import validate_call, Field, ConfigDict
+from typing import Annotated, Optional
 
+@validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def simulate_cells(
-    G=200,                         # number of genes
-    N=1000,                        # number of cells (barcodes)
-    k=5,                           # number of cell types
-    markers_per_type=30,           # number of marker genes per cell type
-    marker_boost=15.0,             # fold increase for marker genes in their type
-    type_proportions=None,         # vector of length k, normalized to 1
-    empty_prob=0.5,                # fraction of empty barcodes
-    alpha = 0.01,                 # fraction of size of ambient RNA relative to real cells
-    expected_cell_size = 10e3,     # expected library size for real cells
-    libsize_logmean=0.0,           # mean of log library-size scaling
-    libsize_logsd=0.5,             # sd of log library-size scaling
-    dispersion=2.0,                # NB dispersion (lower => more overdispersion)
-    dropout_midpoint=1.0,          # midpoint for dropout logistic curve
-    dropout_slope=1.5,             # slope for dropout probability curve
-    beta=0.03,                     # fraction of counts to swap (bulk noise)
-    rng_seed=42,                   # RNG seed
-    gene_prefix="Gene",            # gene name prefix
-    cell_prefix="Cell"             # cell name prefix
+    G : Annotated[int, Field(gt=0)] = 200,                         # number of genes
+    N : Annotated[int, Field(gt=0)] = 1000,                        # number of cells (barcodes)
+    k : Annotated[int, Field(gt=0)] = 5,                           # number of cell types
+    markers_per_type : Annotated[int, Field(gt=0)] = 30,           # number of marker genes per cell type
+    marker_boost : Annotated[float, Field(gt=0)] = 15.0,             # fold increase for marker genes in their type
+    type_proportions: Optional[np.ndarray] = None,         # vector of length k, normalized to 1
+    empty_prob : Annotated[float, Field(ge=0, le=1)] = 0.5,                # fraction of empty barcodes
+    alpha : Annotated[float, Field(ge=0, le=1)] = 0.01,                 # fraction of size of ambient RNA relative to real cells
+    expected_cell_size : Annotated[float, Field(gt=0)] = 10e3,     # expected library size for real cells
+    libsize_logmean : Annotated[float, Field(gt=0)] = 0.0,           # mean of log library-size scaling
+    libsize_logsd : Annotated[float, Field(gt=0)] = 0.5,             # sd of log library-size scaling
+    dispersion : Annotated[float, Field(gt=0)] = 2.0,                # NB dispersion (lower => more overdispersion)
+    dropout_midpoint : Annotated[float, Field(gt=0)] = 1.0,          # midpoint for dropout logistic curve
+    dropout_slope : Annotated[float, Field(gt=0)] = 1.5,             # slope for dropout probability curve
+    beta : Annotated[float, Field(ge=0, le=1)] = 0.03,                     # fraction of counts to swap (bulk noise)
+    rng_seed : Annotated[int, Field(ge=0)] = 42,                   # RNG seed
+    gene_prefix : Annotated[str, Field(min_length=1)] = "Gene",            # gene name prefix
+    cell_prefix : Annotated[str, Field(min_length=1)] = "Cell"             # cell name prefix
 ):
     """
+    G: number of genes
+    N: number of cells (barcodes)
+    k: number of cell types
+    markers_per_type: number of marker genes per cell type
+    marker_boost: fold increase for marker genes in their type
+    type_proportions: vector of length k, normalized to 1
+    empty_prob: fraction of empty barcodes
+    alpha: fraction of size of ambient RNA relative to real cells
+    expected_cell_size: expected library size for real cells
+    libsize_logmean: mean of log library-size scaling
+    libsize_logsd: sd of log library-size scaling
+    dispersion: NB dispersion (lower => more overdispersion)
+    dropout_midpoint: midpoint for dropout logistic curve
+    dropout_slope: slope for dropout probability curve
+    beta: fraction of counts to swap (bulk noise)
+    rng_seed: RNG seed
+    gene_prefix: gene name prefix
+    cell_prefix: cell name prefix
+
     Returns
     -------
     adata : AnnData
