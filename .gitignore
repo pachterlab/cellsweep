@@ -159,3 +159,5 @@ data/
 notebooks/output
 notebooks/data
 **/ckpt.tar.gz
+tmp.py
+tmp.ipynb
