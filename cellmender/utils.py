@@ -50,6 +50,7 @@ def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):
     logger = logging.getLogger(__name__)
     if logger.hasHandlers():
         return logger
+    
     logger.propagate = False
     logger.setLevel(log_level)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", "%H:%M:%S")
