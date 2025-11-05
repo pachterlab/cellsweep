@@ -626,6 +626,10 @@ def read_r_matrix_into_anndata(file_prefix):
     return adata
 
 def check_counts_less_equal(adata_raw, adata_denoised):
+    if adata_raw is None or adata_denoised is None:
+        print("One of the adatas is None, cannot check counts.")
+        return False
+    
     adata_raw, adata_denoised = take_adata_cell_gene_intersection(adata_raw, adata_denoised)
     
     X_raw = adata_raw.X
