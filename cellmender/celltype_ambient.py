@@ -262,8 +262,8 @@ def denoise_count_matrix(
         else:
             gamma_type[j] = 1.0 / K
     
-    number_of_parameters = (K * G) + Nr + K - 1  # p_k (KxG), alpha_i (Nr), m_k (K-1)
-    logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (p_k: {K*G:,}, alpha_i: {Nr:,}, m_k: {K-1:,})")
+    number_of_parameters = (Nr + G) * K + Nr + 1  # alpha_i (Nr), beta, gamma_type (Nr * K), p_k (K * G)
+    logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (alpha_i: {Nr:,}, beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
 
     # initial alpha: from truth
     if "cell_ambient_fraction" not in adata.obs.columns:
@@ -286,7 +286,7 @@ def denoise_count_matrix(
 
         # Calculate the log probability given current alpha and beta
         for k in range(K):
-            pi = alpha[:, None] * a + (1 - alpha)[:, None] * ((1 - beta) * p[k] + beta * m)
+            pi = (1 - beta) * (alpha[:, None] * a + (1 - alpha)[:, None] * p[k]) + beta * m
             pi = np.clip(pi, eps, 1.0) # avoid log(0)
             pi = np.asarray(pi)
             pi /= pi.sum(axis=1, keepdims=True)
@@ -294,7 +294,6 @@ def denoise_count_matrix(
 
 
         # --- M step on real cells ---
-
         if not fixed_celltype:
             # softmax to get percent of each cell type based off of log_p as "gamma_type"
             log_p_type = np.asarray(log_p_type)
@@ -313,25 +312,25 @@ def denoise_count_matrix(
 
         # --- objective ---
         def negS(params):
-            alphas = params[:-1]
-            beta = params[-1]
-            s = (1.0 - beta) * gamma_p + beta * m
-            t = alphas[:, None] * a + (1.0 - alphas)[:, None] * s
+            alpha_arg = params[:-1]
+            beta_arg = params[-1]
+            s = alpha_arg[:, None] * a + (1 - alpha_arg)[:, None] * gamma_p
+            t = (1.0 - beta_arg) * s + beta_arg * m
             if np.any(t <= 0):
                 return np.inf
             return -np.sum(Xr * np.log(t))
 
         # --- analytic gradient ---
         def grad_negS(params):
-            alphas = params[:-1]
-            beta = params[-1]
-            s = (1.0 - beta) * gamma_p + beta * m
-            t = alphas[:, None] * a + (1.0 - alphas)[:, None] * s
+            alpha_arg = params[:-1]
+            beta_arg = params[-1]
+            s = alpha_arg[:, None] * a + (1 - alpha_arg)[:, None] * gamma_p
+            t = (1.0 - beta_arg) * s + beta_arg * m
             if np.any(t <= 0):
                 return np.ones_like(params) * np.inf
 
-            dS_dalpha = np.sum(Xr * (a - s) / t, axis=1)
-            dS_dbeta = np.sum((1.0 - alphas)[:, None] * Xr * ((m - gamma_p)) / t)
+            dS_dalpha = np.sum(Xr * ((1 - beta_arg) * (a - gamma_p)) / t, axis=1)
+            dS_dbeta = np.sum(Xr * (m - s) / t)
             grad = -np.concatenate([dS_dalpha, [dS_dbeta]])  # negate for minimize()
             return grad
         
@@ -368,11 +367,10 @@ def denoise_count_matrix(
     real_mask = ~is_empty
 
     # For each real cell, compute expected signal from its inferred mixture
-    m = p.mean(axis=0)
     for i, j in enumerate(np.where(real_mask)[0]):
         k = z_hat[j]
-        mix_cell = (1 - beta) * p[k] + beta * m
-        pi_j = alpha_hat[j] * a + (1 - alpha_hat[j]) * mix_cell
+        mix_cell = (1-alpha_hat[j]) * p[k] + alpha_hat[j] * a
+        pi_j = (1 - beta) * mix_cell + beta * m
         pi_j /= pi_j.sum()  # normalize per gene
         X_hat[j] = X[j].sum() * pi_j  # rescale to same total counts
 
@@ -394,8 +392,8 @@ def denoise_count_matrix(
     adata.var["ambient_hat"] = a
     adata.uns["loglike"] = loglike
 
-    # if adata_out:
-    #     logger.info(f"Saving inferred adata to {adata_out!r}")
-    #     adata.write_h5ad(adata_out)
+    if adata_out:
+        logger.info(f"Saving inferred adata to {adata_out!r}")
+        adata.write_h5ad(adata_out)
     
     return adata
