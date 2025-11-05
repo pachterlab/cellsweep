@@ -343,8 +343,7 @@ def denoise_count_matrix(
 
         # log-likelihood on real cells
         loglike = np.sum(np.log(np.exp(log_p_type).sum(axis=1) + eps))
-        if verbose:
-            print(f"Iter {it+1:2d}: logL(real)={loglike:.3f}")
+        logger.info(f"Iter {it+1:2d}: log likelihood (real)={loglike:.3f}")
         if np.abs(loglike - loglike_prev) < 1e-4:
             break
         loglike_prev = loglike

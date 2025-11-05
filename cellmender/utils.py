@@ -1,6 +1,7 @@
 """Utils"""
 
 import os
+import gzip
 import shutil
 import subprocess
 import numpy as np
@@ -50,6 +51,7 @@ def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):
     logger = logging.getLogger(__name__)
     if logger.hasHandlers():
         return logger
+    
     logger.propagate = False
     logger.setLevel(log_level)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s", "%H:%M:%S")
@@ -120,6 +122,7 @@ def knee_plot(adata, expected_cells=None, out_path=None, show=True):
     # Plot (x=barcodes, y=knee)
     ax.plot(barcodes, knee, linewidth=2, color="gray")
 
+    cutoff_umi = None
     if expected_cells is not None:
         cutoff_umi = knee[expected_cells - 1]
 
@@ -154,6 +157,8 @@ def knee_plot(adata, expected_cells=None, out_path=None, show=True):
         plt.savefig(out_path, bbox_inches="tight")
     if not show:
         plt.close()
+
+    return cutoff_umi
 
 
 
@@ -626,6 +631,10 @@ def read_r_matrix_into_anndata(file_prefix):
     return adata
 
 def check_counts_less_equal(adata_raw, adata_denoised):
+    if adata_raw is None or adata_denoised is None:
+        print("One of the adatas is None, cannot check counts.")
+        return False
+    
     adata_raw, adata_denoised = take_adata_cell_gene_intersection(adata_raw, adata_denoised)
     
     X_raw = adata_raw.X
@@ -686,3 +695,113 @@ def load_adata(adata, logger=None, verbose=0, quiet=False):
     else:
         raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file, an .h5 file, a matrix-containing directory, or an AnnData object.")
     return adata
+
+
+def write_10x_like(
+    adata,
+    parent_dir,
+    gzip_output=True,
+    is_empty_col="is_empty",
+    celltype_col="celltype"
+):
+    """
+    Write an AnnData object to a 10x-like directory structure.
+
+    Structure:
+      parent_dir/
+          raw_gene_bc_matrices/
+              barcodes.tsv[.gz]
+              genes.tsv[.gz]
+              matrix.mtx[.gz]
+          filtered_gene_bc_matrices/
+              barcodes.tsv[.gz]
+              genes.tsv[.gz]
+              matrix.mtx[.gz]
+          celltypes.csv
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Object containing X, obs, var.
+        adata.obs must include columns specified by `is_empty_col` and `celltype_col`.
+
+    parent_dir : str
+        Output directory path to create/write into.
+
+    gzip_output : bool, default False
+        Whether to gzip-compress .tsv and .mtx files.
+
+    is_empty_col : str, default "is_empty"
+        Column name in adata.obs marking empty droplets (bool).
+
+    celltype_col : str, default "celltype"
+        Column name in adata.obs with cell type labels.
+
+    Returns
+    -------
+    dict
+        Paths of all generated files.
+    """
+    os.makedirs(parent_dir, exist_ok=True)
+    paths = {}
+
+    def _write_10x_subdir(subdir_name, mask):
+        subdir = os.path.join(parent_dir, subdir_name)
+        os.makedirs(subdir, exist_ok=True)
+
+        X = adata.X[mask]
+        if sparse.issparse(X):
+            X = X.tocoo()
+        else:
+            X = sparse.coo_matrix(X)
+
+        genes = adata.var_names
+        barcodes = adata.obs_names[mask]
+
+        suffix = ".gz" if gzip_output else ""
+
+        barcodes_path = os.path.join(subdir, f"barcodes.tsv{suffix}")
+        genes_path = os.path.join(subdir, f"genes.tsv{suffix}")
+        matrix_path = os.path.join(subdir, f"matrix.mtx{suffix}")
+
+        if gzip_output:
+            with gzip.open(barcodes_path, "wt") as f:
+                for b in barcodes:
+                    f.write(f"{b}\n")
+            with gzip.open(genes_path, "wt") as f:
+                for g in genes:
+                    f.write(f"{g}\t{g}\n")  # gene_id and gene_name identical
+            with gzip.open(matrix_path, "wb") as f:
+                io.mmwrite(f, X)
+        else:
+            pd.Series(barcodes).to_csv(barcodes_path, index=False, header=False)
+            pd.DataFrame({"gene_id": genes, "gene_name": genes}).to_csv(
+                genes_path, sep="\t", index=False, header=False
+            )
+            io.mmwrite(matrix_path, X)
+
+        return {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
+
+    # Raw matrix (all cells)
+    paths["raw"] = _write_10x_subdir("raw_gene_bc_matrices", mask=np.ones(adata.n_obs, dtype=bool))
+
+    # Filtered matrix (is_empty == False)
+    if is_empty_col not in adata.obs:
+        raise KeyError(f"Missing column '{is_empty_col}' in adata.obs")
+
+    mask_filtered = ~adata.obs[is_empty_col].astype(bool).values
+    paths["filtered"] = _write_10x_subdir("filtered_gene_bc_matrices", mask=mask_filtered)
+
+    # Celltypes
+    celltypes_path = os.path.join(parent_dir, "celltypes.csv")
+    adata.obs[[celltype_col, is_empty_col]].to_csv(celltypes_path)
+    paths["celltypes"] = celltypes_path
+
+    # technology
+    technology = "10XV3" if gzip_output else "10XV2"
+    paths["technology"] = technology
+
+    # soupx inputs: parent_dir, paths["celltypes"], soupx_out_prefix
+    # decontx inputs: paths["raw"], paths["filtered"], paths["technology"], decontx_out_prefix
+
+    return paths

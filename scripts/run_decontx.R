@@ -1,6 +1,7 @@
 #!/usr/bin/env Rscript
 
 # --- Parse command-line arguments ---
+args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 4) {
   cat("Usage: Rscript run_decontx.R <raw_tar_file_dir> <filtered_tar_file_dir> <sequencing_technology> <decontx_out_prefix>\n")
   quit(status = 1)
