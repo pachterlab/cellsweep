@@ -9,6 +9,7 @@ import scipy.sparse as sp
 from pydantic import validate_call, Field, ConfigDict
 from typing import Annotated
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
+from scipy.optimize import minimize
 
 #* take the mean expression of each gene across all empty droplets, and normalize to sum to 1.
 def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
@@ -244,6 +245,12 @@ def denoise_count_matrix(
     Xr = X[real_mask]           # (Nr, G)
     Nr = Xr.shape[0]
 
+    #!!! densify
+    if sp.issparse(Xr):
+        Xr = Xr.toarray()  # convert to dense numpy.ndarray
+    else:
+        Xr = np.asarray(Xr)  # ensure d
+
     # initial cell-type profiles: from truth
     p = adata.uns["celltype_profile"].copy()   # (K, G)
 
@@ -269,7 +276,7 @@ def denoise_count_matrix(
     a = np.asarray(a)
     p = np.asarray(p)
     loglike_prev = -np.inf
-    m = X.mean(axis=0) # bulk mean profile
+    m = np.asarray(X.mean(axis=0)) # bulk mean profile
 
     for it in range(max_iter):
         # --- E step on real cells ---
@@ -281,6 +288,7 @@ def denoise_count_matrix(
         for k in range(K):
             pi = alpha[:, None] * a + (1 - alpha)[:, None] * ((1 - beta) * p[k] + beta * m)
             pi = np.clip(pi, eps, 1.0) # avoid log(0)
+            pi = np.asarray(pi)
             pi /= pi.sum(axis=1, keepdims=True)
             log_p_type[:, k] = np.sum(Xr * np.log(pi), axis=1)
 
@@ -289,8 +297,10 @@ def denoise_count_matrix(
 
         if not fixed_celltype:
             # softmax to get percent of each cell type based off of log_p as "gamma_type"
+            log_p_type = np.asarray(log_p_type)
             log_p_type -= log_p_type.max(axis=1, keepdims=True)
             r = np.exp(log_p_type)
+            r = np.asarray(r)
             r /= r.sum(axis=1, keepdims=True)
             gamma_type = r
             
@@ -299,14 +309,13 @@ def denoise_count_matrix(
                 p[k] = (gamma_type[:, k][:, None] * Xr).sum(axis=0) + 1.0  # pseudocount
                 p[k] /= p[k].sum()
 
-        # Maximize Alpha and Beta
-        from scipy.optimize import minimize
+        gamma_p = np.asarray(gamma_type @ p)
 
         # --- objective ---
         def negS(params):
             alphas = params[:-1]
             beta = params[-1]
-            s = (1.0 - beta) * (gamma_type @ p) + beta * m
+            s = (1.0 - beta) * gamma_p + beta * m
             t = alphas[:, None] * a + (1.0 - alphas)[:, None] * s
             if np.any(t <= 0):
                 return np.inf
@@ -316,16 +325,17 @@ def denoise_count_matrix(
         def grad_negS(params):
             alphas = params[:-1]
             beta = params[-1]
-            s = (1.0 - beta) * (gamma_type @ p) + beta * m
+            s = (1.0 - beta) * gamma_p + beta * m
             t = alphas[:, None] * a + (1.0 - alphas)[:, None] * s
             if np.any(t <= 0):
                 return np.ones_like(params) * np.inf
 
             dS_dalpha = np.sum(Xr * (a - s) / t, axis=1)
-            dS_dbeta = np.sum((1.0 - alphas)[:, None] * Xr * ((m - (gamma_type @ p))) / t)
+            dS_dbeta = np.sum((1.0 - alphas)[:, None] * Xr * ((m - gamma_p)) / t)
             grad = -np.concatenate([dS_dalpha, [dS_dbeta]])  # negate for minimize()
             return grad
         
+        # optimize alpha and beta
         start = np.concatenate([alpha, [beta]])
         bounds = [(0.0, 1.0)] * (Nr + 1)
         res = minimize(negS, start, jac=grad_negS, method="L-BFGS-B", bounds=bounds)
@@ -333,7 +343,7 @@ def denoise_count_matrix(
         beta = res.x[-1]
 
         # log-likelihood on real cells
-        loglike = -res.fun
+        loglike = np.sum(np.log(np.exp(log_p_type).sum(axis=1) + eps))
         if verbose:
             print(f"Iter {it+1:2d}: logL(real)={loglike:.3f}")
         if np.abs(loglike - loglike_prev) < 1e-4:
@@ -384,8 +394,8 @@ def denoise_count_matrix(
     adata.var["ambient_hat"] = a
     adata.uns["loglike"] = loglike
 
-    if adata_out:
-        logger.info(f"Saving inferred adata to {adata_out!r}")
-        adata.write_h5ad(adata_out)
+    # if adata_out:
+    #     logger.info(f"Saving inferred adata to {adata_out!r}")
+    #     adata.write_h5ad(adata_out)
     
     return adata
