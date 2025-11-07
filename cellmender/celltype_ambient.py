@@ -358,27 +358,24 @@ def denoise_count_matrix(
     z_hat[real_mask] = np.argmax(gamma_type, axis=1)
 
     # --- Store previous matrix ---
-    if "raw" not in adata.layers:
-        adata.layers["raw"] = adata.X.copy()
+    if "observed" not in adata.layers:
+        adata.layers["observed"] = adata.X.copy()
 
     # --- Reconstruct expected clean matrix ---
-    X_hat = np.zeros((N, G), dtype=float)
+    X_signal = np.zeros((N, G), dtype=float)
     real_mask = ~is_empty
 
     # For each real cell, compute expected signal from its inferred mixture
     for i, j in enumerate(np.where(real_mask)[0]):
         k = z_hat[j]
-        mix_cell = (1-alpha_hat[j]) * p[k] + alpha_hat[j] * a
-        pi_j = (1 - beta) * mix_cell + beta * m
-        pi_j /= pi_j.sum()  # normalize per gene
-        X_hat[j] = X[j].sum() * pi_j  # rescale to same total counts
-
-    # # Empties are pure ambient
-    # X_hat[~real_mask] = X[~real_mask].toarray() if sp.issparse(X) else X[~real_mask]
+        pi_signal = (1 - beta) * ((1 - alpha_hat[j]) * p[k]) + beta * m
+        pi_signal /= pi_signal.sum()
+        X_signal[j] = X[j].sum() * pi_signal
 
     if integer_out:
-        X_hat = np.round(X_hat).astype(int)
-    adata.X = X_hat
+        X_signal = np.round(X_signal).astype(int)
+    adata.X = X_signal
+    adata.layers["noise"] = adata.layers["observed"] - adata.X
     assert adata.X.shape == (adata.n_obs, adata.n_vars)
     assert len(adata.obs) == len(is_empty) == len(alpha_hat) == len(z_hat)
     assert adata.var.shape[0] == len(a) == p.shape[1]
