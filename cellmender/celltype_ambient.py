@@ -254,8 +254,8 @@ def denoise_count_matrix(
     gamma_type = np.zeros((Nr, K))
     for j, i in enumerate(np.where(real_mask)[0]):
         gamma_type[j, z_true_str_to_int[z_true[i]]] = 1.0
-    
-    number_of_parameters = (Nr + G) * K + Nr + 1  # alpha_i (Nr), beta, gamma_type (Nr * K), p_k (K * G)
+
+    number_of_parameters = Nr + 1 + (Nr * K) + (K * G)  # alpha_i (Nr), beta (1), gamma_type (Nr * K), p_k (K * G)
     logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (alpha_i: {Nr:,}, beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
 
     # initial alpha: from truth
@@ -279,7 +279,7 @@ def denoise_count_matrix(
 
         # Calculate the log probability given current alpha and beta
         for k in range(K):
-            pi = (1 - beta) * (alpha[:, None] * a + (1 - alpha)[:, None] * p[k]) + beta * m
+            pi = (1 - beta) * (alpha[:, None] * a + (1 - alpha)[:, None] * p[k]) + beta * m  # bulk noise contributes m at fraction beta; non-bulk noise (at fraction 1-beta) contributes ambient (a) at fraction alpha, and cell-type profile p_k at fraction (1-alpha)
             pi = np.clip(pi, eps, 1.0) # avoid log(0)
             pi = np.asarray(pi)
             pi /= pi.sum(axis=1, keepdims=True)
@@ -356,7 +356,6 @@ def denoise_count_matrix(
 
     # --- Reconstruct expected clean matrix ---
     X_signal = np.zeros((N, G), dtype=float)
-    real_mask = ~is_empty
 
     # For each real cell, compute expected signal from its inferred mixture
     for i, j in enumerate(np.where(real_mask)[0]):
