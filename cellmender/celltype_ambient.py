@@ -116,7 +116,6 @@ def denoise_count_matrix(
     umi_cutoff: Annotated[int | None, Field(ge=0)] = None,
     expected_cells: Annotated[int | None, Field(ge=0)] = None,
     cell_ambient_fraction: Annotated[float, Field(ge=0, le=1)] = 0.01,
-    empty_droplet_celltype_name: str = "Empty Droplet",
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
     log_file: str | None = None,
@@ -178,9 +177,6 @@ def denoise_count_matrix(
         
     cell_ambient_fraction : float, default 0.01
         Default ambient fraction assigned to each cell when missing.
-
-    empty_droplet_celltype_name : str, default "Empty Droplet"
-        Name used in `celltype` to denote empty droplets.
 
     verbose : int, default 0
         Verbosity level (-2: silent, 0: normal, 2: debug).
@@ -257,10 +253,7 @@ def denoise_count_matrix(
     # initial responsibilities: from truth if available
     gamma_type = np.zeros((Nr, K))
     for j, i in enumerate(np.where(real_mask)[0]):
-        if z_true[i] != empty_droplet_celltype_name:
-            gamma_type[j, z_true_str_to_int[z_true[i]]] = 1.0
-        else:
-            gamma_type[j] = 1.0 / K
+        gamma_type[j, z_true_str_to_int[z_true[i]]] = 1.0
     
     number_of_parameters = (Nr + G) * K + Nr + 1  # alpha_i (Nr), beta, gamma_type (Nr * K), p_k (K * G)
     logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (alpha_i: {Nr:,}, beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
