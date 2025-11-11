@@ -112,23 +112,28 @@ def denoise_count_matrix(
     eps: Annotated[float, Field(gt=0)] = 1e-9,
     integer_out: bool = False,
     fixed_celltype: bool = False,
+    freeze_empty: bool = True,
     empty_droplet_method: str = "threshold",
     umi_cutoff: Annotated[int | None, Field(ge=0)] = None,
     expected_cells: Annotated[int | None, Field(ge=0)] = None,
     cell_ambient_fraction: Annotated[float, Field(ge=0, le=1)] = 0.01,
     empty_droplet_celltype_name: str = "Empty Droplet",
+    tol: Annotated[float, Field(ge=0)] = 1e-5,
+    random_state: Annotated[int | None, Field(ge=0)] = 42,
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
-    log_file: str | None = None,
+    log_file: str | None = None
 ):
     """
     Denoise a count matrix using an Expectation-Maximization (EM) algorithm that
-    models each observed count as a mixture of ambient RNA and true cell-type signal.
+    models each observed count as a mixture of ambient RNA, bulk RNA, and true cell-type 
+    signal.
 
-    This function operates on real cells only (excluding identified empty droplets),
+    This function optionally operates on real cells only (excluding identified empty droplets),
     fixing the ambient expression profile and optionally fixing cell-type assignments.
     It iteratively estimates latent variables representing per-cell ambient fractions
-    (alpha_i) and per-cell-type expression profiles (p_k), until convergence.
+    (alpha_i), a bulk contamination factor (beta), per-cell-type expression profiles 
+    (p_k), and an ambient contamination profile (a) until convergence.
 
     Parameters
     ----------
@@ -155,7 +160,7 @@ def denoise_count_matrix(
         Maximum number of EM iterations.
 
     beta : float, default 0.03
-        Smoothing parameter controlling update strength between iterations.
+        Initial fraction of counts attributed to bulk RNA contamination
 
     eps : float, default 1e-9
         Numerical stability constant to prevent division by zero or log(0).
@@ -165,6 +170,9 @@ def denoise_count_matrix(
 
     fixed_celltype : bool, default False
         If True, keeps cell-type assignments fixed during EM updates.
+
+    freeze_empty : bool, default True
+        If True, does not attempt to reestimate empty droplets
 
     empty_droplet_method : str, default "threshold"
         Strategy to infer empty droplets if `is_empty` is not present.
@@ -181,6 +189,12 @@ def denoise_count_matrix(
 
     empty_droplet_celltype_name : str, default "Empty Droplet"
         Name used in `celltype` to denote empty droplets.
+
+    tol: float, default 1e-5
+        The relative change in likelihood below which training is discontinued
+
+    random_state: int | None, default 42
+        Random seed
 
     verbose : int, default 0
         Verbosity level (-2: silent, 0: normal, 2: debug).
@@ -203,9 +217,9 @@ def denoise_count_matrix(
     Notes
     -----
     The EM algorithm proceeds by:
-      1. E-step: Estimate posterior probabilities of counts being ambient vs. true.
-      2. M-step: Update cell-type expression profiles and per-cell ambient fractions.
-      3. Iterate until convergence or reaching `max_iter`.
+      1. E-step: Update expected value of true, ambient noise, and bulk noise counts for each cell and gene.
+      2. M-step: Update parameters (alpha, beta, gamma, p_k, a).
+      3. Iterate until convergence (relative change in ll < `tol`) or reaching `max_iter`.
 
     Designed primarily for benchmarking correctness of parameter updates rather than
     for production-level denoising on empty droplets.
@@ -230,8 +244,8 @@ def denoise_count_matrix(
         logger.info("adata.uns does not have 'celltype_profile'. Inferring cell type profiles using infer_celltype_profile().")
         adata = infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=empty_droplet_method, verbose=verbose, quiet=quiet)
 
-    X = adata.X.astype(float)
-    N, G = X.shape
+    C = adata.X.astype(float)
+    N, G = C.shape
     K = adata.uns["celltype_profile"].shape[0]
 
     a = adata.var["ambient_fraction"].copy()   # FIXED ambient
@@ -242,154 +256,181 @@ def denoise_count_matrix(
     # work only on real cells
     real_mask = ~is_empty
     real_mask = np.asarray(real_mask)   # convert from Series → ndarray
-    Xr = X[real_mask]           # (Nr, G)
-    Nr = Xr.shape[0]
+    Nr = real_mask.sum()
 
     #!!! densify
-    if sp.issparse(Xr):
-        Xr = Xr.toarray()  # convert to dense numpy.ndarray
+    if sp.issparse(C):
+        C = C.toarray()  # convert to dense numpy.ndarray
     else:
-        Xr = np.asarray(Xr)  # ensure d
+        C = np.asarray(C)  # ensure dense
 
     # initial cell-type profiles: from truth
     p = adata.uns["celltype_profile"].copy()   # (K, G)
 
     # initial responsibilities: from truth if available
-    gamma_type = np.zeros((Nr, K))
+    gamma = np.zeros((N, K))
     for j, i in enumerate(np.where(real_mask)[0]):
-        if z_true[i] != empty_droplet_celltype_name:
-            gamma_type[j, z_true_str_to_int[z_true[i]]] = 1.0
+        if z_true.iloc[i] != empty_droplet_celltype_name:
+            gamma[j, z_true_str_to_int[z_true.iloc[i]]] = 1.0
         else:
-            gamma_type[j] = 1.0 / K
+            gamma[j] = 1.0 / K
     
-    number_of_parameters = (Nr + G) * K + Nr + 1  # alpha_i (Nr), beta, gamma_type (Nr * K), p_k (K * G)
-    logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (alpha_i: {Nr:,}, beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
+    if freeze_empty:
+        drop_param_num = Nr
+    else:
+        drop_param_num = N
 
-    # initial alpha: from truth
+    number_of_parameters = (drop_param_num + G) * (K + 1) + 1  # alpha_i (N), beta, gamma_type (N x K), p_k (K x G), a (G)
+    logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (alpha_i: {drop_param_num:,}, beta: {1:,}, gamma_type: {drop_param_num*K:,}, p_k: {K*G:,}, a: {G:,})")
+
+
+    # initial alpha
     if "cell_ambient_fraction" not in adata.obs.columns:
         logger.info("adata.obs does not have 'cell_ambient_fraction'. Setting to `cell_ambient_fraction` argument.")
         adata.obs.loc[real_mask, "cell_ambient_fraction"] = cell_ambient_fraction
         adata.obs.loc[~real_mask, "cell_ambient_fraction"] = 1.0
-    alpha = adata.obs["cell_ambient_fraction"][real_mask].copy()
+    alpha = adata.obs["cell_ambient_fraction"].copy()
 
     alpha = np.asarray(alpha)
     a = np.asarray(a)
     p = np.asarray(p)
-    loglike_prev = -np.inf
-    m = np.asarray(X.mean(axis=0)) # bulk mean profile
+    prev_ll = -np.inf
+    m = np.asarray(C.mean(axis=0)) # bulk mean profile
 
-    for it in range(max_iter):
-        # --- E step on real cells ---
-
-        # The log probability of cell j assuming cell type k
-        log_p_type = np.zeros((Nr, K))
-
-        # Calculate the log probability given current alpha and beta
-        for k in range(K):
-            pi = (1 - beta) * (alpha[:, None] * a + (1 - alpha)[:, None] * p[k]) + beta * m
-            pi = np.clip(pi, eps, 1.0) # avoid log(0)
-            pi = np.asarray(pi)
-            pi /= pi.sum(axis=1, keepdims=True)
-            log_p_type[:, k] = np.sum(Xr * np.log(pi), axis=1)
-
-
-        # --- M step on real cells ---
-        if not fixed_celltype:
-            # softmax to get percent of each cell type based off of log_p as "gamma_type"
-            log_p_type = np.asarray(log_p_type)
-            log_p_type -= log_p_type.max(axis=1, keepdims=True)
-            r = np.exp(log_p_type)
-            r = np.asarray(r)
-            r /= r.sum(axis=1, keepdims=True)
-            gamma_type = r
-            
-            # update p_k
-            for k in range(K):
-                p[k] = (gamma_type[:, k][:, None] * Xr).sum(axis=0) + 1.0  # pseudocount
-                p[k] /= p[k].sum()
-
-        gamma_p = np.asarray(gamma_type @ p)
-
-        # --- objective ---
-        def negS(params):
-            alpha_arg = params[:-1]
-            beta_arg = params[-1]
-            s = alpha_arg[:, None] * a + (1 - alpha_arg)[:, None] * gamma_p
-            t = (1.0 - beta_arg) * s + beta_arg * m
-            if np.any(t <= 0):
-                return np.inf
-            return -np.sum(Xr * np.log(t))
-
-        # --- analytic gradient ---
-        def grad_negS(params):
-            alpha_arg = params[:-1]
-            beta_arg = params[-1]
-            s = alpha_arg[:, None] * a + (1 - alpha_arg)[:, None] * gamma_p
-            t = (1.0 - beta_arg) * s + beta_arg * m
-            if np.any(t <= 0):
-                return np.ones_like(params) * np.inf
-
-            dS_dalpha = np.sum(Xr * ((1 - beta_arg) * (a - gamma_p)) / t, axis=1)
-            dS_dbeta = np.sum(Xr * (m - s) / t)
-            grad = -np.concatenate([dS_dalpha, [dS_dbeta]])  # negate for minimize()
-            return grad
+    for it in range(1, max_iter + 1):
+        # ----- E-step -----
         
-        # optimize alpha and beta
-        start = np.concatenate([alpha, [beta]])
-        bounds = [(0.0, 1.0)] * (Nr + 1)
-        res = minimize(negS, start, jac=grad_negS, method="L-BFGS-B", bounds=bounds)
-        alpha = res.x[:-1]
-        beta = res.x[-1]
+        # compute per-source weights w for each (n,g)
+        # Ambient component: 
+        w_A = (1.0 - beta) * alpha[:, None] * a[None, :]
+        # Bulk component: 
+        w_M = beta * m[None, :]
+        # Cell-type components: 
+        b_n = (1.0 - beta) * (1.0 - alpha)  # shape (N,)
+        w_P_sum = np.zeros((N, G), dtype=float)
+        w_Pk = np.zeros((N, K, G), dtype=float)  # N x K x G
+        for k in range(K):
+            # p[k] shape (G,)
+            # gamma[:,k] shape (N,)
+            comp = (b_n[:, None] * gamma[:, k][:, None]) * p[k][None, :]
+            w_Pk[:, k, :] = comp
+            w_P_sum += comp
+        
+        # total weight p_total per (n,g)
+        p_total = w_A + w_M + w_P_sum
+        # numerical safeguard: ensure p_total >= eps
+        p_total = np.maximum(p_total, eps)
+        
+        # Expected counts for each source
+        C_A = C * (w_A / p_total)
+        C_M = C * (w_M / p_total)
+        # For P_k:
+        C_Pk = np.zeros_like(w_Pk)
+        for k in range(K):
+            C_Pk[:, k, :] = C * (w_Pk[:, k, :] / p_total)
 
-        # log-likelihood on real cells
-        loglike = np.sum(np.log(np.exp(log_p_type).sum(axis=1) + eps))
-        logger.info(f"Iter {it+1:2d}: log likelihood (real)={loglike:.3f}")
-        if np.abs(loglike - loglike_prev) < 1e-4:
-            break
-        loglike_prev = loglike
+        def normalize_vector(x, eps=1e-12):
+            x = np.asarray(x, dtype=float)
+            s = x.sum()
+            if s <= 0:
+                return np.full_like(x, 1.0 / x.size)
+            return x / max(s, eps)
 
-    # build outputs back to full size
-    alpha_hat = np.zeros(N)
-    alpha_hat[real_mask] = alpha
-    alpha_hat[~real_mask] = 1.0  # empties
+        # ----- M-step -----
+        # Update p^k (with Dirichlet pseudocount)
+        p_new = np.zeros_like(p)
+        for k in range(K):
+            numer = C_Pk[:, k, :].sum(axis=0) + 1 # pseudocount
+            denom = numer.sum()
+            if denom <= 0:
+                p_new[k, :] = normalize_vector(np.full(G, 1.0 / G), eps)
+            else:
+                p_new[k, :] = numer / denom
+        
+        if not fixed_celltype:
+            # Update gamma_n: fraction of cell-derived counts contributed by each k
+            gamma_new = np.zeros_like(gamma)
+            numer_gamma = C_Pk.sum(axis=2)  # (N x K)
+            denom_gamma = numer_gamma.sum(axis=1, keepdims=True)  # (N x 1)
+            # avoid division by zero; if denom==0, leave gamma as previous (or uniform)
+            zero_rows = (denom_gamma.squeeze() == 0)
+            gamma_new[~zero_rows, :] = numer_gamma[~zero_rows, :] / denom_gamma[~zero_rows]
+            if np.any(zero_rows):
+                # keep old gamma for zero rows or set uniform
+                gamma_new[zero_rows, :] = gamma[zero_rows, :]
+        
+        # Update alpha_n 
+        A_n = C_A.sum(axis=1)  # expected ambient counts per droplet
+        Ccell_n = numer_gamma.sum(axis=1)  # expected cell-derived counts per droplet
+        alpha_raw = (A_n) / (A_n + Ccell_n)
+        
+        # if freezing empty droplets:
+        if freeze_empty and np.any(~real_mask):
+            alpha_raw[~real_mask] = 1.0
+        
+        # Update beta (global bulk fraction) from expected bulk counts
+        M_total = C_M.sum()
+        total_counts = C.sum()
+        beta = M_total / max(total_counts, 1.0)
+        
+        # Update ambient profile a (with Dirichlet pseudocount)
+        a_numer = C_A.sum(axis=0) + 1 # pseudocount
+        a = a_numer / max(a_numer.sum(), eps)
+
+        # compute (approx) log-likelihood for monitoring (multinomial log-likelihood)
+        # For numerical stability compute log of p_total but use small eps already set
+        ll_matrix = C * np.log(p_total)
+        ll = ll_matrix.sum()
+
+        logger.info(f"Iter {it+1:2d}: log likelihood (approx)={ll:.3f}")
+        if it > 1:
+            if np.abs((ll-prev_ll)/ max(1.0, np.abs(prev_ll))) < tol:
+                break
+        prev_ll = ll
+    
+    # After EM, compute denoised expectations
+    C_expected_cell = C_Pk.sum(axis=1)  # sum over k, shape (N,G)
+    C_expected_ambient = C_A
+    C_expected_bulk = C_M
+    
+    # Optionally integerize expected counts via floor + multinomial residuals per droplet
+    def integerize_floor_multinomial(expected_cell, random_state=None):
+        rng2 = np.random.default_rng(random_state)
+        N, G = expected_cell.shape
+        Cout = np.zeros_like(expected_cell, dtype=int)
+        for n in range(N):
+            base = np.floor(expected_cell[n]).astype(int)
+            residual = expected_cell[n] - base
+            Tadd = int(round(residual.sum()))
+            if Tadd > 0:
+                probs = residual / residual.sum()
+                add = rng2.multinomial(Tadd, probs)
+            else:
+                add = np.zeros(G, dtype=int)
+            Cout[n, :] = base + add
+        return Cout
+    
+    if integer_out:
+        C_integer_cell = integerize_floor_multinomial(C_expected_cell, random_state=random_state)
+        adata.X = C_integer_cell
+    else:
+        adata.X = np.clip(C - C_expected_ambient - C_expected_bulk, 0, None)
 
     # predicted labels for real cells
     z_hat = np.full(N, -1)
-    z_hat[real_mask] = np.argmax(gamma_type, axis=1)
+    z_hat = np.argmax(gamma, axis=1)
+    z_hat[~real_mask] = -1
 
-    # --- Store previous matrix ---
-    if "raw" not in adata.layers:
-        adata.layers["raw"] = adata.X.copy()
-
-    # --- Reconstruct expected clean matrix ---
-    X_hat = np.zeros((N, G), dtype=float)
-    real_mask = ~is_empty
-
-    # For each real cell, compute expected signal from its inferred mixture
-    for i, j in enumerate(np.where(real_mask)[0]):
-        k = z_hat[j]
-        mix_cell = (1-alpha_hat[j]) * p[k] + alpha_hat[j] * a
-        pi_j = (1 - beta) * mix_cell + beta * m
-        pi_j /= pi_j.sum()  # normalize per gene
-        X_hat[j] = X[j].sum() * pi_j  # rescale to same total counts
-
-    # # Empties are pure ambient
-    # X_hat[~real_mask] = X[~real_mask].toarray() if sp.issparse(X) else X[~real_mask]
-
-    if integer_out:
-        X_hat = np.round(X_hat).astype(int)
-    adata.X = X_hat
     assert adata.X.shape == (adata.n_obs, adata.n_vars)
-    assert len(adata.obs) == len(is_empty) == len(alpha_hat) == len(z_hat)
+    assert len(adata.obs) == len(is_empty) == len(alpha) == len(z_hat)
     assert adata.var.shape[0] == len(a) == p.shape[1]
 
     # --- Add inferred parameters back into obs/var/uns ---
-    adata.obs["is_empty_hat"] = is_empty
-    adata.obs["alpha_hat"] = alpha_hat
+    adata.obs["alpha_hat"] = alpha
     adata.obs["z_hat"] = z_hat
     adata.uns["p_hat"] = p
     adata.var["ambient_hat"] = a
-    adata.uns["loglike"] = loglike
+    adata.uns["loglike"] = prev_ll
 
     if adata_out:
         logger.info(f"Saving inferred adata to {adata_out!r}")
