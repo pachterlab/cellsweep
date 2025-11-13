@@ -179,6 +179,7 @@ def simulate_cells(
     X_real = sp.csr_matrix(real)
 
     obs = pd.DataFrame({
+        "cellid": [t+1 for t in cell_types],
         "celltype": [f"Type_{t}" for t in cell_types],
         "is_empty": is_empty.astype(bool),
         "ambient_fraction": alphas,
@@ -186,6 +187,7 @@ def simulate_cells(
     }, index=cell_names)
 
     obs["celltype"] = obs["celltype"].mask(is_empty, "Empty Droplet")
+    obs["cellid"] = obs["cellid"].mask(is_empty, -1)
 
     var = pd.DataFrame(index=gene_names)
     var["ambient_profile"] = pop_expected / pop_expected.sum()
