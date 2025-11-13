@@ -118,7 +118,7 @@ def denoise_count_matrix(
     expected_cells: Annotated[int | None, Field(ge=0)] = None,
     cell_ambient_fraction: Annotated[float, Field(ge=0, le=1)] = 0.01,
     empty_droplet_celltype_name: str = "Empty Droplet",
-    tol: Annotated[float, Field(ge=0)] = 1e-5,
+    tol: Annotated[float, Field(ge=0)] = 1e-6,
     random_state: Annotated[int | None, Field(ge=0)] = 42,
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
@@ -190,7 +190,7 @@ def denoise_count_matrix(
     empty_droplet_celltype_name : str, default "Empty Droplet"
         Name used in `celltype` to denote empty droplets.
 
-    tol: float, default 1e-5
+    tol: float, default 1e-6
         The relative change in likelihood below which training is discontinued
 
     random_state: int | None, default 42
@@ -269,11 +269,11 @@ def denoise_count_matrix(
 
     # initial responsibilities: from truth if available
     gamma = np.zeros((N, K))
-    for j, i in enumerate(np.where(real_mask)[0]):
+    for i in np.where(real_mask)[0]:
         if z_true.iloc[i] != empty_droplet_celltype_name:
-            gamma[j, z_true_str_to_int[z_true.iloc[i]]] = 1.0
+            gamma[i, z_true_str_to_int[z_true.iloc[i]]] = 1.0
         else:
-            gamma[j] = 1.0 / K
+            gamma[i] = 1.0 / K
     
     if freeze_empty:
         drop_param_num = Nr
@@ -295,7 +295,8 @@ def denoise_count_matrix(
     a = np.asarray(a)
     p = np.asarray(p)
     prev_ll = -np.inf
-    m = np.asarray(C.mean(axis=0)) # bulk mean profile
+    m = np.asarray(C.mean(axis=0)).ravel().astype(float)
+    m = (m + eps) / (m.sum() + G * eps) # bulk mean profile
 
     for it in range(1, max_iter + 1):
         # ----- E-step -----
@@ -337,36 +338,42 @@ def denoise_count_matrix(
             return x / max(s, eps)
 
         # ----- M-step -----
-        # Update p^k (with Dirichlet pseudocount)
-        p_new = np.zeros_like(p)
-        for k in range(K):
-            numer = C_Pk[:, k, :].sum(axis=0) + 1 # pseudocount
-            denom = numer.sum()
-            if denom <= 0:
-                p_new[k, :] = normalize_vector(np.full(G, 1.0 / G), eps)
-            else:
-                p_new[k, :] = numer / denom
-        
         if not fixed_celltype:
-            # Update gamma_n: fraction of cell-derived counts contributed by each k
-            gamma_new = np.zeros_like(gamma)
+            # Update p^k (with Dirichlet pseudocount)
+            p_new = np.zeros_like(p)
+            for k in range(K):
+                numer = C_Pk[:, k, :].sum(axis=0) + 1 # pseudocount
+                denom = numer.sum()
+                if denom <= 0:
+                    p_new[k, :] = normalize_vector(np.full(G, 1.0 / G), eps)
+                else:
+                    p_new[k, :] = numer / denom
+            p = p_new
+            
             numer_gamma = C_Pk.sum(axis=2)  # (N x K)
             denom_gamma = numer_gamma.sum(axis=1, keepdims=True)  # (N x 1)
+
+            # Update gamma_n: fraction of cell-derived counts contributed by each k
+            gamma_new = np.zeros_like(gamma)
             # avoid division by zero; if denom==0, leave gamma as previous (or uniform)
             zero_rows = (denom_gamma.squeeze() == 0)
             gamma_new[~zero_rows, :] = numer_gamma[~zero_rows, :] / denom_gamma[~zero_rows]
             if np.any(zero_rows):
                 # keep old gamma for zero rows or set uniform
                 gamma_new[zero_rows, :] = gamma[zero_rows, :]
+            gamma = gamma_new
+
+        if fixed_celltype:
+            numer_gamma = C_Pk.sum(axis=2)  # (N x K)
         
         # Update alpha_n 
         A_n = C_A.sum(axis=1)  # expected ambient counts per droplet
         Ccell_n = numer_gamma.sum(axis=1)  # expected cell-derived counts per droplet
-        alpha_raw = (A_n) / (A_n + Ccell_n)
+        alpha = (A_n) / (A_n + Ccell_n)
         
         # if freezing empty droplets:
         if freeze_empty and np.any(~real_mask):
-            alpha_raw[~real_mask] = 1.0
+            alpha[~real_mask] = 1.0
         
         # Update beta (global bulk fraction) from expected bulk counts
         M_total = C_M.sum()
