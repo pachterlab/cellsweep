@@ -101,204 +101,91 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
 
     return adata
 
-
-@validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-def denoise_count_matrix(
-    adata: str | ad.AnnData,
-    adata_out: Annotated[str, Field(pattern=r"\.h5ad$")] = "adata_straightened.h5ad",
-    max_iter: Annotated[int, Field(gt=0)] = 40,
-    beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
-    eps: Annotated[float, Field(gt=0)] = 1e-9,
-    dirichlet_lambda: Annotated[float, Field(gt=0)] = 0.1,
-    integer_out: bool = False,
-    fixed_celltype: bool = False,
-    freeze_empty: bool = True,
-    empty_droplet_method: str = "threshold",
-    umi_cutoff: Annotated[int | None, Field(ge=0)] = None,
-    expected_cells: Annotated[int | None, Field(ge=0)] = None,
-    cell_ambient_fraction: Annotated[float, Field(ge=0, le=1)] = 0.01,
-    empty_droplet_celltype_name: str = "Empty Droplet",
-    tol: Annotated[float, Field(ge=0)] = 1e-6,
-    random_state: Annotated[int | None, Field(ge=0)] = 42,
-    verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
-    quiet: bool = False,
-    log_file: str | None = None
-):
+def dense_integerize(expected_cell, random_state=None): 
     """
-    Denoise a count matrix using an Expectation-Maximization (EM) algorithm that
-    models each observed count as a mixture of ambient RNA, bulk RNA, and true cell-type 
-    signal.
-
-    This function optionally operates on real cells only (excluding identified empty droplets),
-    fixing the ambient expression profile and optionally fixing cell-type assignments.
-    It iteratively estimates latent variables representing per-cell ambient fractions
-    (alpha_i), a bulk contamination factor (beta), per-cell-type expression profiles 
-    (p_k), and an ambient contamination profile (a) until convergence.
-
-    Parameters
-    ----------
-    adata : str | AnnData
-        Either an AnnData object or a path to an `.h5ad` file. Must contain:
-        - `adata.X` : cell count matrix (cells x genes)
-        - `adata.obs` :
-            * `celltype` : categorical cell-type label for each cell
-            * `is_empty` (optional) : boolean marking empty droplets. If absent,
-              they are inferred using `empty_droplet_method`.
-            * `cell_ambient_fraction` (optional) : fraction of ambient RNA per cell;
-              defaults to `cell_ambient_fraction` argument if missing.
-        - `adata.var` :
-            * `ambient` (optional) : per-gene ambient RNA fraction.
-        - `adata.uns` :
-            * `celltype_profile` (optional) : cell type matrix giving mean expression for each cell type (K x G); inferred if absent.
-            * `celltype_names` (optional) : list of cell type names corresponding to rows of `celltype_profile`.
-            * `celltype_profile_genes` (optional) : list of gene names corresponding to columns of `celltype_profile`.
-
-    adata_out : str, default "adata_straightened.h5ad"
-        Path to write the denoised AnnData object (must end with `.h5ad`).
-
-    max_iter : int, default 40
-        Maximum number of EM iterations.
-
-    beta : float, default 0.03
-        Initial fraction of counts attributed to bulk RNA contamination
-
-    eps : float, default 1e-9
-        Numerical stability constant to prevent division by zero or log(0).
-
-    dirichlet_lambda: float, default 0.01
-        Pseudocount
-
-    integer_out : bool, default False
-        If True, rounds denoised counts to nearest integer before saving.
-
-    fixed_celltype : bool, default False
-        If True, keeps cell-type assignments fixed during EM updates.
-
-    freeze_empty : bool, default True
-        If True, does not attempt to reestimate empty droplets
-
-    empty_droplet_method : str, default "threshold"
-        Strategy to infer empty droplets if `is_empty` is not present.
-        Options may include "threshold", "quantile", or model-based approaches.
-
-    umi_cutoff : int | None, default None
-        Optional absolute UMI count threshold for classifying droplets as empty.
-
-    expected_cells : int | None, default None
-        Expected number of real cells, used when estimating thresholds.
-        
-    cell_ambient_fraction : float, default 0.01
-        Default ambient fraction assigned to each cell when missing.
-
-    empty_droplet_celltype_name : str, default "Empty Droplet"
-        Name used in `celltype` to denote empty droplets.
-
-    tol: float, default 1e-6
-        The relative change in likelihood below which training is discontinued
-
-    random_state: int | None, default 42
-        Random seed
-
-    verbose : int, default 0
-        Verbosity level (-2: silent, 0: normal, 2: debug).
-
-    quiet : bool, default False
-        Suppresses most log output when True.
-
-    log_file : str | None, default None
-        Optional path to save EM iteration logs.
-
-    Returns
-    -------
-    AnnData
-        Denoised AnnData object with updated `adata.X`, and
-        added fields such as:
-        - `adata.layers["denoised"]` : denoised count matrix
-        - `adata.obs["cell_ambient_fraction"]` : estimated ambient fraction per cell
-        - `adata.uns["em_convergence"]` : diagnostics and log-likelihood trace
-
-    Notes
-    -----
-    The EM algorithm proceeds by:
-      1. E-step: Update expected value of true, ambient noise, and bulk noise counts for each cell and gene.
-      2. M-step: Update parameters (alpha, beta, gamma, p_k, a).
-      3. Iterate until convergence (relative change in ll < `tol`) or reaching `max_iter`.
-
-    Designed primarily for benchmarking correctness of parameter updates rather than
-    for production-level denoising on empty droplets.
+    Converts dense float matrix to integer matrix through stochastic rounding
+    expected_cell : matrix of expected true-cell counts (float)
+    Returns: matrix (int) with floor + multinomial-distributed residual.
     """
-    
-    logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
-    adata = load_adata(adata, logger=logger)
-    if "celltype" not in adata.obs.columns:
-        raise KeyError("adata.obs must have column celltype.")
-    adata = adata.copy()
+    rng2 = np.random.default_rng(random_state) 
+    N, G = expected_cell.shape 
+    Cout = np.zeros_like(expected_cell, dtype=int) 
+    for n in range(N): 
+        base = np.floor(expected_cell[n]).astype(int) 
+        residual = expected_cell[n] - base 
+        Tadd = int(round(residual.sum())) 
+        if Tadd > 0: 
+            probs = residual / residual.sum() 
+            add = rng2.multinomial(Tadd, probs) 
+        else: 
+            add = np.zeros(G, dtype=int) 
+            Cout[n, :] = base + add 
+    return Cout
 
-    # ensure empty droplets are present
-    if "is_empty" not in adata.obs.columns:
-        logger.info("Inferring empty droplets.")
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff,
-                                     expected_cells=expected_cells, verbose=verbose, quiet=quiet)
+def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
+    """
+    Converts sparse float matrix to integer matrix through stochastic rounding
+    expected_cell : CSR matrix of expected true-cell counts (float)
+    Returns: CSR matrix (int) with floor + multinomial-distributed residual.
+    """
+    if not sp.isspmatrix_csr(expected_cell):
+        expected_cell = expected_cell.tocsr()
 
-    if "ambient_fraction" not in adata.var.columns:
-        adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method,
-                                            verbose=verbose, quiet=quiet)
+    rng = np.random.default_rng(random_state)
 
-    if "celltype_profile" not in adata.uns or "celltype_names" not in adata.uns:
-        logger.info("Inferring celltype profiles.")
-        adata = infer_celltype_profile(adata, celltype_key="celltype",
-                                       empty_droplet_method=empty_droplet_method,
-                                       verbose=verbose, quiet=quiet)
+    N, G = expected_cell.shape
+    indptr = expected_cell.indptr
+    indices = expected_cell.indices
+    data = expected_cell.data
 
-    # Use sparse CSR matrix for counts
-    C = adata.X
-    if not sp.isspmatrix_csr(C):
-        C = sp.csr_matrix(C)
-    N, G = C.shape
+    # triplets for sparse output
+    rows = []
+    cols = []
+    vals = []
 
-    K = adata.uns["celltype_profile"].shape[0]
+    for n in range(N):
+        rs = indptr[n]
+        re = indptr[n+1]
+        idx = indices[rs:re]       # nonzero gene indices
+        vals_row = data[rs:re]     # expected values (floats)
 
-    # ambient profile from var
-    a = np.asarray(adata.var["ambient_fraction"], dtype=float).ravel()
+        if len(idx) == 0:
+            continue
 
-    # empty mask
-    is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
-    real_mask = ~is_empty
+        # --- floor ---
+        base = np.floor(vals_row).astype(int)
 
-    # celltype mapping
-    z_true = adata.obs["celltype"].copy()
-    z_true_str_to_int = {ct: i for i, ct in enumerate(adata.uns["celltype_names"])}
+        # --- residual ---
+        residual = vals_row - base
+        rsum = residual.sum()
 
-    # initialize p from uns
-    p = np.asarray(adata.uns["celltype_profile"], dtype=float)
-    for k in range(K):
-        p[k] = (p[k] + dirichlet_lambda) / (p[k].sum() + G * dirichlet_lambda)
-
-    # initialize gamma
-    gamma = np.zeros((N, K), dtype=float)
-    for i in range(N):
-        ct = z_true.iloc[i]
-        if ct in z_true_str_to_int and ct != empty_droplet_celltype_name:
-            gamma[i, z_true_str_to_int[ct]] = 1.0
+        if rsum > 0:
+            probs = residual / rsum
+            Tadd = int(round(rsum))
+            # multinomial only on nz genes
+            add = rng.multinomial(Tadd, probs)
         else:
-            gamma[i, :] = 1.0 / K
+            add = np.zeros_like(base, dtype=int)
 
-    # initial alpha
-    if "cell_ambient_fraction" not in adata.obs.columns:
-        adata.obs.loc[real_mask, "cell_ambient_fraction"] = cell_ambient_fraction
-        adata.obs.loc[~real_mask, "cell_ambient_fraction"] = 1.0
-    alpha = np.asarray(adata.obs["cell_ambient_fraction"].copy(), dtype=float).ravel()
-    alpha = np.clip(alpha, eps, 1.0 - eps)
+        out_row = base + add
 
-    if freeze_empty:
-        alpha[~real_mask] = 1.0
-        gamma[~real_mask, :] = 0.0
+        # keep only nonzero entries (optional)
+        nz = out_row > 0
+        if np.any(nz):
+            rows.extend([n] * np.sum(nz))
+            cols.extend(idx[nz])
+            vals.extend(out_row[nz])
 
-    # initial beta + bulk m
-    beta = float(beta)
-    m_raw = np.array(C.sum(axis=0)).ravel().astype(float)
-    m_global = (m_raw + dirichlet_lambda) / (m_raw.sum() + G * dirichlet_lambda)
+    # build CSR int matrix
+    return sp.csr_matrix((np.array(vals, dtype=int),
+                          (np.array(rows, dtype=int), np.array(cols, dtype=int))),
+                         shape=(N, G))
 
+def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+              max_iter, tol, freeze_empty, fixed_celltype, 
+              real_mask, eps, dirichlet_lambda, 
+              verbose, logger):
+    
     # sparse structure
     indptr = C.indptr
     indices = C.indices
@@ -482,6 +369,323 @@ def denoise_count_matrix(
         shape=(N, G)
     )
 
+    return C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll
+
+def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
+             max_iter, tol, freeze_empty, fixed_celltype,
+             real_mask, eps, dirichlet_lambda,
+             verbose, logger):
+    
+    if real_mask is None:
+        real_mask = np.ones(N, dtype=bool)
+
+    prev_ll = -np.inf
+
+
+    # if freeze_empty, ensure empties have alpha=1 and gamma=0
+    if freeze_empty:
+        alpha[~real_mask] = 1.0
+        gamma[~real_mask, :] = 0.0
+
+    for it in range(1, max_iter + 1):
+        # Precompute per-row scalars and per-column vectors
+        b_n = (1.0 - beta) * (1.0 - alpha)      # (N,)
+        w_a = (1.0 - beta) * (alpha[:, None]) * (a[None, :])      # (N,G)
+        w_m = beta * m_global[None, :]                            # (1,G) broadcast to (N,G)
+
+        # Compute per-k contributions
+        w_Pk = (gamma[:, :, None] * p[None, :, :]) * b_n[:, None, None]  # (N,K,G)
+
+        # sum over k to get w_p_sum
+        w_p_sum = np.sum(w_Pk, axis=1)
+
+        # total mixture probabilities 
+        p_tot = w_a + w_m + w_p_sum + eps  # (N,G)
+
+        # E-step: expected counts per component
+        c_scale = C / p_tot                             # (N,G)
+
+        C_A = c_scale * w_a                             # ambient expected counts (N,G)
+        C_M = c_scale * w_m                             # bulk expected counts (N,G)
+
+        # For cell-type components: expected counts per k: C_Pk (N,K,G)
+        C_Pk = c_scale[:, None, :] * w_Pk               # broadcasting -> (N,K,G)
+
+        # Compose expected cell counts (sum over k)
+        C_cell = np.sum(C_Pk, axis=1)                   # (N,G)
+
+        # For freeze_empty: override contributions from empty droplets so empties only contribute to ambient
+        if freeze_empty:
+            # For empty droplet rows, force cell to 0, ambient uses full expected ambient
+            empties = ~real_mask
+            if np.any(empties):
+                C_cell[empties, :] = 0.0
+
+        # Sufficient statistics for M-step:
+        p_numer = np.sum(C_Pk, axis=0)  # (K, G)
+        a_numer = np.sum(C_A, axis=0)   # (G,)
+        numer_gamma = np.sum(C_Pk, axis=2)  # (N,K)
+
+        # per-cell ambient counts
+        A_n = np.sum(C_A, axis=1)        # (N,)
+        # total bulk expected
+        M_total = np.sum(C_M)            # scalar
+
+        # compute log-likelihood
+        ll = float(np.sum(C * np.log(p_tot)))
+
+        # ---------------- M-step ----------------
+        if not fixed_celltype:
+            # update p
+            for k in range(K):
+                numer = p_numer[k, :] + dirichlet_lambda
+                denom = numer.sum()
+                p[k, :] = numer / max(denom, eps)
+
+            # update gamma for real droplets only (keep empties unchanged if freeze_empty)
+            row_sums = np.sum(numer_gamma, axis=1)  # (N,)
+            nz = row_sums > 0
+            gamma_new = gamma.copy()
+            gamma_new[nz, :] = numer_gamma[nz, :] / row_sums[nz, None]
+            gamma = gamma_new
+
+        # update alpha
+        Ccell_n = np.sum(numer_gamma, axis=1)  # (N,)
+        alpha = A_n / np.maximum(A_n + Ccell_n, eps)
+        if freeze_empty:
+            alpha[~real_mask] = 1.0
+
+        # update beta (with numerical guard)
+        total_counts = np.sum(C)
+        beta = float(M_total / max(total_counts, 1.0))
+
+        # update ambient profile a
+        a = (a_numer + dirichlet_lambda)
+        a = a / max(a.sum(), eps)
+
+        if verbose and logger is not None:
+            logger.info(f"EM Iter {it:3d}: ll={ll:.3f} beta={beta:.6f}")
+
+        # convergence check
+        if it > 1 and abs((ll - prev_ll) / max(abs(prev_ll), 1.0)) < tol:
+            if verbose and logger is not None:
+                logger.info("Converged.")
+            break
+        prev_ll = ll
+
+    # final expected matrices
+    C_expected_cell = C_cell    # ndarray (N,G)
+    C_expected_ambient = C_A
+    C_expected_bulk = C_M
+
+    return C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll
+
+
+@validate_call(config=ConfigDict(arbitrary_types_allowed=True))
+def denoise_count_matrix(
+    adata: str | ad.AnnData,
+    adata_out: Annotated[str, Field(pattern=r"\.h5ad$")] = "adata_straightened.h5ad",
+    max_iter: Annotated[int, Field(gt=0)] = 40,
+    beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
+    eps: Annotated[float, Field(gt=0)] = 1e-9,
+    dirichlet_lambda: Annotated[float, Field(gt=0)] = 0.1,
+    integer_out: bool = False,
+    fixed_celltype: bool = False,
+    freeze_empty: bool = True,
+    empty_droplet_method: str = "threshold",
+    umi_cutoff: Annotated[int | None, Field(ge=0)] = None,
+    expected_cells: Annotated[int | None, Field(ge=0)] = None,
+    cell_ambient_fraction: Annotated[float, Field(ge=0, le=1)] = 0.01,
+    empty_droplet_celltype_name: str = "Empty Droplet",
+    tol: Annotated[float, Field(ge=0)] = 1e-6,
+    random_state: Annotated[int | None, Field(ge=0)] = 42,
+    verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
+    quiet: bool = False,
+    log_file: str | None = None
+):
+    """
+    Denoise a count matrix using an Expectation-Maximization (EM) algorithm that
+    models each observed count as a mixture of ambient RNA, bulk RNA, and true cell-type 
+    signal.
+
+    This function optionally operates on real cells only (excluding identified empty droplets),
+    fixing the ambient expression profile and optionally fixing cell-type assignments.
+    It iteratively estimates latent variables representing per-cell ambient fractions
+    (alpha_i), a bulk contamination factor (beta), per-cell-type expression profiles 
+    (p_k), and an ambient contamination profile (a) until convergence.
+
+    Parameters
+    ----------
+    adata : str | AnnData
+        Either an AnnData object or a path to an `.h5ad` file. Must contain:
+        - `adata.X` : cell count matrix (cells x genes)
+        - `adata.obs` :
+            * `celltype` : categorical cell-type label for each cell
+            * `is_empty` (optional) : boolean marking empty droplets. If absent,
+              they are inferred using `empty_droplet_method`.
+            * `cell_ambient_fraction` (optional) : fraction of ambient RNA per cell;
+              defaults to `cell_ambient_fraction` argument if missing.
+        - `adata.var` :
+            * `ambient` (optional) : per-gene ambient RNA fraction.
+        - `adata.uns` :
+            * `celltype_profile` (optional) : cell type matrix giving mean expression for each cell type (K x G); inferred if absent.
+            * `celltype_names` (optional) : list of cell type names corresponding to rows of `celltype_profile`.
+            * `celltype_profile_genes` (optional) : list of gene names corresponding to columns of `celltype_profile`.
+
+    adata_out : str, default "adata_straightened.h5ad"
+        Path to write the denoised AnnData object (must end with `.h5ad`).
+
+    max_iter : int, default 40
+        Maximum number of EM iterations.
+
+    beta : float, default 0.03
+        Initial fraction of counts attributed to bulk RNA contamination
+
+    eps : float, default 1e-9
+        Numerical stability constant to prevent division by zero or log(0).
+
+    dirichlet_lambda: float, default 0.01
+        Pseudocount
+
+    integer_out : bool, default False
+        If True, rounds denoised counts to nearest integer before saving.
+
+    fixed_celltype : bool, default False
+        If True, keeps cell-type assignments fixed during EM updates.
+
+    freeze_empty : bool, default True
+        If True, does not attempt to reestimate empty droplets
+
+    empty_droplet_method : str, default "threshold"
+        Strategy to infer empty droplets if `is_empty` is not present.
+        Options may include "threshold", "quantile", or model-based approaches.
+
+    umi_cutoff : int | None, default None
+        Optional absolute UMI count threshold for classifying droplets as empty.
+
+    expected_cells : int | None, default None
+        Expected number of real cells, used when estimating thresholds.
+        
+    cell_ambient_fraction : float, default 0.01
+        Default ambient fraction assigned to each cell when missing.
+
+    empty_droplet_celltype_name : str, default "Empty Droplet"
+        Name used in `celltype` to denote empty droplets.
+
+    tol: float, default 1e-6
+        The relative change in likelihood below which training is discontinued
+
+    random_state: int | None, default 42
+        Random seed
+
+    verbose : int, default 0
+        Verbosity level (-2: silent, 0: normal, 2: debug).
+
+    quiet : bool, default False
+        Suppresses most log output when True.
+
+    log_file : str | None, default None
+        Optional path to save EM iteration logs.
+
+    Returns
+    -------
+    AnnData
+        Denoised AnnData object with updated `adata.X`, and
+        added fields such as:
+        - `adata.layers["denoised"]` : denoised count matrix
+        - `adata.obs["cell_ambient_fraction"]` : estimated ambient fraction per cell
+        - `adata.uns["em_convergence"]` : diagnostics and log-likelihood trace
+
+    Notes
+    -----
+    The EM algorithm proceeds by:
+      1. E-step: Update expected value of true, ambient noise, and bulk noise counts for each cell and gene.
+      2. M-step: Update parameters (alpha, beta, gamma, p_k, a).
+      3. Iterate until convergence (relative change in ll < `tol`) or reaching `max_iter`.
+
+    Designed primarily for benchmarking correctness of parameter updates rather than
+    for production-level denoising on empty droplets.
+    """
+    
+    logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
+    adata = load_adata(adata, logger=logger)
+    if "celltype" not in adata.obs.columns:
+        raise KeyError("adata.obs must have column celltype.")
+    adata = adata.copy()
+
+    # ensure empty droplets are present
+    if "is_empty" not in adata.obs.columns:
+        logger.info("Inferring empty droplets.")
+        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff,
+                                     expected_cells=expected_cells, verbose=verbose, quiet=quiet)
+
+    if "ambient_fraction" not in adata.var.columns:
+        adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method,
+                                            verbose=verbose, quiet=quiet)
+
+    if "celltype_profile" not in adata.uns or "celltype_names" not in adata.uns:
+        logger.info("Inferring celltype profiles.")
+        adata = infer_celltype_profile(adata, celltype_key="celltype",
+                                       empty_droplet_method=empty_droplet_method,
+                                       verbose=verbose, quiet=quiet)
+
+    C = adata.X
+    N, G = C.shape
+    K = adata.uns["celltype_profile"].shape[0]
+
+    # ambient profile from var
+    a = np.asarray(adata.var["ambient_fraction"], dtype=float).ravel()
+
+    # empty mask
+    is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
+    real_mask = ~is_empty
+
+    # celltype mapping
+    z_true = adata.obs["celltype"].copy()
+    z_true_str_to_int = {ct: i for i, ct in enumerate(adata.uns["celltype_names"])}
+
+    # initialize p from uns
+    p = np.asarray(adata.uns["celltype_profile"], dtype=float)
+    for k in range(K):
+        p[k] = (p[k] + dirichlet_lambda) / (p[k].sum() + G * dirichlet_lambda)
+
+    # initialize gamma
+    gamma = np.zeros((N, K), dtype=float)
+    for i in range(N):
+        ct = z_true.iloc[i]
+        if ct in z_true_str_to_int and ct != empty_droplet_celltype_name:
+            gamma[i, z_true_str_to_int[ct]] = 1.0
+        else:
+            gamma[i, :] = 1.0 / K
+
+    # initial alpha
+    if "cell_ambient_fraction" not in adata.obs.columns:
+        adata.obs.loc[real_mask, "cell_ambient_fraction"] = cell_ambient_fraction
+        adata.obs.loc[~real_mask, "cell_ambient_fraction"] = 1.0
+    alpha = np.asarray(adata.obs["cell_ambient_fraction"].copy(), dtype=float).ravel()
+    alpha = np.clip(alpha, eps, 1.0 - eps)
+
+    if freeze_empty:
+        alpha[~real_mask] = 1.0
+        gamma[~real_mask, :] = 0.0
+
+    # initial beta + bulk m
+    beta = float(beta)
+    m_raw = np.array(C.sum(axis=0)).ravel().astype(float)
+    m_global = (m_raw + dirichlet_lambda) / (m_raw.sum() + G * dirichlet_lambda)
+
+    if sp.issparse(C):
+        if not sp.isspmatrix_csr(C):
+            C = sp.csr_matrix(C)
+        C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+                                                                                                            max_iter, tol, freeze_empty, fixed_celltype, real_mask,                                                                                                         
+                                                                                                            eps, dirichlet_lambda, verbose, logger)
+    else:
+        np.asarray(C)
+        C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+                                                                                                           max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
+                                                                                                           eps, dirichlet_lambda, verbose, logger)
+
     # ============================
     #      DENOISED COUNTS
     # ============================
@@ -503,27 +707,13 @@ def denoise_count_matrix(
     adata.var["ambient_hat"] = a
     adata.uns["loglike"] = prev_ll
 
-    def integerize_floor_multinomial(expected_cell, random_state=None): 
-        rng2 = np.random.default_rng(random_state) 
-        N, G = expected_cell.shape 
-        Cout = np.zeros_like(expected_cell, dtype=int) 
-        for n in range(N): 
-            base = np.floor(expected_cell[n]).astype(int) 
-            residual = expected_cell[n] - base 
-            Tadd = int(round(residual.sum())) 
-            if Tadd > 0: 
-                probs = residual / residual.sum() 
-                add = rng2.multinomial(Tadd, probs) 
-            else: 
-                add = np.zeros(G, dtype=int) 
-                Cout[n, :] = base + add 
-        return Cout
-
     # Replace adata.X
     if integer_out:
         # integerization: optional
-        D = C_denoised.toarray()
-        C_integer = integerize_floor_multinomial(D, random_state=random_state)
+        if sp.issparse(C_denoised):
+            C_integer =  sparse_integerize(C_denoised, random_state=random_state)
+        else:
+            C_integer =  dense_integerize(C_denoised, random_state=random_state)
         adata.X = C_integer
     else:
         adata.X = C_denoised
