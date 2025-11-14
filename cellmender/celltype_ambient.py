@@ -7,7 +7,7 @@ import logging
 import anndata as ad
 import scipy.sparse as sp
 from pydantic import validate_call, Field, ConfigDict
-from typing import Annotated
+from typing import Annotated, Optional
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
 
 #* take the mean expression of each gene across all empty droplets, and normalize to sum to 1.
@@ -494,20 +494,20 @@ def denoise_count_matrix(
     beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
     beta_prior_strength: Annotated[float, Field(ge=0)] = None,
     eps: Annotated[float, Field(gt=0)] = 1e-9,
-    dirichlet_lambda: Annotated[float, Field(ge=0)] = 0.1,
+    dirichlet_lambda: Optional[Annotated[float, Field(gt=0)]] = 0.1,
     integer_out: bool = False,
     fixed_celltype: bool = False,
     freeze_empty: bool = True,
     empty_droplet_method: str = "threshold",
-    umi_cutoff: Annotated[int | None, Field(ge=0)] = None,
-    expected_cells: Annotated[int | None, Field(ge=0)] = None,
+    umi_cutoff: Optional[Annotated[int, Field(ge=0)]] = None,
+    expected_cells: Optional[Annotated[int, Field(ge=0)]] = None,
     cell_ambient_fraction: Annotated[float, Field(ge=0, le=1)] = 0.01,
     empty_droplet_celltype_name: str = "Empty Droplet",
-    tol: Annotated[float, Field(ge=0)] = 1e-6,
-    random_state: Annotated[int | None, Field(ge=0)] = 42,
+    tol: Optional[Annotated[float, Field(ge=0)]] = 1e-6,
+    random_state: Optional[Annotated[int, Field(ge=0)]] = 42,
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
-    log_file: str | None = None
+    log_file: Optional[str] = None
 ):
     """
     Denoise a count matrix using an Expectation-Maximization (EM) algorithm that
@@ -632,6 +632,7 @@ def denoise_count_matrix(
                                      expected_cells=expected_cells, verbose=verbose, quiet=quiet)
 
     if "ambient_fraction" not in adata.var.columns:
+        logger.info("Inferring gene ambient fractions.")
         adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method,
                                             verbose=verbose, quiet=quiet)
 
@@ -651,6 +652,11 @@ def denoise_count_matrix(
     # empty mask
     is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
     real_mask = ~is_empty
+    Nr = real_mask.sum()
+
+    # count parameters
+    number_of_parameters = Nr + 1 + (Nr * K) + (K * G)  # alpha_i (Nr), beta (1), gamma_type (Nr * K), p_k (K * G)
+    logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (alpha_i: {Nr:,}, beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
 
     # celltype mapping
     z_true = adata.obs["celltype"].copy()
@@ -672,6 +678,7 @@ def denoise_count_matrix(
 
     # initial alpha
     if "cell_ambient_fraction" not in adata.obs.columns:
+        logger.info("adata.obs does not have 'cell_ambient_fraction'. Setting to `cell_ambient_fraction` argument.")
         adata.obs.loc[real_mask, "cell_ambient_fraction"] = cell_ambient_fraction
         adata.obs.loc[~real_mask, "cell_ambient_fraction"] = 1.0
     alpha = np.asarray(adata.obs["cell_ambient_fraction"].copy(), dtype=float).ravel()

@@ -18,10 +18,18 @@ cd cellmender
 conda env create -f environment.yml
 ```
 
-To install [wompwomp](https://github.com/pachterlab/wompwomp):
+To install [scAR](https://github.com/Novartis/scar):
 ```
-git clone https://github.com/pachterlab/wompwomp.git
-cd wompwomp
+git clone https://github.com/Novartis/scar.git
+cd scar
+If CPU: conda env create -f scar-cpu.yml
+If GPU: conda env create -f scar-gpu.yml
+```
+
+To install [biowomp](https://github.com/pachterlab/biowomp):
+```
+git clone https://github.com/pachterlab/biowomp.git
+cd biowomp
 conda env create -f environment.yml
 conda activate wompwomp_env
 Rscript -e 'remotes::install_local(".")'
