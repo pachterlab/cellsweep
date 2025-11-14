@@ -185,7 +185,9 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
               max_iter, tol, freeze_empty, fixed_celltype, 
               real_mask, eps, dirichlet_lambda, 
               verbose, logger):
-    
+    """
+    Helper for denoise_count_matrix. Performs sparse compatible EM on model
+    """
     # sparse structure
     indptr = C.indptr
     indices = C.indices
@@ -375,6 +377,9 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
              max_iter, tol, freeze_empty, fixed_celltype,
              real_mask, eps, dirichlet_lambda,
              verbose, logger):
+    """
+    Helper for denoise_count_matrix. Performs EM on model (dense arrays only)
+    """
     
     if real_mask is None:
         real_mask = np.ones(N, dtype=bool)
