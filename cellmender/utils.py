@@ -495,11 +495,16 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
     if not (os.path.exists(wompwomp_env) or wompwomp_env in subprocess.run("conda env list", shell=True, capture_output=True, text=True).stdout):
         raise ValueError(f"wompwomp_env {wompwomp_env} does not exist as a path or conda environment.")
 
-    for adata in adatas.copy():
-        if adata is None:
-            if len(names) == len(adatas):
-                names.remove(names[adatas.index(adata)])
-            adatas.remove(adata)
+    new_adatas = []
+    new_names = []
+
+    for a, n in zip(adatas, names):
+        if a is not None:
+            new_adatas.append(a)
+            new_names.append(n)
+
+    adatas = new_adatas
+    names = new_names
 
     for i, adata in enumerate(adatas):
         if displayed_column not in adata.obs.columns:
@@ -531,7 +536,10 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
 
     names_str = " ".join(names)
     conda_run_flag = "-p" if "/" in wompwomp_env else "-n"
-    wompwomp_cmd = f"conda run {conda_run_flag} {wompwomp_env} {wompwomp_path}/exec/wompwomp plot_alluvial --df {merged_df_csv} --graphing_columns {names_str} --coloring_algorithm left -o {out_path}"
+    wompwomp_exec_path = f"{wompwomp_path}/exec/biowompwomp"
+    if not os.path.exists(wompwomp_exec_path):
+        wompwomp_exec_path = f"{wompwomp_path}/exec/wompwomp"
+    wompwomp_cmd = f"conda run {conda_run_flag} {wompwomp_env} {wompwomp_exec_path} plot_alluvial --df {merged_df_csv} --graphing_columns {names_str} --coloring_algorithm left -o {out_path}"
     logger.info(f"Running wompwomp for {displayed_column}")
     logger.debug(wompwomp_cmd)
     subprocess.run(wompwomp_cmd, shell=True, check=True)
