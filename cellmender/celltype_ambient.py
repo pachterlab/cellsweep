@@ -494,7 +494,7 @@ def denoise_count_matrix(
     beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
     beta_prior_strength: Annotated[float, Field(ge=0)] = None,
     eps: Annotated[float, Field(gt=0)] = 1e-9,
-    dirichlet_lambda: Optional[Annotated[float, Field(gt=0)]] = 0.1,
+    dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 0.1,
     integer_out: bool = False,
     fixed_celltype: bool = False,
     freeze_empty: bool = True,
