@@ -644,6 +644,7 @@ def denoise_count_matrix(
                                        empty_droplet_method=empty_droplet_method,
                                        verbose=verbose, quiet=quiet, logger=logger)
 
+    adata.layers["raw"] = adata.X.copy()
     C = adata.X
     N, G = C.shape
     K = adata.uns["celltype_profile"].shape[0]
@@ -723,7 +724,8 @@ def denoise_count_matrix(
     # STORE RESULTS AND RETURN
     # ===================================
 
-    adata.layers["denoised"] = C_denoised
+    assert C_denoised.shape == (N, G), "Denoised matrix has incorrect shape."
+    adata.X = C_denoised
     adata.obs["alpha_hat"] = alpha
     z_hat = np.full(N, -1, dtype=int)
     z_hat[real_mask] = np.argmax(gamma[real_mask], axis=1)

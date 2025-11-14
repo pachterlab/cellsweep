@@ -20,6 +20,7 @@ elif os.path.isdir(args.raw):
 else:
     raise ValueError("Invalid path for raw count matrix. Provide either an h5 file or a directory containing mtx/barcodes/genes files.")
 adata_raw.var_names_make_unique()
+adata_raw.var["feature_types"] = "Gene Expression"
 
 if args.filtered.endswith('.h5'):
     adata = sc.read_10x_h5(filename=args.filtered)
@@ -28,6 +29,7 @@ elif os.path.isdir(args.filtered):
 else:
     raise ValueError("Invalid path for filtered count matrix. Provide either an h5 file or a directory containing mtx/barcodes/genes files.")
 adata.var_names_make_unique()
+adata.var["feature_types"] = "Gene Expression"
 
 sc.pp.filter_genes(adata, min_counts=200)
 sc.pp.filter_genes(adata, max_counts=6000)
@@ -41,19 +43,23 @@ setup_anndata(
     kneeplot = True
 )
 
-device = 'cuda' if args.cuda else 'cpu'
-hgmm_20k_scar = model(raw_count=adata, # In the case of Anndata object, scar will automatically use the estimated ambient_profile present in adata.uns.
+device = 'cpu'
+adata_scar = model(raw_count=adata, # In the case of Anndata object, scar will automatically use the estimated ambient_profile present in adata.uns.
                       ambient_profile=adata.uns['ambient_profile_Gene Expression'],
                       feature_type='mRNA',
                       sparsity=1,
                       device=device # CPU, CUDA and MPS are supported.
                      )
 
-hgmm_20k_scar.train(epochs=args.epochs,
+adata_scar.train(epochs=3,
                     batch_size=64,
                     verbose=True
                    )
 
-hgmm_20k_scar.inference()  # by defaut, batch_size = None, set a batch_size if getting a memory issue
+adata_scar.inference()  # by defaut, batch_size = None, set a batch_size if getting a memory issue
+assert adata_scar.native_counts.X.shape == adata.X.shape, "Denoised count matrix shape does not match input count matrix shape."
 
-# look in hgmm_20k_scar.native_counts for denoised counts
+adata.layers["raw"] = adata.X.copy()  # save raw counts in layers
+adata.X = adata_scar.native_counts
+
+adata.write_h5ad(args.output)
