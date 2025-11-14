@@ -55,8 +55,8 @@ sce.raw  <- load_cellranger(raw_tar_file_dir,      data_type = "raw",      techn
 
 # --- Standardize column and row names ---
 cat("Standardizing cell and gene names...\n")
-colnames(sce) <- paste(sce$sample, sce$cell_barcode, sep = "_")
-rownames(sce) <- rowData(sce)$Symbol_TENx
+colnames(sce) <- paste(sce$sample, sce$cell_barcode, sep = "_")   #!!! might need to modify this line based on the dataset (if cell csv is empty after running)
+rownames(sce) <- rowData(sce)$feature_name   #!!! might need to modify this line based on the dataset (if gene csv is empty after running)
 counts(sce) <- as(counts(sce), "dgCMatrix")
 
 # --- Run decontX ---
