@@ -11,14 +11,15 @@ from typing import Annotated, Optional
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
 
 #* take the mean expression of each gene across all empty droplets, and normalize to sum to 1.
-def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
+def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
     """
     input: adata with adata.obs: is_empty (optional)
     output: adata with adata.obs: is_empty, and adata.var: ambient_fraction
       - is_empty: boolean indicating whether each cell is an empty droplet or not. If not present, it will be inferred using infer_empty_droplets().
       - ambient_fraction: fraction of ambient RNA comprised by each gene, computed as the mean expression of that gene across all empty droplets divided by the mean expression across all cells. This is added to adata.var as a new column named "ambient_fraction".
     """
-    logger = setup_logger(verbose=verbose, quiet=quiet)
+    if not logger:
+        logger = setup_logger(verbose=verbose, quiet=quiet)
 
     # adata = adata.copy()
     # Ensure we have is_empty
@@ -51,7 +52,7 @@ def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cut
     return adata
 
 #* Take the mean expression of each gene across all cells of a given cell type, and normalize to sum to 1.
-def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
+def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
     """
     input: adata with adata.obs: is_empty (optional), celltype
     output: adata with adata.obs: is_empty, celltype, and adata.uns: celltype_profile
@@ -59,7 +60,8 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
       - celltype: string indicating the cell type of each cell.
       - celltype_profile: DataFrame (n_celltypes x n_genes) - mean expression of each gene across all cells of that type.
     """
-    logger = setup_logger(verbose=verbose, quiet=quiet)
+    if not logger:
+        logger = setup_logger(verbose=verbose, quiet=quiet)
 
     if celltype_key not in adata.obs:
         raise KeyError(f"{celltype_key!r} not found in adata.obs")
@@ -622,18 +624,18 @@ def denoise_count_matrix(
     if "is_empty" not in adata.obs.columns:
         logger.info("Inferring empty droplets.")
         adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff,
-                                     expected_cells=expected_cells, verbose=verbose, quiet=quiet)
+                                     expected_cells=expected_cells, verbose=verbose, quiet=quiet, logger=logger)
 
     if "ambient_fraction" not in adata.var.columns:
         logger.info("Inferring gene ambient fractions.")
         adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method,
-                                            verbose=verbose, quiet=quiet)
+                                            verbose=verbose, quiet=quiet, logger=logger)
 
     if "celltype_profile" not in adata.uns or "celltype_names" not in adata.uns:
         logger.info("Inferring celltype profiles.")
         adata = infer_celltype_profile(adata, celltype_key="celltype",
                                        empty_droplet_method=empty_droplet_method,
-                                       verbose=verbose, quiet=quiet)
+                                       verbose=verbose, quiet=quiet, logger=logger)
 
     C = adata.X
     N, G = C.shape
@@ -732,6 +734,8 @@ def denoise_count_matrix(
 
     if adata_out:
         logger.info(f"Saving inferred adata to {adata_out!r}")
+        if os.path.dirname(adata_out):
+            os.makedirs(os.path.dirname(adata_out), exist_ok=True)
         adata.write_h5ad(adata_out)
 
     return adata

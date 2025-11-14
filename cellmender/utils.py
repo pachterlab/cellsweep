@@ -19,6 +19,12 @@ import torch
 import tarfile
 from upsetplot import from_contents, UpSet
 
+def clear_package_loggers(package_prefix="cellmender"):
+    for name, obj in logging.Logger.manager.loggerDict.items():
+        if name.startswith(package_prefix) and isinstance(obj, logging.Logger):
+            obj.handlers.clear()
+            obj.propagate = False
+
 def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):    
     if log_level is None:
         if quiet or verbose < -1:  # -q
@@ -48,8 +54,9 @@ def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):
         #     raise FileExistsError(f"Log file {log_file} already exists. Please choose a different log file name.")
         print(f"Logging to {log_file}")
 
+    clear_package_loggers(package_prefix="cellmender")
     logger = logging.getLogger(__name__)
-    if logger.hasHandlers():
+    if logger.handlers:  # and repr(logger.handlers[0]) != "<StreamHandler stderr (NOTSET)>":
         return logger
     
     logger.propagate = False
@@ -219,117 +226,401 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
     else:
         plt.close()
 
-def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), s=20, scale="log", alpha=0.6, cmap='viridis', x_axis='adata1', y_axis='adata2', sample_frac=1.0, seed=42, out_path=None, show=True):
-    adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
+# def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), s=20, scale="log", alpha=0.6, cmap='viridis', x_axis='adata1', y_axis='adata2', sample_frac=1.0, seed=42, out_path=None, show=True):
+#     adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
 
-    X1 = adata1.X.toarray() if hasattr(adata1.X, "toarray") else np.array(adata1.X)
-    X2 = adata2.X.toarray() if hasattr(adata2.X, "toarray") else np.array(adata2.X)
+#     X1 = adata1.X.toarray() if hasattr(adata1.X, "toarray") else np.array(adata1.X)
+#     X2 = adata2.X.toarray() if hasattr(adata2.X, "toarray") else np.array(adata2.X)
 
-    # Flatten matrices to 1D arrays
-    x = np.array(X1).flatten()
-    y = np.array(X2).flatten()
+#     # Flatten matrices to 1D arrays
+#     x = np.array(X1).flatten()
+#     y = np.array(X2).flatten()
 
-    if sample_frac < 1.0:
-        np.random.seed(seed)
-        n = int(len(x) * sample_frac)
-        idx = np.random.choice(len(x), n, replace=False)
-        x, y = x[idx], y[idx]
-    else:
-        print(f"Using all {len(x)} points for scatterplot. This may be slow if the dataset is large.")
+#     if sample_frac < 1.0:
+#         np.random.seed(seed)
+#         n = int(len(x) * sample_frac)
+#         idx = np.random.choice(len(x), n, replace=False)
+#         x, y = x[idx], y[idx]
+#     else:
+#         print(f"Using all {len(x)} points for scatterplot. This may be slow if the dataset is large.")
     
+#     if scale == "log":
+#         # Replace 0 values with 0.5 (so they appear at log2(0.5) = -1)
+#         x = np.where(x < 0.5, 0.5, x)
+#         y = np.where(y < 0.5, 0.5, y)
+    
+#     # Calculate density using KDE
+#     xy = np.vstack([x, y])
+#     z = gaussian_kde(xy)(xy)
+    
+#     # Sort by density so densest points are plotted last
+#     idx = z.argsort()
+#     x, y, z = x[idx], y[idx], z[idx]
+    
+#     # Create figure
+#     fig, ax = plt.subplots(figsize=figsize)
+    
+#     # Create scatterplot
+#     scatter = ax.scatter(x, y, c=z, s=s, alpha=alpha, cmap=cmap, 
+#                         edgecolors='none')
+    
+#     # Set equal ranges for x and y axes
+#     all_vals = np.concatenate([x, y])
+#     vmin, vmax = all_vals.min(), all_vals.max()
+#     margin_factor = 1.1
+#     ax.set_xlim(vmin / margin_factor, vmax * margin_factor)
+#     ax.set_ylim(vmin / margin_factor, vmax * margin_factor)
+
+#     if scale == "log":
+#         # Set log scale for both axes
+#         ax.set_xscale('log', base=2)
+#         ax.set_yscale('log', base=2)
+
+#         # Define tick locations at powers of 2
+#         xticks = np.logspace(np.floor(np.log2(vmin)), np.ceil(np.log2(vmax)), num=int(np.ceil(np.log2(vmax)) - np.floor(np.log2(vmin))) + 1, base=2)
+#         yticks = np.logspace(np.floor(np.log2(vmin)), np.ceil(np.log2(vmax)), num=int(np.ceil(np.log2(vmax)) - np.floor(np.log2(vmin))) + 1, base=2)
+#         ax.set_xticks(xticks)
+#         ax.set_yticks(yticks)
+
+#         # Optionally format tick labels as 2^n
+#         ax.get_xaxis().set_major_formatter(plt.FuncFormatter(lambda val, _: f"$2^{{{int(np.log2(val))}}}$"))
+#         ax.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda val, _: f"$2^{{{int(np.log2(val))}}}$"))
+    
+#     # Add diagonal line for reference
+#     ax.plot([vmin / margin_factor, vmax * margin_factor], 
+#             [vmin / margin_factor, vmax * margin_factor], 
+#             'k--', alpha=0.3, linewidth=1, zorder=0)
+    
+#     # Labels and formatting
+#     ax.set_xlabel(x_axis, fontsize=12)
+#     ax.set_ylabel(y_axis, fontsize=12)
+#     ax.set_title(f"{y_axis} vs {x_axis} CellxGene Scatterplot", fontsize=14, fontweight='bold')
+#     ax.set_aspect('equal')
+#     ax.grid(True, alpha=0.3)
+    
+#     # Add colorbar
+#     cbar = plt.colorbar(scatter, ax=ax)
+#     cbar.set_label('Density', fontsize=11)
+    
+#     plt.tight_layout()
+#     if out_path is not None:
+#         plt.savefig(out_path, dpi=300)
+#     if show:
+#         plt.show()
+#     else:
+#         plt.close()
+
+
+# def plot_per_cell_correlation(adata1, adata2, title="Per-cell Expression Correlation", out_path=None, show=True):
+#     # adata1, adata2 = adata1.copy(), adata2.copy()
+#     adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
+
+#     X1 = adata1.X.toarray() if hasattr(adata1.X, "toarray") else np.array(adata1.X)
+#     X2 = adata2.X.toarray() if hasattr(adata2.X, "toarray") else np.array(adata2.X)
+
+#     correlations = np.array([
+#         pearsonr(X1[i, :], X2[i, :])[0]
+#         for i in range(X1.shape[0])
+#     ])
+
+#     y_max = 10 ** np.ceil(np.log10(len(correlations)))
+
+#     sns.histplot(correlations, bins=10, color='steelblue')
+#     plt.xlim(0, 1)
+#     plt.ylim(1, y_max)
+#     plt.ylabel("Number of cells")
+#     plt.yscale("log")
+#     plt.title(title)
+#     plt.tight_layout()
+#     if out_path:
+#         plt.savefig(out_path, bbox_inches="tight")
+#     if not show:
+#         plt.close()
+
+def plot_matrix_scatterplot(
+    adata1, adata2,
+    figsize=(8, 8), s=20, scale="log", alpha=0.6,
+    cmap='viridis', x_axis='adata1', y_axis='adata2',
+    max_points=1000, seed=42, out_path=None, show=True
+):
+    # -------------------------
+    # 1. Match cells + genes
+    # -------------------------
+    adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
+    X1 = adata1.X
+    X2 = adata2.X
+
+    if not sparse.issparse(X1) or not sparse.issparse(X2):
+        raise ValueError("This function requires sparse AnnData.X matrices.")
+
+    n_cells, n_genes = X1.shape
+    N = n_cells * n_genes  # flattened total size
+
+    # -------------------------
+    # 2. Sample flattened positions
+    # -------------------------
+    if max_points is not None and max_points < N:
+        rng = np.random.default_rng(seed)
+        flat_idx = rng.choice(N, size=max_points, replace=False)
+    else:
+        print(f"Using all {N:,} values – may be slow.")
+        flat_idx = np.arange(N)
+
+    # Convert flattened index → (row, col)
+    rows = flat_idx // n_genes
+    cols = flat_idx % n_genes
+
+    # -------------------------
+    # 3. Safe sparse value extraction
+    # -------------------------
+    def get_values_from_sparse(X, rows, cols):
+        """
+        Efficiently extracts X[row, col] from a sparse matrix.
+        Handles:
+          - scalar returns
+          - 1×1 sparse
+          - 1×k sparse
+        Never densifies the full matrix.
+        """
+        out = np.empty(len(rows), dtype=float)
+        unique_rows = np.unique(rows)
+
+        for r in unique_rows:
+            mask = (rows == r)
+            c_sub = cols[mask]
+            sub = X[r, c_sub]
+
+            if sparse.issparse(sub):
+                sub_dense = sub.toarray().ravel()
+            else:
+                sub_dense = np.array(sub).ravel()  # scalar, or small ndarray
+
+            out[mask] = sub_dense
+
+        return out
+
+    x = get_values_from_sparse(X1, rows, cols)
+    y = get_values_from_sparse(X2, rows, cols)
+
+    # -------------------------
+    # 4. Log handling
+    # -------------------------
     if scale == "log":
-        # Replace 0 values with 0.5 (so they appear at log2(0.5) = -1)
         x = np.where(x < 0.5, 0.5, x)
         y = np.where(y < 0.5, 0.5, y)
-    
-    # Calculate density using KDE
+
+    # -------------------------
+    # 5. KDE density
+    # -------------------------
     xy = np.vstack([x, y])
     z = gaussian_kde(xy)(xy)
-    
-    # Sort by density so densest points are plotted last
-    idx = z.argsort()
-    x, y, z = x[idx], y[idx], z[idx]
-    
-    # Create figure
+
+    # Sort by density (lowest first → densest points plotted last)
+    order = z.argsort()
+    x, y, z = x[order], y[order], z[order]
+
+    # -------------------------
+    # 6. Plotting
+    # -------------------------
     fig, ax = plt.subplots(figsize=figsize)
-    
-    # Create scatterplot
-    scatter = ax.scatter(x, y, c=z, s=s, alpha=alpha, cmap=cmap, 
-                        edgecolors='none')
-    
-    # Set equal ranges for x and y axes
+
+    sc = ax.scatter(x, y, c=z, s=s, alpha=alpha, cmap=cmap, edgecolors='none')
+
     all_vals = np.concatenate([x, y])
     vmin, vmax = all_vals.min(), all_vals.max()
-    margin_factor = 1.1
-    ax.set_xlim(vmin / margin_factor, vmax * margin_factor)
-    ax.set_ylim(vmin / margin_factor, vmax * margin_factor)
+    margin = 1.1
+    ax.set_xlim(vmin / margin, vmax * margin)
+    ax.set_ylim(vmin / margin, vmax * margin)
 
     if scale == "log":
-        # Set log scale for both axes
-        ax.set_xscale('log', base=2)
-        ax.set_yscale('log', base=2)
+        ax.set_xscale("log", base=2)
+        ax.set_yscale("log", base=2)
 
-        # Define tick locations at powers of 2
-        xticks = np.logspace(np.floor(np.log2(vmin)), np.ceil(np.log2(vmax)), num=int(np.ceil(np.log2(vmax)) - np.floor(np.log2(vmin))) + 1, base=2)
-        yticks = np.logspace(np.floor(np.log2(vmin)), np.ceil(np.log2(vmax)), num=int(np.ceil(np.log2(vmax)) - np.floor(np.log2(vmin))) + 1, base=2)
+        xticks = np.logspace(
+            np.floor(np.log2(vmin)),
+            np.ceil(np.log2(vmax)),
+            num=int(np.ceil(np.log2(vmax)) - np.floor(np.log2(vmin))) + 1,
+            base=2
+        )
         ax.set_xticks(xticks)
-        ax.set_yticks(yticks)
+        ax.set_yticks(xticks)
 
-        # Optionally format tick labels as 2^n
-        ax.get_xaxis().set_major_formatter(plt.FuncFormatter(lambda val, _: f"$2^{{{int(np.log2(val))}}}$"))
-        ax.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda val, _: f"$2^{{{int(np.log2(val))}}}$"))
-    
-    # Add diagonal line for reference
-    ax.plot([vmin / margin_factor, vmax * margin_factor], 
-            [vmin / margin_factor, vmax * margin_factor], 
-            'k--', alpha=0.3, linewidth=1, zorder=0)
-    
-    # Labels and formatting
+        ax.xaxis.set_major_formatter(
+            plt.FuncFormatter(lambda v, _: f"$2^{{{int(np.log2(v))}}}$")
+        )
+        ax.yaxis.set_major_formatter(
+            plt.FuncFormatter(lambda v, _: f"$2^{{{int(np.log2(v))}}}$")
+        )
+
+    # diagonal reference
+    ax.plot(
+        [vmin / margin, vmax * margin],
+        [vmin / margin, vmax * margin],
+        'k--', alpha=0.3, linewidth=1, zorder=0
+    )
+
     ax.set_xlabel(x_axis, fontsize=12)
     ax.set_ylabel(y_axis, fontsize=12)
-    ax.set_title(f"{y_axis} vs {x_axis} CellxGene Scatterplot", fontsize=14, fontweight='bold')
+    ax.set_title(f"{y_axis} vs {x_axis} Cell×Gene Scatterplot", fontsize=14, fontweight='bold')
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
-    
-    # Add colorbar
-    cbar = plt.colorbar(scatter, ax=ax)
-    cbar.set_label('Density', fontsize=11)
-    
+
+    cbar = plt.colorbar(sc, ax=ax)
+    cbar.set_label("Density", fontsize=11)
+
     plt.tight_layout()
     if out_path is not None:
         plt.savefig(out_path, dpi=300)
-    if show:
-        plt.show()
-    else:
+    if not show:
         plt.close()
+    else:
+        plt.show()
+
+# --------------------------------------------
+# Robust sparse Pearson correlation
+# --------------------------------------------
+def sparse_row_pearson(x, y):
+    """
+    Compute Pearson correlation between two 1×G row vectors.
+    Works for:
+        - csr_matrix rows
+        - csc_matrix rows
+        - numpy arrays
+    Avoids densifying the full matrix.
+    """
+
+    # Convert to CSR row
+    if sparse.issparse(x):
+        x = x.tocsr()
+    if sparse.issparse(y):
+        y = y.tocsr()
+
+    # Extract sparse structure
+    x_data = x.data
+    y_data = y.data
+    x_idx = x.indices
+    y_idx = y.indices
+
+    G = x.shape[1]   # number of genes
+
+    # Means
+    mean_x = x_data.sum() / G
+    mean_y = y_data.sum() / G
+
+    # Intersect non-zero indices for fast centered dot
+    intersect = np.intersect1d(x_idx, y_idx, assume_unique=False)
+
+    if len(intersect) > 0:
+        x_i = x[0, intersect].toarray().ravel()
+        y_i = y[0, intersect].toarray().ravel()
+        num = np.sum((x_i - mean_x) * (y_i - mean_y))
+    else:
+        num = 0.0
+
+    # Norms for x
+    x_centered_sq = np.sum((x_data - mean_x)**2)
+    zeros_x = G - len(x_data)
+    x_centered_sq += zeros_x * (mean_x**2)
+
+    # Norms for y
+    y_centered_sq = np.sum((y_data - mean_y)**2)
+    zeros_y = G - len(y_data)
+    y_centered_sq += zeros_y * (mean_y**2)
+
+    # Denominator
+    denom = np.sqrt(x_centered_sq * y_centered_sq)
+
+    if denom == 0:
+        return np.nan
+
+    return num / denom
 
 
+# --------------------------------------------
+# Main per-cell correlation plotting function
+# --------------------------------------------
+def plot_per_cell_correlation(
+    adata1, adata2,
+    bins=20,
+    title="Per-cell Expression Correlation Histogram",
+    out_path=None,
+    show=True
+):
 
-def plot_per_cell_correlation(adata1, adata2, title="Per-cell Expression Correlation", out_path=None, show=True):
-    # adata1, adata2 = adata1.copy(), adata2.copy()
+    # Match intersection of cells + genes
     adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
+    X1 = adata1.X
+    X2 = adata2.X
 
-    X1 = adata1.X.toarray() if hasattr(adata1.X, "toarray") else np.array(adata1.X)
-    X2 = adata2.X.toarray() if hasattr(adata2.X, "toarray") else np.array(adata2.X)
+    correlations = []
 
-    correlations = np.array([
-        pearsonr(X1[i, :], X2[i, :])[0]
-        for i in range(X1.shape[0])
-    ])
+    # Compute correlation row-by-row (sparse)
+    for i in range(X1.shape[0]):
+        corr = sparse_row_pearson(X1[i, :], X2[i, :])
+        correlations.append(corr)
 
+    correlations = np.array(correlations)
+
+    # Plot
     y_max = 10 ** np.ceil(np.log10(len(correlations)))
+    sns.histplot(correlations, bins=bins, color='steelblue')
 
-    sns.histplot(correlations, bins=10, color='steelblue')
     plt.xlim(0, 1)
     plt.ylim(1, y_max)
-    plt.ylabel("Number of cells")
     plt.yscale("log")
+    plt.ylabel("Number of cells")
     plt.title(title)
     plt.tight_layout()
+
     if out_path:
         plt.savefig(out_path, bbox_inches="tight")
     if not show:
         plt.close()
+    else:
+        plt.show()
+
+def plot_per_cell_difference(adata_raw, adata_denoised, bins=10, tool="denoised", out_path=None, show=True):
+    """
+    Compute D = X_raw − X_denoised (sparse), take per-row sums, and plot histogram.
+    """
+
+    # 1. Match cells + genes
+    adata_raw, adata_denoised = take_adata_cell_gene_intersection(adata_raw, adata_denoised)
+
+    X_raw = adata_raw.X
+    X_denoised = adata_denoised.X
+
+    # Ensure sparse compatibility
+    if not sparse.issparse(X_raw) or not sparse.issparse(X_denoised):
+        raise ValueError("Both adata.X matrices must be sparse matrices.")
+
+    # 2. Compute sparse difference
+    D = X_raw - X_denoised  # remains sparse, no densification
+    print(f"Total differences for {tool}: {D.sum():,}")
+
+    # 3. Per-cell (per-row) sums
+    #    sum(axis=1) returns a (n,1) sparse matrix, convert safely:
+    row_sums = np.array(D.sum(axis=1)).ravel()
+
+    # 4. Plot
+    y_max = 10 ** np.ceil(np.log10(len(row_sums)))
+
+    sns.histplot(row_sums, bins=bins, color='steelblue')
+    plt.yscale("log")
+    plt.ylim(1, y_max)
+    plt.ylabel("Number of cells", fontsize=12)
+    plt.title(f"Per-cell Difference Histogram: raw − {tool}", fontsize=14)
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
+    return row_sums  # return values if user wants to inspect/plot further
+
 
 def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, hvg_flavor="seurat_v3", n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
     logger = setup_logger(verbose=verbose, quiet=quiet)
@@ -419,13 +710,14 @@ def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, u
     return adata
 
 valid_empty_droplet_methods = {"threshold"}
-def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
+def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
     """
     input: adata
     output: adata with adata.obs: is_empty
       - is_empty: boolean indicating whether each cell is an empty droplet or not. This is inferred using a simple heuristic: if the total counts for a cell are below a certain threshold (e.g., 100), it is considered an empty droplet. This threshold can be adjusted based on the dataset and expected cell types.
     """
-    logger = setup_logger(verbose=verbose, quiet=quiet)
+    if not logger:
+        logger = setup_logger(verbose=verbose, quiet=quiet)
     # adata = adata.copy()
     if method == "threshold":
         if umi_cutoff is None:
@@ -439,11 +731,12 @@ def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_ce
 
     return adata
 
-def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_column="is_empty", umi_cutoff=None, expected_cells=None, model_pkl=None, verbose=0, quiet=False):
+def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_column="is_empty", umi_cutoff=None, expected_cells=None, model_pkl=None, verbose=0, quiet=False, logger=None):
     """
     Adds a 'celltype' column to adata.obs based on the specified method.
     """
-    logger = setup_logger(verbose=verbose, quiet=quiet)
+    if not logger:
+        logger = setup_logger(verbose=verbose, quiet=quiet)
     adata = adata.copy()
     
     # Identify real cells if present
@@ -539,7 +832,7 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
     wompwomp_exec_path = f"{wompwomp_path}/exec/biowompwomp"
     if not os.path.exists(wompwomp_exec_path):
         wompwomp_exec_path = f"{wompwomp_path}/exec/wompwomp"
-    wompwomp_cmd = f"conda run {conda_run_flag} {wompwomp_env} {wompwomp_exec_path} plot_alluvial --df {merged_df_csv} --graphing_columns {names_str} --coloring_algorithm left -o {out_path}"
+    wompwomp_cmd = f"conda run {conda_run_flag} {wompwomp_env} {wompwomp_exec_path} plot_alluvial --df {merged_df_csv} --graphing_columns {names_str} --coloring_algorithm left --disable_optimize_column_order -o {out_path}"
     logger.info(f"Running wompwomp for {displayed_column}")
     logger.debug(wompwomp_cmd)
     subprocess.run(wompwomp_cmd, shell=True, check=True)
@@ -584,6 +877,9 @@ def count_cellbender_parameters(ckpt_tar_path):
     checkpoint_file = "./extracted_checkpoint/" + extracted_files[0]
     checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=False)
 
+    if "params" not in checkpoint:
+        print("No 'params' key found in the checkpoint. Cannot count parameters.")
+        return None
     state_dict = checkpoint["params"]
     total_params = sum(p.numel() for p in state_dict.values())
     
