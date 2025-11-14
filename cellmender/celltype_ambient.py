@@ -272,7 +272,7 @@ def denoise_count_matrix(
     # initialize p from uns
     p = np.asarray(adata.uns["celltype_profile"], dtype=float)
     for k in range(K):
-        p[k] = (p[k] + eps) / (p[k].sum() + G * eps)
+        p[k] = (p[k] + dirichlet_lambda) / (p[k].sum() + G * dirichlet_lambda)
 
     # initialize gamma
     gamma = np.zeros((N, K), dtype=float)
@@ -297,7 +297,7 @@ def denoise_count_matrix(
     # initial beta + bulk m
     beta = float(beta)
     m_raw = np.array(C.sum(axis=0)).ravel().astype(float)
-    m_global = (m_raw + eps) / (m_raw.sum() + G * eps)
+    m_global = (m_raw + dirichlet_lambda) / (m_raw.sum() + G * dirichlet_lambda)
 
     # sparse structure
     indptr = C.indptr
@@ -305,7 +305,6 @@ def denoise_count_matrix(
     data = C.data
 
     prev_ll = -np.inf
-    loglik_trace = []
 
     # ============ EM LOOP ============
     for it in range(1, max_iter + 1):
@@ -334,6 +333,7 @@ def denoise_count_matrix(
 
         b_n = (1.0 - beta) * (1.0 - alpha)
 
+        # Iterate over sparse matrix row-by-row
         for n in range(N):
             rs = indptr[n]; re = indptr[n+1]
             if rs == re:
@@ -450,36 +450,6 @@ def denoise_count_matrix(
         a_numer += dirichlet_lambda
         a = a_numer / max(a_numer.sum(), eps)
 
-        # ============================
-        # CONSTRUCT EXPECTED MATRICES
-        # ============================
-
-        # C_A sparse
-        C_expected_ambient = sp.csr_matrix(
-            (np.array(vals_A), (np.array(rows_A), np.array(cols_A))),
-            shape=(N, G)
-        )
-
-        # C_M sparse
-        C_expected_bulk = sp.csr_matrix(
-            (np.array(vals_M), (np.array(rows_M), np.array(cols_M))),
-            shape=(N, G)
-        )
-
-        # C_cell sparse (if needed)
-        C_expected_cell = sp.csr_matrix(
-            (np.array(vals_list), (np.array(rows_list), np.array(cols_list))),
-            shape=(N, G)
-        )
-
-        # ============================
-        #      DENOISED COUNTS
-        # ============================
-        C_minus_A = C - C_expected_ambient
-        C_minus_A_minus_M = C_minus_A - C_expected_bulk
-        C_denoised = C_minus_A_minus_M.maximum(0)
-
-        loglik_trace.append(ll)
         if verbose:
             logger.info(f"EM Iter {it:3d}: ll={ll:.3f} beta={beta:.6f}")
 
@@ -489,6 +459,35 @@ def denoise_count_matrix(
             break
 
         prev_ll = ll
+
+    # ============================
+    # CONSTRUCT EXPECTED MATRICES
+    # ============================
+
+    # C_A sparse
+    C_expected_ambient = sp.csr_matrix(
+        (np.array(vals_A), (np.array(rows_A), np.array(cols_A))),
+        shape=(N, G)
+    )
+
+    # C_M sparse
+    C_expected_bulk = sp.csr_matrix(
+        (np.array(vals_M), (np.array(rows_M), np.array(cols_M))),
+        shape=(N, G)
+    )
+
+    # C_cell sparse (if needed)
+    C_expected_cell = sp.csr_matrix(
+        (np.array(vals_list), (np.array(rows_list), np.array(cols_list))),
+        shape=(N, G)
+    )
+
+    # ============================
+    #      DENOISED COUNTS
+    # ============================
+    C_minus_A = C - C_expected_ambient
+    C_minus_A_minus_M = C_minus_A - C_expected_bulk
+    C_denoised = C_minus_A_minus_M.maximum(0)
 
     # ===================================
     # STORE RESULTS AND RETURN
@@ -503,7 +502,6 @@ def denoise_count_matrix(
     adata.uns["beta_hat"] = beta
     adata.var["ambient_hat"] = a
     adata.uns["loglike"] = prev_ll
-    adata.uns["loglik_trace"] = loglik_trace
 
     def integerize_floor_multinomial(expected_cell, random_state=None): 
         rng2 = np.random.default_rng(random_state) 
