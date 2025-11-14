@@ -16,20 +16,21 @@ def simulate_cells(
     N : Annotated[int, Field(gt=0)] = 1000,                        # number of cells (barcodes)
     k : Annotated[int, Field(gt=0)] = 5,                           # number of cell types
     markers_per_type : Annotated[int, Field(gt=0)] = 30,           # number of marker genes per cell type
-    marker_boost : Annotated[float, Field(gt=0)] = 15.0,             # fold increase for marker genes in their type
-    type_proportions: Optional[np.ndarray] = None,         # vector of length k, normalized to 1
-    empty_prob : Annotated[float, Field(ge=0, le=1)] = 0.5,                # fraction of empty barcodes
-    alpha : Annotated[float, Field(ge=0, le=1)] = 0.01,                 # fraction of size of ambient RNA relative to real cells
+    marker_boost : Annotated[float, Field(gt=0)] = 15.0,           # fold increase for marker genes in their type
+    type_proportions: Optional[np.ndarray] = None,                 # vector of length k, normalized to 1
+    empty_prob : Annotated[float, Field(ge=0, le=1)] = 0.8,        # fraction of empty barcodes
+    alpha : Annotated[float, Field(ge=0, le=1)] = 0.01,            # fraction of size of ambient RNA relative to real cells
     expected_cell_size : Annotated[float, Field(gt=0)] = 10e3,     # expected library size for real cells
-    libsize_logmean : Annotated[float, Field(gt=0)] = 0.0,           # mean of log library-size scaling
-    libsize_logsd : Annotated[float, Field(gt=0)] = 0.5,             # sd of log library-size scaling
-    dispersion : Annotated[float, Field(gt=0)] = 2.0,                # NB dispersion (lower => more overdispersion)
-    dropout_midpoint : Annotated[float, Field(gt=0)] = 1.0,          # midpoint for dropout logistic curve
-    dropout_slope : Annotated[float, Field(gt=0)] = 1.5,             # slope for dropout probability curve
-    beta : Annotated[float, Field(ge=0, le=1)] = 0.03,                     # fraction of counts to swap (bulk noise)
+    libsize_logmean : Annotated[float, Field(gt=0)] = 0.0,         # mean of log library-size scaling
+    libsize_logsd : Annotated[float, Field(gt=0)] = 0.5,           # sd of log library-size scaling
+    dispersion : Annotated[float, Field(gt=0)] = 2.0,              # NB dispersion (lower => more overdispersion)
+    dropout_midpoint : Annotated[float, Field(gt=0)] = 1.0,        # midpoint for dropout logistic curve
+    dropout_slope : Annotated[float, Field(gt=0)] = 1.5,           # slope for dropout probability curve
+    beta : Annotated[float, Field(ge=0, le=1)] = 0.03,             # fraction of counts to swap (bulk noise)
+    singleton_prob : Annotated[float, Field(ge=0, le=1)] = 0.25,   # probability UMI has a single read
     rng_seed : Annotated[int, Field(ge=0)] = 42,                   # RNG seed
-    gene_prefix : Annotated[str, Field(min_length=1)] = "Gene",            # gene name prefix
-    cell_prefix : Annotated[str, Field(min_length=1)] = "Cell"             # cell name prefix
+    gene_prefix : Annotated[str, Field(min_length=1)] = "Gene",    # gene name prefix
+    cell_prefix : Annotated[str, Field(min_length=1)] = "Cell"     # cell name prefix
 ):
     """
     G: number of genes
@@ -85,9 +86,9 @@ def simulate_cells(
         marker_sets.append(markers)
         type_expected[t, markers] *= marker_boost
 
-    # small random jitter for realism
-    jitter = rng.normal(1.0, 0.05, size=type_expected.shape)
-    type_expected *= np.clip(jitter, 0.5, 1.5)
+    # random jitter for realism
+    jitter = rng.normal(1.0, 0.5, size=type_expected.shape)
+    type_expected *= np.clip(jitter, 0, 3)
 
     # normalize to probabilities
     type_expected /= type_expected.sum(axis=1, keepdims=True) 
@@ -98,6 +99,7 @@ def simulate_cells(
 
     # --- 4. Library-size variation ---
     lib_factors = np.exp(rng.normal(libsize_logmean, libsize_logsd, size=N)) * expected_cell_size
+    lib_factors[is_empty] = 0.0
 
     # --- 5. Background noise distribution ---
     pop_expected = (type_proportions.reshape(-1, 1) * type_expected).sum(axis=0) # weighted sum of celltype profiles
@@ -135,8 +137,10 @@ def simulate_cells(
     real[mask] = 0
 
     # Compute ambient fraction after dropout
-    alphas = noise.sum(axis=1) / counts.sum(axis=1)
-    alphas[np.isnan(alphas)] = 0.0  # handle empty cells
+    pos_mask = counts.sum(axis=1) > 0
+    alphas = np.zeros(N, dtype=float)
+    alphas[pos_mask] = noise[pos_mask, :].sum(axis=1) / counts[pos_mask, :].sum(axis=1)
+    alphas[is_empty] = 1.0
 
     # --- 8. Bulk noise / barcode swapping (count-weighted) ---
     if beta > 0:
@@ -159,10 +163,11 @@ def simulate_cells(
 
             for gs, cs, cd in zip(g_src, c_src, c_dst):
                 if counts[cs, gs] > 0:
-                    counts[cs, gs] -= 1
                     counts[cd, gs] += 1
                     noise[cd, gs] += 1 # treat swapped-in counts as noise
-                    real[cs, gs] -= 1
+                    if rng.random() < singleton_prob:
+                        counts[cs, gs] -= 1
+                        real[cs, gs] -= 1
 
     # --- 9. Build AnnData ---
     gene_names = [f"{gene_prefix}_{g}" for g in range(G)]
@@ -174,14 +179,18 @@ def simulate_cells(
     X_real = sp.csr_matrix(real)
 
     obs = pd.DataFrame({
+        "cellid": [t+1 for t in cell_types],
         "celltype": [f"Type_{t}" for t in cell_types],
         "is_empty": is_empty.astype(bool),
-        "cell_ambient_fraction": alphas,
+        "ambient_fraction": alphas,
         "lib_size": lib_factors
     }, index=cell_names)
 
+    obs["celltype"] = obs["celltype"].mask(is_empty, "Empty Droplet")
+    obs["cellid"] = obs["cellid"].mask(is_empty, -1)
+
     var = pd.DataFrame(index=gene_names)
-    var["ambient"] = pop_expected / pop_expected.sum()
+    var["ambient_profile"] = pop_expected / pop_expected.sum()
 
     # annotate marker genes for convenience
     var["is_marker"] = False
@@ -199,7 +208,8 @@ def simulate_cells(
         expected_real_size=expected_cell_size, libsize_logmean=libsize_logmean,
         libsize_logsd=libsize_logsd,
         dispersion=dispersion, dropout_midpoint=dropout_midpoint,
-        dropout_slope=dropout_slope, beta=beta, rng_seed=rng_seed,
+        dropout_slope=dropout_slope, beta=beta, 
+        singleton_prob=singleton_prob, rng_seed=rng_seed,
         type_proportions=type_proportions.tolist()
     )
     adata.uns["marker_sets"] = {

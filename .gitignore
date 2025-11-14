@@ -161,3 +161,5 @@ notebooks/data
 **/ckpt.tar.gz
 tmp.py
 tmp.ipynb
+**decontx_output.tar.gz
+**Rplots.pdf

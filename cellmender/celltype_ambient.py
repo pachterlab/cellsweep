@@ -9,7 +9,6 @@ import scipy.sparse as sp
 from pydantic import validate_call, Field, ConfigDict
 from typing import Annotated
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
-from scipy.optimize import minimize
 
 #* take the mean expression of each gene across all empty droplets, and normalize to sum to 1.
 def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False):
@@ -102,6 +101,390 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
 
     return adata
 
+def dense_integerize(expected_cell, random_state=None): 
+    """
+    Converts dense float matrix to integer matrix through stochastic rounding
+    expected_cell : matrix of expected true-cell counts (float)
+    Returns: matrix (int) with floor + multinomial-distributed residual.
+    """
+    rng2 = np.random.default_rng(random_state) 
+    N, G = expected_cell.shape 
+    Cout = np.zeros_like(expected_cell, dtype=int) 
+    for n in range(N): 
+        base = np.floor(expected_cell[n]).astype(int) 
+        residual = expected_cell[n] - base 
+        Tadd = int(round(residual.sum())) 
+        if Tadd > 0: 
+            probs = residual / residual.sum() 
+            add = rng2.multinomial(Tadd, probs) 
+        else: 
+            add = np.zeros(G, dtype=int) 
+            Cout[n, :] = base + add 
+    return Cout
+
+def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
+    """
+    Converts sparse float matrix to integer matrix through stochastic rounding
+    expected_cell : CSR matrix of expected true-cell counts (float)
+    Returns: CSR matrix (int) with floor + multinomial-distributed residual.
+    """
+    if not sp.isspmatrix_csr(expected_cell):
+        expected_cell = expected_cell.tocsr()
+
+    rng = np.random.default_rng(random_state)
+
+    N, G = expected_cell.shape
+    indptr = expected_cell.indptr
+    indices = expected_cell.indices
+    data = expected_cell.data
+
+    # triplets for sparse output
+    rows = []
+    cols = []
+    vals = []
+
+    for n in range(N):
+        rs = indptr[n]
+        re = indptr[n+1]
+        idx = indices[rs:re]       # nonzero gene indices
+        vals_row = data[rs:re]     # expected values (floats)
+
+        if len(idx) == 0:
+            continue
+
+        # --- floor ---
+        base = np.floor(vals_row).astype(int)
+
+        # --- residual ---
+        residual = vals_row - base
+        rsum = residual.sum()
+
+        if rsum > 0:
+            probs = residual / rsum
+            Tadd = int(round(rsum))
+            # multinomial only on nz genes
+            add = rng.multinomial(Tadd, probs)
+        else:
+            add = np.zeros_like(base, dtype=int)
+
+        out_row = base + add
+
+        # keep only nonzero entries (optional)
+        nz = out_row > 0
+        if np.any(nz):
+            rows.extend([n] * np.sum(nz))
+            cols.extend(idx[nz])
+            vals.extend(out_row[nz])
+
+    # build CSR int matrix
+    return sp.csr_matrix((np.array(vals, dtype=int),
+                          (np.array(rows, dtype=int), np.array(cols, dtype=int))),
+                         shape=(N, G))
+
+def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+              max_iter, tol, freeze_empty, fixed_celltype, 
+              real_mask, eps, dirichlet_lambda, 
+              verbose, logger):
+    """
+    Helper for denoise_count_matrix. Performs sparse compatible EM on model
+    """
+    # sparse structure
+    indptr = C.indptr
+    indices = C.indices
+    data = C.data
+
+    prev_ll = -np.inf
+
+    # ============ EM LOOP ============
+    for it in range(1, max_iter + 1):
+
+        p_numer = np.zeros((K, G), dtype=float)
+        a_numer = np.zeros(G, dtype=float)
+        numer_gamma = np.zeros((N, K), dtype=float)
+        A_n = np.zeros(N, dtype=float)
+        M_total = 0.0
+
+        # triplists for sparse ambient and bulk expected matrices
+        rows_A = []
+        cols_A = []
+        vals_A = []
+
+        rows_M = []
+        cols_M = []
+        vals_M = []
+
+        # triplists for expected CELL (already existed)
+        rows_list = []
+        cols_list = []
+        vals_list = []
+
+        ll = 0.0
+
+        b_n = (1.0 - beta) * (1.0 - alpha)
+
+        # Iterate over sparse matrix row-by-row
+        for n in range(N):
+            rs = indptr[n]; re = indptr[n+1]
+            if rs == re:
+                continue
+
+            idx = indices[rs:re]
+            vals = data[rs:re].astype(float)
+            nnz = len(idx)
+
+            # ============================
+            #     EMPTY DROPLET CASE
+            # ============================
+            if freeze_empty and (not real_mask[n]):
+
+                w_a = (1.0 - beta) * alpha[n] * a[idx]
+                w_m = beta * m_global[idx]
+                p_tot = w_a + w_m + eps
+
+                # expected ambient
+                c_A = vals * w_a / p_tot
+                A_n[n] = c_A.sum()
+                a_numer[idx] += c_A
+
+                rows_A.extend([n] * nnz)
+                cols_A.extend(idx.tolist())
+                vals_A.extend(c_A.tolist())
+
+                # expected bulk
+                c_M = vals * w_m / p_tot
+                M_total += c_M.sum()
+
+                rows_M.extend([n] * nnz)
+                cols_M.extend(idx.tolist())
+                vals_M.extend(c_M.tolist())
+
+                ll += float(np.dot(vals, np.log(p_tot)))
+                continue
+
+            # ============================
+            #     REAL DROPLET CASE
+            # ============================
+
+            w_a = (1.0 - beta) * alpha[n] * a[idx]
+            w_m = beta * m_global[idx]
+
+            b = b_n[n]
+            w_p_sum = np.zeros(nnz, dtype=float)
+            w_p_k = np.zeros((K, nnz), dtype=float)
+
+            for k in range(K):
+                wpk = b * gamma[n, k] * p[k, idx]
+                w_p_k[k] = wpk
+                w_p_sum += wpk
+
+            p_tot = w_a + w_m + w_p_sum + eps
+            c_scale = vals / p_tot
+
+            # expected ambient
+            c_A = c_scale * w_a
+            a_numer[idx] += c_A
+            A_n[n] = c_A.sum()
+            rows_A.extend([n] * nnz)
+            cols_A.extend(idx.tolist())
+            vals_A.extend(c_A.tolist())
+
+            # expected bulk
+            c_M = c_scale * w_m
+            M_total += c_M.sum()
+            rows_M.extend([n] * nnz)
+            cols_M.extend(idx.tolist())
+            vals_M.extend(c_M.tolist())
+
+            # expected cell counts
+            row_expected = np.zeros(nnz, dtype=float)
+            for k in range(K):
+                c_P = c_scale * w_p_k[k]
+                numer_gamma[n, k] = c_P.sum()
+                p_numer[k, idx] += c_P
+                row_expected += c_P
+
+            rows_list.extend([n] * nnz)
+            cols_list.extend(idx.tolist())
+            vals_list.extend(row_expected.tolist())
+
+            ll += float(np.dot(vals, np.log(p_tot)))
+
+        # ============================
+        #     M STEP
+        # ============================
+
+        # update p
+        if not fixed_celltype:
+            for k in range(K):
+                numer = p_numer[k] + dirichlet_lambda
+                denom = numer.sum()
+                p[k] = numer / max(denom, eps)
+
+            row_sums = numer_gamma.sum(axis=1)
+            nz = row_sums > 0
+            gamma[nz] = numer_gamma[nz] / row_sums[nz, None]
+            gamma[~nz] = gamma[~nz]
+
+        # update alpha
+        Ccell_n = numer_gamma.sum(axis=1)
+        alpha = A_n / np.maximum(A_n + Ccell_n, eps)
+        if freeze_empty:
+            alpha[~real_mask] = 1.0
+
+        # update beta
+        total_counts = C.sum()
+        beta = float(M_total / max(total_counts, 1.0))
+
+        # update ambient profile
+        a_numer += dirichlet_lambda
+        a = a_numer / max(a_numer.sum(), eps)
+
+        if verbose:
+            logger.info(f"EM Iter {it:3d}: ll={ll:.3f} beta={beta:.6f}")
+
+        if it > 1 and abs((ll - prev_ll) / max(abs(prev_ll), 1.0)) < tol:
+            if verbose:
+                logger.info("Converged.")
+            break
+
+        prev_ll = ll
+
+    # ============================
+    # CONSTRUCT EXPECTED MATRICES
+    # ============================
+
+    # C_A sparse
+    C_expected_ambient = sp.csr_matrix(
+        (np.array(vals_A), (np.array(rows_A), np.array(cols_A))),
+        shape=(N, G)
+    )
+
+    # C_M sparse
+    C_expected_bulk = sp.csr_matrix(
+        (np.array(vals_M), (np.array(rows_M), np.array(cols_M))),
+        shape=(N, G)
+    )
+
+    # C_cell sparse (if needed)
+    C_expected_cell = sp.csr_matrix(
+        (np.array(vals_list), (np.array(rows_list), np.array(cols_list))),
+        shape=(N, G)
+    )
+
+    return C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll
+
+def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
+             max_iter, tol, freeze_empty, fixed_celltype,
+             real_mask, eps, dirichlet_lambda,
+             verbose, logger):
+    """
+    Helper for denoise_count_matrix. Performs EM on model (dense arrays only)
+    """
+    
+    if real_mask is None:
+        real_mask = np.ones(N, dtype=bool)
+
+    prev_ll = -np.inf
+
+
+    # if freeze_empty, ensure empties have alpha=1 and gamma=0
+    if freeze_empty:
+        alpha[~real_mask] = 1.0
+        gamma[~real_mask, :] = 0.0
+
+    for it in range(1, max_iter + 1):
+        # Precompute per-row scalars and per-column vectors
+        b_n = (1.0 - beta) * (1.0 - alpha)      # (N,)
+        w_a = (1.0 - beta) * (alpha[:, None]) * (a[None, :])      # (N,G)
+        w_m = beta * m_global[None, :]                            # (1,G) broadcast to (N,G)
+
+        # Compute per-k contributions
+        w_Pk = (gamma[:, :, None] * p[None, :, :]) * b_n[:, None, None]  # (N,K,G)
+
+        # sum over k to get w_p_sum
+        w_p_sum = np.sum(w_Pk, axis=1)
+
+        # total mixture probabilities 
+        p_tot = w_a + w_m + w_p_sum + eps  # (N,G)
+
+        # E-step: expected counts per component
+        c_scale = C / p_tot                             # (N,G)
+
+        C_A = c_scale * w_a                             # ambient expected counts (N,G)
+        C_M = c_scale * w_m                             # bulk expected counts (N,G)
+
+        # For cell-type components: expected counts per k: C_Pk (N,K,G)
+        C_Pk = c_scale[:, None, :] * w_Pk               # broadcasting -> (N,K,G)
+
+        # Compose expected cell counts (sum over k)
+        C_cell = np.sum(C_Pk, axis=1)                   # (N,G)
+
+        # For freeze_empty: override contributions from empty droplets so empties only contribute to ambient
+        if freeze_empty:
+            # For empty droplet rows, force cell to 0, ambient uses full expected ambient
+            empties = ~real_mask
+            if np.any(empties):
+                C_cell[empties, :] = 0.0
+
+        # Sufficient statistics for M-step:
+        p_numer = np.sum(C_Pk, axis=0)  # (K, G)
+        a_numer = np.sum(C_A, axis=0)   # (G,)
+        numer_gamma = np.sum(C_Pk, axis=2)  # (N,K)
+
+        # per-cell ambient counts
+        A_n = np.sum(C_A, axis=1)        # (N,)
+        # total bulk expected
+        M_total = np.sum(C_M)            # scalar
+
+        # compute log-likelihood
+        ll = float(np.sum(C * np.log(p_tot)))
+
+        # ---------------- M-step ----------------
+        if not fixed_celltype:
+            # update p
+            for k in range(K):
+                numer = p_numer[k, :] + dirichlet_lambda
+                denom = numer.sum()
+                p[k, :] = numer / max(denom, eps)
+
+            # update gamma for real droplets only (keep empties unchanged if freeze_empty)
+            row_sums = np.sum(numer_gamma, axis=1)  # (N,)
+            nz = row_sums > 0
+            gamma_new = gamma.copy()
+            gamma_new[nz, :] = numer_gamma[nz, :] / row_sums[nz, None]
+            gamma = gamma_new
+
+        # update alpha
+        Ccell_n = np.sum(numer_gamma, axis=1)  # (N,)
+        alpha = A_n / np.maximum(A_n + Ccell_n, eps)
+        if freeze_empty:
+            alpha[~real_mask] = 1.0
+
+        # update beta (with numerical guard)
+        total_counts = np.sum(C)
+        beta = float(M_total / max(total_counts, 1.0))
+
+        # update ambient profile a
+        a = (a_numer + dirichlet_lambda)
+        a = a / max(a.sum(), eps)
+
+        if verbose and logger is not None:
+            logger.info(f"EM Iter {it:3d}: ll={ll:.3f} beta={beta:.6f}")
+
+        # convergence check
+        if it > 1 and abs((ll - prev_ll) / max(abs(prev_ll), 1.0)) < tol:
+            if verbose and logger is not None:
+                logger.info("Converged.")
+            break
+        prev_ll = ll
+
+    # final expected matrices
+    C_expected_cell = C_cell    # ndarray (N,G)
+    C_expected_ambient = C_A
+    C_expected_bulk = C_M
+
+    return C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll
+
 
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def denoise_count_matrix(
@@ -110,25 +493,31 @@ def denoise_count_matrix(
     max_iter: Annotated[int, Field(gt=0)] = 40,
     beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
     eps: Annotated[float, Field(gt=0)] = 1e-9,
+    dirichlet_lambda: Annotated[float, Field(gt=0)] = 0.1,
     integer_out: bool = False,
     fixed_celltype: bool = False,
+    freeze_empty: bool = True,
     empty_droplet_method: str = "threshold",
     umi_cutoff: Annotated[int | None, Field(ge=0)] = None,
     expected_cells: Annotated[int | None, Field(ge=0)] = None,
     cell_ambient_fraction: Annotated[float, Field(ge=0, le=1)] = 0.01,
     empty_droplet_celltype_name: str = "Empty Droplet",
+    tol: Annotated[float, Field(ge=0)] = 1e-6,
+    random_state: Annotated[int | None, Field(ge=0)] = 42,
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
-    log_file: str | None = None,
+    log_file: str | None = None
 ):
     """
     Denoise a count matrix using an Expectation-Maximization (EM) algorithm that
-    models each observed count as a mixture of ambient RNA and true cell-type signal.
+    models each observed count as a mixture of ambient RNA, bulk RNA, and true cell-type 
+    signal.
 
-    This function operates on real cells only (excluding identified empty droplets),
+    This function optionally operates on real cells only (excluding identified empty droplets),
     fixing the ambient expression profile and optionally fixing cell-type assignments.
     It iteratively estimates latent variables representing per-cell ambient fractions
-    (alpha_i) and per-cell-type expression profiles (p_k), until convergence.
+    (alpha_i), a bulk contamination factor (beta), per-cell-type expression profiles 
+    (p_k), and an ambient contamination profile (a) until convergence.
 
     Parameters
     ----------
@@ -155,16 +544,22 @@ def denoise_count_matrix(
         Maximum number of EM iterations.
 
     beta : float, default 0.03
-        Smoothing parameter controlling update strength between iterations.
+        Initial fraction of counts attributed to bulk RNA contamination
 
     eps : float, default 1e-9
         Numerical stability constant to prevent division by zero or log(0).
+
+    dirichlet_lambda: float, default 0.01
+        Pseudocount
 
     integer_out : bool, default False
         If True, rounds denoised counts to nearest integer before saving.
 
     fixed_celltype : bool, default False
         If True, keeps cell-type assignments fixed during EM updates.
+
+    freeze_empty : bool, default True
+        If True, does not attempt to reestimate empty droplets
 
     empty_droplet_method : str, default "threshold"
         Strategy to infer empty droplets if `is_empty` is not present.
@@ -181,6 +576,12 @@ def denoise_count_matrix(
 
     empty_droplet_celltype_name : str, default "Empty Droplet"
         Name used in `celltype` to denote empty droplets.
+
+    tol: float, default 1e-6
+        The relative change in likelihood below which training is discontinued
+
+    random_state: int | None, default 42
+        Random seed
 
     verbose : int, default 0
         Verbosity level (-2: silent, 0: normal, 2: debug).
@@ -203,196 +604,127 @@ def denoise_count_matrix(
     Notes
     -----
     The EM algorithm proceeds by:
-      1. E-step: Estimate posterior probabilities of counts being ambient vs. true.
-      2. M-step: Update cell-type expression profiles and per-cell ambient fractions.
-      3. Iterate until convergence or reaching `max_iter`.
+      1. E-step: Update expected value of true, ambient noise, and bulk noise counts for each cell and gene.
+      2. M-step: Update parameters (alpha, beta, gamma, p_k, a).
+      3. Iterate until convergence (relative change in ll < `tol`) or reaching `max_iter`.
 
     Designed primarily for benchmarking correctness of parameter updates rather than
     for production-level denoising on empty droplets.
     """
-    logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
-
-    adata = load_adata(adata, logger=logger)
     
+    logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
+    adata = load_adata(adata, logger=logger)
     if "celltype" not in adata.obs.columns:
         raise KeyError("adata.obs must have column celltype.")
-    
     adata = adata.copy()
-    
+
+    # ensure empty droplets are present
     if "is_empty" not in adata.obs.columns:
-        logger.info("adata.obs does not have 'is_empty' column. Inferring empty droplets using infer_empty_droplets().")
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
+        logger.info("Inferring empty droplets.")
+        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff,
+                                     expected_cells=expected_cells, verbose=verbose, quiet=quiet)
 
     if "ambient_fraction" not in adata.var.columns:
-        adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method, verbose=verbose, quiet=quiet)
+        adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method,
+                                            verbose=verbose, quiet=quiet)
 
     if "celltype_profile" not in adata.uns or "celltype_names" not in adata.uns:
-        logger.info("adata.uns does not have 'celltype_profile'. Inferring cell type profiles using infer_celltype_profile().")
-        adata = infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=empty_droplet_method, verbose=verbose, quiet=quiet)
+        logger.info("Inferring celltype profiles.")
+        adata = infer_celltype_profile(adata, celltype_key="celltype",
+                                       empty_droplet_method=empty_droplet_method,
+                                       verbose=verbose, quiet=quiet)
 
-    X = adata.X.astype(float)
-    N, G = X.shape
+    C = adata.X
+    N, G = C.shape
     K = adata.uns["celltype_profile"].shape[0]
 
-    a = adata.var["ambient_fraction"].copy()   # FIXED ambient
-    is_empty = adata.obs["is_empty"].copy()   # FIXED empties
+    # ambient profile from var
+    a = np.asarray(adata.var["ambient_fraction"], dtype=float).ravel()
+
+    # empty mask
+    is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
+    real_mask = ~is_empty
+
+    # celltype mapping
     z_true = adata.obs["celltype"].copy()
     z_true_str_to_int = {ct: i for i, ct in enumerate(adata.uns["celltype_names"])}
 
-    # work only on real cells
-    real_mask = ~is_empty
-    real_mask = np.asarray(real_mask)   # convert from Series → ndarray
-    Xr = X[real_mask]           # (Nr, G)
-    Nr = Xr.shape[0]
+    # initialize p from uns
+    p = np.asarray(adata.uns["celltype_profile"], dtype=float)
+    for k in range(K):
+        p[k] = (p[k] + dirichlet_lambda) / (p[k].sum() + G * dirichlet_lambda)
 
-    #!!! densify
-    if sp.issparse(Xr):
-        Xr = Xr.toarray()  # convert to dense numpy.ndarray
-    else:
-        Xr = np.asarray(Xr)  # ensure d
-
-    # initial cell-type profiles: from truth
-    p = adata.uns["celltype_profile"].copy()   # (K, G)
-
-    # initial responsibilities: from truth if available
-    gamma_type = np.zeros((Nr, K))
-    for j, i in enumerate(np.where(real_mask)[0]):
-        if z_true[i] != empty_droplet_celltype_name:
-            gamma_type[j, z_true_str_to_int[z_true[i]]] = 1.0
+    # initialize gamma
+    gamma = np.zeros((N, K), dtype=float)
+    for i in range(N):
+        ct = z_true.iloc[i]
+        if ct in z_true_str_to_int and ct != empty_droplet_celltype_name:
+            gamma[i, z_true_str_to_int[ct]] = 1.0
         else:
-            gamma_type[j] = 1.0 / K
-    
-    number_of_parameters = (Nr + G) * K + Nr + 1  # alpha_i (Nr), beta, gamma_type (Nr * K), p_k (K * G)
-    logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (alpha_i: {Nr:,}, beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
+            gamma[i, :] = 1.0 / K
 
-    # initial alpha: from truth
+    # initial alpha
     if "cell_ambient_fraction" not in adata.obs.columns:
-        logger.info("adata.obs does not have 'cell_ambient_fraction'. Setting to `cell_ambient_fraction` argument.")
         adata.obs.loc[real_mask, "cell_ambient_fraction"] = cell_ambient_fraction
         adata.obs.loc[~real_mask, "cell_ambient_fraction"] = 1.0
-    alpha = adata.obs["cell_ambient_fraction"][real_mask].copy()
+    alpha = np.asarray(adata.obs["cell_ambient_fraction"].copy(), dtype=float).ravel()
+    alpha = np.clip(alpha, eps, 1.0 - eps)
 
-    alpha = np.asarray(alpha)
-    a = np.asarray(a)
-    p = np.asarray(p)
-    loglike_prev = -np.inf
-    m = np.asarray(X.mean(axis=0)) # bulk mean profile
+    if freeze_empty:
+        alpha[~real_mask] = 1.0
+        gamma[~real_mask, :] = 0.0
 
-    for it in range(max_iter):
-        # --- E step on real cells ---
+    # initial beta + bulk m
+    beta = float(beta)
+    m_raw = np.array(C.sum(axis=0)).ravel().astype(float)
+    m_global = (m_raw + dirichlet_lambda) / (m_raw.sum() + G * dirichlet_lambda)
 
-        # The log probability of cell j assuming cell type k
-        log_p_type = np.zeros((Nr, K))
+    if sp.issparse(C):
+        if not sp.isspmatrix_csr(C):
+            C = sp.csr_matrix(C)
+        C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+                                                                                                            max_iter, tol, freeze_empty, fixed_celltype, real_mask,                                                                                                         
+                                                                                                            eps, dirichlet_lambda, verbose, logger)
+    else:
+        np.asarray(C)
+        C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+                                                                                                           max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
+                                                                                                           eps, dirichlet_lambda, verbose, logger)
 
-        # Calculate the log probability given current alpha and beta
-        for k in range(K):
-            pi = (1 - beta) * (alpha[:, None] * a + (1 - alpha)[:, None] * p[k]) + beta * m
-            pi = np.clip(pi, eps, 1.0) # avoid log(0)
-            pi = np.asarray(pi)
-            pi /= pi.sum(axis=1, keepdims=True)
-            log_p_type[:, k] = np.sum(Xr * np.log(pi), axis=1)
+    # ============================
+    #      DENOISED COUNTS
+    # ============================
+    C_minus_A = C - C_expected_ambient
+    C_minus_A_minus_M = C_minus_A - C_expected_bulk
+    C_denoised = C_minus_A_minus_M.maximum(0)
 
+    # ===================================
+    # STORE RESULTS AND RETURN
+    # ===================================
 
-        # --- M step on real cells ---
-        if not fixed_celltype:
-            # softmax to get percent of each cell type based off of log_p as "gamma_type"
-            log_p_type = np.asarray(log_p_type)
-            log_p_type -= log_p_type.max(axis=1, keepdims=True)
-            r = np.exp(log_p_type)
-            r = np.asarray(r)
-            r /= r.sum(axis=1, keepdims=True)
-            gamma_type = r
-            
-            # update p_k
-            for k in range(K):
-                p[k] = (gamma_type[:, k][:, None] * Xr).sum(axis=0) + 1.0  # pseudocount
-                p[k] /= p[k].sum()
-
-        gamma_p = np.asarray(gamma_type @ p)
-
-        # --- objective ---
-        def negS(params):
-            alpha_arg = params[:-1]
-            beta_arg = params[-1]
-            s = alpha_arg[:, None] * a + (1 - alpha_arg)[:, None] * gamma_p
-            t = (1.0 - beta_arg) * s + beta_arg * m
-            if np.any(t <= 0):
-                return np.inf
-            return -np.sum(Xr * np.log(t))
-
-        # --- analytic gradient ---
-        def grad_negS(params):
-            alpha_arg = params[:-1]
-            beta_arg = params[-1]
-            s = alpha_arg[:, None] * a + (1 - alpha_arg)[:, None] * gamma_p
-            t = (1.0 - beta_arg) * s + beta_arg * m
-            if np.any(t <= 0):
-                return np.ones_like(params) * np.inf
-
-            dS_dalpha = np.sum(Xr * ((1 - beta_arg) * (a - gamma_p)) / t, axis=1)
-            dS_dbeta = np.sum(Xr * (m - s) / t)
-            grad = -np.concatenate([dS_dalpha, [dS_dbeta]])  # negate for minimize()
-            return grad
-        
-        # optimize alpha and beta
-        start = np.concatenate([alpha, [beta]])
-        bounds = [(0.0, 1.0)] * (Nr + 1)
-        res = minimize(negS, start, jac=grad_negS, method="L-BFGS-B", bounds=bounds)
-        alpha = res.x[:-1]
-        beta = res.x[-1]
-
-        # log-likelihood on real cells
-        loglike = np.sum(np.log(np.exp(log_p_type).sum(axis=1) + eps))
-        logger.info(f"Iter {it+1:2d}: log likelihood (real)={loglike:.3f}")
-        if np.abs(loglike - loglike_prev) < 1e-4:
-            break
-        loglike_prev = loglike
-
-    # build outputs back to full size
-    alpha_hat = np.zeros(N)
-    alpha_hat[real_mask] = alpha
-    alpha_hat[~real_mask] = 1.0  # empties
-
-    # predicted labels for real cells
-    z_hat = np.full(N, -1)
-    z_hat[real_mask] = np.argmax(gamma_type, axis=1)
-
-    # --- Store previous matrix ---
-    if "raw" not in adata.layers:
-        adata.layers["raw"] = adata.X.copy()
-
-    # --- Reconstruct expected clean matrix ---
-    X_hat = np.zeros((N, G), dtype=float)
-    real_mask = ~is_empty
-
-    # For each real cell, compute expected signal from its inferred mixture
-    for i, j in enumerate(np.where(real_mask)[0]):
-        k = z_hat[j]
-        mix_cell = (1-alpha_hat[j]) * p[k] + alpha_hat[j] * a
-        pi_j = (1 - beta) * mix_cell + beta * m
-        pi_j /= pi_j.sum()  # normalize per gene
-        X_hat[j] = X[j].sum() * pi_j  # rescale to same total counts
-
-    # # Empties are pure ambient
-    # X_hat[~real_mask] = X[~real_mask].toarray() if sp.issparse(X) else X[~real_mask]
-
-    if integer_out:
-        X_hat = np.round(X_hat).astype(int)
-    adata.X = X_hat
-    assert adata.X.shape == (adata.n_obs, adata.n_vars)
-    assert len(adata.obs) == len(is_empty) == len(alpha_hat) == len(z_hat)
-    assert adata.var.shape[0] == len(a) == p.shape[1]
-
-    # --- Add inferred parameters back into obs/var/uns ---
-    adata.obs["is_empty_hat"] = is_empty
-    adata.obs["alpha_hat"] = alpha_hat
+    adata.layers["denoised"] = C_denoised
+    adata.obs["alpha_hat"] = alpha
+    z_hat = np.full(N, -1, dtype=int)
+    z_hat[real_mask] = np.argmax(gamma[real_mask], axis=1)
     adata.obs["z_hat"] = z_hat
     adata.uns["p_hat"] = p
+    adata.uns["beta_hat"] = beta
     adata.var["ambient_hat"] = a
-    adata.uns["loglike"] = loglike
+    adata.uns["loglike"] = prev_ll
+
+    # Replace adata.X
+    if integer_out:
+        # integerization: optional
+        if sp.issparse(C_denoised):
+            C_integer =  sparse_integerize(C_denoised, random_state=random_state)
+        else:
+            C_integer =  dense_integerize(C_denoised, random_state=random_state)
+        adata.X = C_integer
+    else:
+        adata.X = C_denoised
 
     if adata_out:
         logger.info(f"Saving inferred adata to {adata_out!r}")
         adata.write_h5ad(adata_out)
-    
+
     return adata

@@ -48,7 +48,6 @@ def main():  # noqa: C901
         formatter_class=CustomHelpFormatter,
     )
 
-    # adata, adata_out="adata_straightened.h5ad", max_iter=40, beta=0.03, eps=1e-9, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, cell_ambient_fraction=0.01, empty_droplet_celltype_name="Empty Droplet", round_counts=True, verbose=0, quiet=False, log_file=None
     parser_denoise_count_matrix.add_argument(
         "adata",
         type=str,
@@ -114,12 +113,6 @@ def main():  # noqa: C901
         help="Estimated ambient RNA fraction in cell-containing droplets.",
     )
     parser_denoise_count_matrix.add_argument(
-        "--empty_droplet_celltype_name",
-        type=str,
-        default="Empty Droplet",
-        help="Cell type name to assign to empty droplets.",
-    )
-    parser_denoise_count_matrix.add_argument(
         "-v", "--verbose",
         action="count",
         default=0,
@@ -179,7 +172,6 @@ def main():  # noqa: C901
             umi_cutoff=args.umi_cutoff,
             expected_cells=args.expected_cells,
             cell_ambient_fraction=args.cell_ambient_fraction,
-            empty_droplet_celltype_name=args.empty_droplet_celltype_name,
             verbose=args.verbose,
             log_file=args.log_file,
         )
