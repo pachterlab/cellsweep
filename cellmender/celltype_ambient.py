@@ -725,7 +725,6 @@ def denoise_count_matrix(
     # ===================================
 
     assert C_denoised.shape == (N, G), "Denoised matrix has incorrect shape."
-    adata.X = C_denoised
     adata.obs["alpha_hat"] = alpha
     z_hat = np.full(N, -1, dtype=int)
     z_hat[real_mask] = np.argmax(gamma[real_mask], axis=1)
