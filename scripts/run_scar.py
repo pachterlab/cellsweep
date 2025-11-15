@@ -11,9 +11,10 @@ parser.add_argument('-f', '--filtered', type=str, required=True, help='Path to f
 parser.add_argument('-o', '--output', type=str, default="adata_scar_denoised.h5ad", help='Path to output file')
 parser.add_argument('--cuda', action='store_true', help='Use CUDA if available')
 parser.add_argument('-e', '--epochs', type=int, default=200, help='Number of training epochs')
-parser.add_argument('--min_counts', type=int, default=200, help='Minimum counts per gene to retain')
-parser.add_argument('--max_counts', type=int, default=6000, help='Maximum counts per gene to retain')
-parser.add_argument('--min_genes', type=int, default=0, help='Minimum number of genes per cell to retain')
+parser.add_argument('--min_counts', type=int, default=None, help='Minimum counts per gene to retain')
+parser.add_argument('--max_counts', type=int, default=None, help='Maximum counts per gene to retain')
+parser.add_argument('--min_genes', type=int, default=None, help='Minimum number of genes per cell to retain')
+parser.add_argument('--sparsity', type=float, default=1.0, help='Sparsity parameter for scAR model')
 args = parser.parse_args()
 
 print("Loading data...")
@@ -57,7 +58,7 @@ device = 'cuda' if args.cuda else 'cpu'
 adata_scar = model(raw_count=adata, # In the case of Anndata object, scar will automatically use the estimated ambient_profile present in adata.uns.
                       ambient_profile=adata.uns['ambient_profile_Gene Expression'],
                       feature_type='mRNA',
-                      sparsity=1,
+                      sparsity=args.sparsity,
                       device=device # CPU, CUDA and MPS are supported.
                      )
 
@@ -68,7 +69,7 @@ adata_scar.train(epochs=args.epochs,
 
 print("Performing inference...")
 adata_scar.inference()  # by defaut, batch_size = None, set a batch_size if getting a memory issue
-assert adata_scar.native_counts.X.shape == adata.X.shape, "Denoised count matrix shape does not match input count matrix shape."
+assert adata_scar.native_counts.shape == adata.X.shape, "Denoised count matrix shape does not match input count matrix shape."
 
 print("Saving results...")
 adata.layers["raw"] = adata.X.copy()  # save raw counts in layers
