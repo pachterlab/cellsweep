@@ -848,10 +848,10 @@ def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, ce
     adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[[celltype_column, cluster_column]], how='left')
 
     print(title_raw)
-    sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby=cluster_column, standard_scale="var", save="raw_tmp.png")  # title=title_raw
+    sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby=cluster_column, standard_scale=None, save="raw_tmp.png")  # title=title_raw
     print("------------------------------")
     print(title_processed)
-    sc.pl.dotplot(adata_processed, marker_genes, groupby=cluster_column, standard_scale="var", save="processed_tmp.png")  # title=title_processed
+    sc.pl.dotplot(adata_processed, marker_genes, groupby=cluster_column, standard_scale=None, save="processed_tmp.png")  # title=title_processed
     print("------------------------------")
 
     shutil.move("figures/dotplot_raw_tmp.png", out_path_raw)

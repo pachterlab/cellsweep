@@ -158,6 +158,7 @@ data/
 **/pytest_output/
 notebooks/output
 notebooks/data
+notebooks/extracted_checkpoint
 **/ckpt.tar.gz
 tmp.py
 tmp.ipynb
