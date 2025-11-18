@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import re
 import numpy as np
 from scipy.stats import gaussian_kde
 import pandas as pd
@@ -697,3 +698,46 @@ def count_cellbender_parameters(ckpt_tar_path):
     shutil.rmtree("./extracted_checkpoint")
 
     return total_params
+
+def parse_em_log(log_path):
+    pattern = re.compile(r"EM Iter\s+(\d+): ll=([-\d\.]+)")
+    iters = []
+    lls = []
+
+    with open(log_path) as f:
+        for line in f:
+            m = pattern.search(line)
+            if m:
+                iters.append(int(m.group(1)))
+                lls.append(float(m.group(2)))
+
+    return iters, lls
+
+def plot_cellmender_likelihood_over_epochs(iters=None, lls=None, log_path=None, out_path=None, show=True):
+    if log_path is None and (iters is None or lls is None):
+        raise ValueError("Either log_path or both iters and lls must be provided.")
+    
+    if log_path is not None:
+        iters, lls = parse_em_log(log_path)
+
+    # Convert negative log-likelihoods to positive values
+    lls_pos = [-x for x in lls]  # now all > 0
+
+    fig, ax = plt.subplots(figsize=(6,4), constrained_layout=True)
+
+    # Plot only the positive values
+    ax.plot(iters, lls_pos, marker="o", linewidth=2, color="steelblue")
+
+    # Set y-axis to log scale ONCE
+    ax.set_yscale("log")
+
+    ax.set_title("EM Log-Likelihood Curve")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("-Log-Likelihood")
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close()
