@@ -43,7 +43,7 @@ def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None,
         plt.close()
     return ax_dict
 
-def knee_plot(adata, expected_cells=None, out_path=None, show=True):
+def knee_plot(adata, expected_cells=None, color_column=None, out_path=None, show=True):
     # Compute total counts per barcode
     knee = np.sort(np.ravel(adata.X.sum(axis=1)))[::-1]
     barcodes = np.arange(1, len(knee) + 1)
@@ -52,7 +52,14 @@ def knee_plot(adata, expected_cells=None, out_path=None, show=True):
     fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
 
     # Plot (x=barcodes, y=knee)
-    ax.plot(barcodes, knee, linewidth=2, color="gray")
+    if color_column is not None:
+        if color_column not in adata.obs.columns:
+            raise ValueError(f"color_column '{color_column}' not found in adata.obs columns.")
+        color = adata.obs[color_column].values
+        sc = ax.scatter(barcodes, knee, c=color, s=8, cmap="viridis", alpha=0.9, edgecolors="none")
+        plt.colorbar(sc, ax=ax, label=color_column)
+    else:
+        ax.plot(barcodes, knee, linewidth=2, color="gray")
 
     cutoff_umi = None
     if expected_cells is not None:
@@ -63,8 +70,9 @@ def knee_plot(adata, expected_cells=None, out_path=None, show=True):
         ax.axhline(y=cutoff_umi, color="k", ls="--", linewidth=1.5)
 
         # Keep only barcodes up to expected_cells
-        keep_mask = barcodes <= expected_cells
-        ax.plot(barcodes[keep_mask], knee[keep_mask], linewidth=2, color="blue")
+        if color_column is None:
+            keep_mask = barcodes <= expected_cells
+            ax.plot(barcodes[keep_mask], knee[keep_mask], linewidth=2, color="blue")
 
         print(f"UMI cutoff for expected cells ({expected_cells}): {cutoff_umi:.2f}")
 
