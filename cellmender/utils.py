@@ -1132,3 +1132,71 @@ def write_10x_like(
     # decontx inputs: paths["raw"], paths["filtered"], paths["technology"], decontx_out_prefix
 
     return paths
+
+def zero_out_low_counts(adata, threshold=0.5):
+    X = adata.X
+
+    if sparse.issparse(X):
+        X = X.copy()
+        X.data[X.data < threshold] = 0
+        X.eliminate_zeros()        # remove explicit zeros
+        adata.X = X
+    else:
+        adata.X = np.where(X < threshold, 0, X)
+    
+    return adata
+
+
+def write_10x_mtx(adata, out_dir,
+                         gene_id_col='gene_ids',
+                         gene_symbol_col='gene_symbols',
+                         barcodes_prefix=None,
+                         compress_matrix=True):
+    """
+    Write an AnnData object `adata` to a folder `out_dir` in 10x-style MEX format:
+      - matrix.mtx(.gz)
+      - barcodes.tsv(.gz)
+      - features.tsv(.gz) or genes.tsv(.gz)
+    
+    gene_id_col: column in adata.var giving gene IDs
+    gene_symbol_col: column in adata.var giving gene symbols/names
+    barcodes_prefix: optional string prefix to append to barcodes (rarely used)
+    compress_matrix: if True, gzip the matrix file (.mtx.gz)
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    
+    # Barcodes
+    barcodes = pd.DataFrame({0: adata.obs_names})
+    if barcodes_prefix:
+        barcodes[0] = barcodes_prefix + barcodes[0].astype(str)
+    barcode_path = os.path.join(out_dir, "barcodes.tsv")
+    barcodes.to_csv(barcode_path, sep="\t", header=False, index=False)
+    
+    # Features / Genes
+    genes_df = pd.DataFrame({
+        'gene_id': adata.var[gene_id_col].astype(str),
+        'gene_symbol': adata.var[gene_symbol_col].astype(str),
+        'feature_type': ['Gene Expression'] * adata.var.shape[0]
+    })
+    features_path = os.path.join(out_dir, "features.tsv")
+    genes_df.to_csv(features_path, sep="\t", header=False, index=False)
+    
+    # Matrix
+    matrix_path = os.path.join(out_dir, "matrix.mtx")
+    # ensure we have a sparse matrix
+    if not sparse.issparse(adata.X):
+        mat = sparse.csr_matrix(adata.X)
+    else:
+        mat = adata.X
+    # use scipy to write in Matrix Market format — note: transpose or not?
+    # Conventionally genes are rows, cells columns (10x convention: matrix.mtx has cells as columns)
+    io.mmwrite(matrix_path, mat.T)  # transpose so that rows=features, cols=barcodes
+    
+    if compress_matrix:
+        import gzip, shutil
+        with open(matrix_path, 'rb') as f_in:
+            with gzip.open(matrix_path + ".gz", 'wb') as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        os.remove(matrix_path)
+    
+    print(f"Wrote 10x-style directory: {out_dir}")
