@@ -865,6 +865,28 @@ def count_cellmender_parameters(log_path):
                 return line.strip()
     return None
 
+def find_ckpt_file(extracted_files):
+    # candidate extensions for torch checkpoints
+    torch_exts = (".pt", ".pth", ".ckpt", ".pt.tar")
+
+    # 1. Prefer files with the known extensions
+    for f in extracted_files:
+        if f.endswith(torch_exts):
+            return f
+
+    # 2. If nothing matches, try to inspect other files
+    #    Some CellBender checkpoints have no extension.
+    for f in extracted_files:
+        path = "./extracted_checkpoint/" + f
+        try:
+            obj = torch.load(path, map_location="cpu", weights_only=False)
+            if isinstance(obj, dict) and any(k in obj for k in ("state_dict", "params", "model")):
+                return f
+        except Exception:
+            pass
+
+    raise RuntimeError("No valid PyTorch checkpoint found inside the tar.")
+
 def count_cellbender_parameters(ckpt_tar_path):
     # Extract the tar.gz file
     with tarfile.open(ckpt_tar_path, "r:gz") as tar:
@@ -874,7 +896,8 @@ def count_cellbender_parameters(ckpt_tar_path):
     extracted_files = os.listdir("./extracted_checkpoint")
 
     # Load the actual checkpoint file
-    checkpoint_file = "./extracted_checkpoint/" + extracted_files[0]
+    ckpt_name = find_ckpt_file(extracted_files)
+    checkpoint_file = "./extracted_checkpoint/" + ckpt_name
     checkpoint = torch.load(checkpoint_file, map_location="cpu", weights_only=False)
 
     if "params" not in checkpoint:
