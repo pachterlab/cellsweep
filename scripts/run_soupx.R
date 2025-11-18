@@ -3,13 +3,14 @@
 # --- Parse command-line arguments ---
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 3) {
-  cat("Usage: Rscript run_soupx.R <matrix_tar_files_dir> <adata_obs_csv> <soupx_out_prefix>\n")
+  cat("Usage: Rscript run_soupx.R <matrix_tar_files_dir> <adata_obs_csv> <soupx_out_prefix> [cluster_col]\n")
   quit(status = 1)
 }
 
 matrix_tar_files_dir <- args[1]
 adata_obs_csv        <- args[2]
 soupx_out_prefix  <- args[3]
+cluster_col          <- if (length(args) >= 4) args[4] else "leiden"
 
 # --- Load libraries ---
 suppressPackageStartupMessages({
@@ -19,7 +20,10 @@ suppressPackageStartupMessages({
 
 # --- Load obs (clusters) ---
 adata_soupx_tmp_obs <- read.csv(adata_obs_csv, row.names = 1)
-clusters <- adata_soupx_tmp_obs$leiden
+if (!cluster_col %in% colnames(adata_soupx_tmp_obs)) {
+  stop(paste0("Column '", cluster_col, "' not found in adata_obs_csv."))
+}
+clusters <- adata_soupx_tmp_obs[[cluster_col]]
 names(clusters) <- rownames(adata_soupx_tmp_obs)
 
 # --- Run SoupX ---
