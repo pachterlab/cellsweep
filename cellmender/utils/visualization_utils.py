@@ -754,9 +754,40 @@ def identify_human_and_mouse_cells(adata, human_prefix="hg19_", mouse_prefix="mm
     adata.obs["mouse_counts_total"] = np.array(adata.X[:, is_mouse].sum(axis=1)).ravel()
     return adata
 
-def plot_joint_scatterplot(adata_raw, adata_processed, show_marginal_ticks=False, show_point_movement=False, max_points=15_000, seed=42, out_path=None, show=True):
+def plot_cross_species_histogram(adata, out_path_human=None, out_path_mouse=None, show=True):
+    if adata is None:
+        return
+
+    if "human_counts_total" not in adata.obs.columns or "mouse_counts_total" not in adata.obs.columns:
+        adata = identify_human_and_mouse_cells(adata)
+
+    sns.histplot(
+        data=adata.obs[adata.obs["genome"] == "mm10"],
+        x="human_counts_total",
+        bins=50,
+        alpha=0.6
+    )
+    if out_path_mouse:
+        plt.savefig(out_path_mouse, dpi=300, bbox_inches="tight")
+
+    sns.histplot(
+        data=adata.obs[adata.obs["genome"] == "hg19"],
+        x="mouse_counts_total",
+        bins=50,
+        alpha=0.6
+    )
+    if out_path_human:
+        plt.savefig(out_path_human, dpi=300, bbox_inches="tight")
+    if not show:
+        plt.close()
+
+def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", show_marginal_ticks=False, show_point_movement=False, max_points=15_000, seed=42, out_path=None, show=True):    
     if adata_processed is None:
         return  # nothing to plot
+    
+    if marginal_type not in ["histogram", "kde"]:
+        raise ValueError("marginal_type must be either 'histogram' or 'kde'")
+
     adata_raw, adata_processed = take_adata_cell_gene_intersection(adata_raw, adata_processed)
     
     if adata_raw.n_obs > max_points:
@@ -776,7 +807,13 @@ def plot_joint_scatterplot(adata_raw, adata_processed, show_marginal_ticks=False
     human_processed = adata_processed.obs["human_counts_total"].values + 1
     mouse_processed = adata_processed.obs["mouse_counts_total"].values + 1
 
-    g = sns.JointGrid(x=human_raw, y=mouse_raw, marginal_ticks=show_marginal_ticks)
+    df = pd.DataFrame({
+        "x": np.concatenate([human_raw, human_processed]),
+        "y": np.concatenate([mouse_raw, mouse_processed]),
+        "group": (["raw"] * len(human_raw)) + ([processed_name] * len(human_processed))
+    })
+
+    g = sns.JointGrid(data=df, x="x", y="y", hue="group", palette={"raw": "gray", processed_name: "blue"}, marginal_ticks=show_marginal_ticks)
 
     if show_point_movement:
         for xr, yr, xp, yp in zip(human_raw, mouse_raw, human_processed, mouse_processed):
@@ -789,20 +826,6 @@ def plot_joint_scatterplot(adata_raw, adata_processed, show_marginal_ticks=False
                 zorder=1
             )
 
-    # Scatter – as before
-    g.ax_joint.scatter(human_raw, mouse_raw, s=5, alpha=0.4, color="gray", edgecolors="none")
-    g.ax_joint.scatter(human_processed, mouse_processed, s=5, alpha=0.4, color="blue", edgecolors="none")
-
-    # --- KDE MARGINALS (CURVES ONLY) ---
-
-    # Top KDE curves (X)
-    sns.kdeplot(human_raw, ax=g.ax_marg_x, color="gray", log_scale=True, fill=False, bw_method="silverman")
-    sns.kdeplot(human_processed, ax=g.ax_marg_x, color="blue", log_scale=True, fill=False, bw_method="silverman")
-
-    # Right KDE curves (Y)
-    sns.kdeplot(mouse_raw, ax=g.ax_marg_y, color="gray", log_scale=True, fill=False, vertical=True, bw_method="silverman")
-    sns.kdeplot(mouse_processed, ax=g.ax_marg_y, color="blue", log_scale=True, fill=False, vertical=True, bw_method="silverman")
-
     # Main scatter axes log scale
     g.ax_joint.set_xscale("log")
     g.ax_joint.set_yscale("log")
@@ -810,24 +833,13 @@ def plot_joint_scatterplot(adata_raw, adata_processed, show_marginal_ticks=False
     g.ax_joint.set_xlabel("Human counts + 1")
     g.ax_joint.set_ylabel("Mouse counts + 1")
 
-    # if show_marginal_ticks:
-    #     from matplotlib.ticker import MaxNLocator
-    #     g.ax_marg_x.tick_params(labelleft=True)
-    #     g.ax_marg_x.grid(True, axis='y', ls=':')
-    #     g.ax_marg_x.yaxis.set_major_locator(MaxNLocator(5))
-    #     for label in g.ax_marg_x.get_xticklabels():
-    #         label.set_rotation(-90)
-
-    #     g.ax_marg_y.tick_params(labeltop=True)
-    #     g.ax_marg_y.grid(True, axis='x', ls=':')
-    #     g.ax_marg_y.xaxis.set_major_locator(MaxNLocator(5))
-    #     for label in g.ax_marg_y.get_xticklabels():
-    #         label.set_rotation(-90)
-
-    plt.tight_layout()
+    
+    if marginal_type == "kde":
+        g.plot(sns.scatterplot, sns.kdeplot, alpha=.7, linewidth=.5)
+    elif marginal_type == "histogram":
+        g.plot(sns.scatterplot, sns.histplot, alpha=.7, linewidth=.5)
+    
     if out_path:
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
-    if show:
-        plt.show()
-    else:
+    if not show:
         plt.close()

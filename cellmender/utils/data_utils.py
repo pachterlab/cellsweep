@@ -225,3 +225,19 @@ def zero_out_low_counts(adata, threshold=0.5):
         adata.X = np.where(X < threshold, 0, X)
     
     return adata
+
+def create_base_adata(n_cells=5000, n_genes=1000, seed=42):
+    np.random.seed(seed)
+
+    # Create a random sparse count matrix
+    X = sp.random(
+        n_cells, n_genes,
+        density=0.05,
+        format="csr",
+        data_rvs=lambda n: np.random.poisson(lam=2, size=n)
+    )
+
+    obs = pd.DataFrame(index=[f"cell_{i}" for i in range(n_cells)])
+    var = pd.DataFrame(index=[f"gene_{j}" for j in range(n_genes)])
+
+    return ad.AnnData(X=X, obs=obs, var=var)
