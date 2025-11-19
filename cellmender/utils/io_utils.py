@@ -60,11 +60,14 @@ def load_adata(adata, logger=None, verbose=0, quiet=False):
                 for genome in genomes:
                     logger.info(f"Loading genome {genome!r} from {adata!r}")
                     adata_tmp = sc.read_10x_h5(adata, genome=genome)
-                    # adata_tmp.var_names = genome + "_" + adata_tmp.var_names
+                    # adata_tmp.var_names = genome + "_" + adata_tmp.var_names  # at least for the sample hgmm12k dataset, gene names are already prepended with genome
                     adata_tmp.var_names_make_unique()
+                    adata_tmp.var['genome'] = genome
+                    adata_tmp.obs_names = genome + "_" + adata_tmp.obs_names
                     adata_tmp.obs['genome'] = genome
                     adatas.append(adata_tmp)
                 adata = ad.concat(adatas, join="outer", index_unique=None)
+                assert adata.obs_names.is_unique, f"Non-unique obs names found"
         elif os.path.exists(f"{adata}.mtx"):
             logger.info(f"Loading adata from matrix files with prefix {adata!r}")
             adata = read_r_matrix_into_anndata(adata)
@@ -113,30 +116,34 @@ def write_10x_like(
     adata,
     parent_dir,
     gzip_output=True,
+    genome="genome",
     is_empty_col="is_empty",
     cluster_col="leiden",
     write_raw=True,
-    write_filtered=True
+    write_filtered=True,
+    transpose_matrix=True
 ):
     """
     Write an AnnData object to a 10x-like directory structure.
 
     Structure:
-      parent_dir/
+      <parent_dir>/
           raw_gene_bc_matrices/
-              barcodes.tsv[.gz]
-              genes.tsv[.gz]
-              matrix.mtx[.gz]
-          filtered_gene_bc_matrices/
-              barcodes.tsv[.gz]
-              genes.tsv[.gz]
-              matrix.mtx[.gz]
+              <genome>/
+                barcodes.tsv[.gz]
+                genes.tsv[.gz]
+                matrix.mtx[.gz]
+            filtered_gene_bc_matrices/
+              <genome>/
+                barcodes.tsv[.gz]
+                genes.tsv[.gz]
+                matrix.mtx[.gz]
         #   clusters.csv
 
     Parameters
     ----------
     adata : anndata.AnnData
-        Object containing X, obs, var.
+        Object containing X (cell x gene), obs, var.
         adata.obs must include columns specified by `is_empty_col` and `celltype_col`.
 
     parent_dir : str
@@ -164,19 +171,22 @@ def write_10x_like(
         os.makedirs(subdir, exist_ok=True)
 
         suffix = ".gz" if gzip_output else ""
-        barcodes_path = os.path.join(subdir, f"barcodes.tsv{suffix}")
-        genes_path = os.path.join(subdir, f"genes.tsv{suffix}")
-        matrix_path = os.path.join(subdir, f"matrix.mtx{suffix}")
+        barcodes_path = os.path.join(subdir, genome, f"barcodes.tsv{suffix}")
+        genes_path = os.path.join(subdir, genome, f"genes.tsv{suffix}")
+        matrix_path = os.path.join(subdir, genome, f"matrix.mtx{suffix}")
 
         if os.path.exists(barcodes_path) and os.path.exists(genes_path) and os.path.exists(matrix_path):
             print(f"Found existing 10x files in {subdir!r}. Skipping write.")
-            return {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
+            return subdir  # {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
 
         X = adata.X[mask]
         if sparse.issparse(X):
             X = X.tocoo()
         else:
             X = sparse.coo_matrix(X)
+        
+        if transpose_matrix:  # needed for scanpy's read 10x function
+            X = X.T  # genes x cells
 
         genes = adata.var_names
         barcodes = adata.obs_names[mask]
@@ -197,7 +207,7 @@ def write_10x_like(
             )
             io.mmwrite(matrix_path, X)
 
-        return {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
+        return subdir  # {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
 
     # Raw matrix (all cells)
     if write_raw:
