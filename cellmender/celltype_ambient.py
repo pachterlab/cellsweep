@@ -7,6 +7,8 @@ import logging
 import anndata as ad
 import scipy.sparse as sp
 from pydantic import validate_call, Field, ConfigDict
+import numba
+from numba import njit, prange
 from typing import Annotated, Optional
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types  # , plot_cellmender_likelihood_over_epochs
 
@@ -183,6 +185,95 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
                           (np.array(rows, dtype=int), np.array(cols, dtype=int))),
                          shape=(N, G))
 
+# ---------- Numba-parallel E-step kernel ----------
+@njit(parallel=True, nogil=True)
+def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
+                 gamma, p, K, N, G, eps, log_eps, freeze_empty_mask):
+    """
+    Parallel E-step over rows. Returns per-entry arrays and per-row summaries.
+    """
+    nnz_total = data.shape[0]
+    ambient_vals = np.zeros(nnz_total, dtype=np.float64)
+    bulk_vals = np.zeros(nnz_total, dtype=np.float64)
+    cell_vals = np.zeros((nnz_total, K), dtype=np.float64)
+
+    numer_gamma = np.zeros((N, K), dtype=np.float64)
+    A_n = np.zeros(N, dtype=np.float64)
+    ll_row = np.zeros(N, dtype=np.float64)
+    M_row = np.zeros(N, dtype=np.float64)
+
+    # We will fill entries sequentially but rows are parallelized
+    # Build an array mapping entry index to its position: compute per-row offsets
+    for n in prange(N):
+        rs = indptr[n]
+        re = indptr[n + 1]
+        if re <= rs:
+            continue
+
+        # local accumulators for this row
+        local_ll = 0.0
+        local_M = 0.0
+        local_A = 0.0
+
+        # index into global flattened arrays
+        # we will write to positions [rs:re) which correspond to the CSR data indices
+        # this is safe because each row writes to a unique slice
+        for jj in range(rs, re):
+            g = indices[jj]        # gene index
+            val = data[jj]
+
+            # compute mixture weights for this nonzero
+            wa = (1.0 - beta) * alpha[n] * a[g]
+            wm = beta * m_global[g]
+
+            # if freeze_empty and this row is empty, treat only ambient+bulk
+            w_p_sum = 0.0
+            if not freeze_empty_mask[n]:
+                # compute sum over k of b * gamma[n,k] * p[k,g]
+                b = (1.0 - beta) * (1.0 - alpha[n])
+                for k in range(K):
+                    wpk = b * gamma[n, k] * p[k, g]
+                    # accumulate into cell_vals
+                    cell_vals[jj, k] = wpk
+                    w_p_sum += wpk
+
+            p_tot = wa + wm + w_p_sum
+
+            # fraction scale: vals / p_tot
+            scale = val / np.maximum(p_tot, eps)
+
+            # expected ambient and bulk at this entry
+            cA = scale * wa
+            cM = scale * wm
+
+            ambient_vals[jj] = cA
+            bulk_vals[jj] = cM
+
+            # convert stored w_p_k to expected counts for each k
+            if not freeze_empty_mask[n]:
+                # multiply previously stored wpk by scale to get counts
+                # (we stored wpk in cell_vals[jj,k])
+                for k in range(K):
+                    cell_vals[jj, k] = cell_vals[jj, k] * scale
+                    numer_gamma[n, k] += cell_vals[jj, k]  # accumulate per-row k-sums
+                # sum of cell counts for this entry implicitly added to row_expected if needed
+            else:
+                # ensure cell_vals row is zero
+                for k in range(K):
+                    cell_vals[jj, k] = 0.0
+
+            # accumulate per-row totals
+            local_A += cA
+            local_M += cM
+            local_ll += val * np.log(np.maximum(p_tot, log_eps))
+
+        # write back per-row numbers
+        A_n[n] = local_A
+        M_row[n] = local_M
+        ll_row[n] = local_ll
+
+    return ambient_vals, bulk_vals, cell_vals, numer_gamma, A_n, ll_row, M_row
+
 def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
               max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
               beta_0, beta_prior_strength, eps, dirichlet_lambda, 
@@ -190,128 +281,53 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
     """
     Helper for denoise_count_matrix. Performs sparse compatible EM on model
     """
-    # sparse structure
-    indptr = C.indptr
-    indices = C.indices
-    data = C.data
+    indptr = C.indptr.copy()
+    indices = C.indices.copy()
+    data = C.data.astype(np.float64).copy()  # ensure float64
+
+    nnz = data.shape[0]
+
+    N, G = C.shape
+
+    # freeze mask as boolean array for Numba
+    if freeze_empty:
+        freeze_empty_mask = ~real_mask
+    else:
+        freeze_empty_mask = np.zeros(N, dtype=np.bool_)
 
     prev_ll = -np.inf
 
-    # ============ EM LOOP ============
+    # Precompute row_of_entry (map each nnz index to its row) -> used for constructing CSR from per-entry arrays
+    row_of_entry = np.empty(nnz, dtype=np.int64)
+    for n in range(N):
+        rs = indptr[n]; re = indptr[n+1]
+        if re > rs:
+            row_of_entry[rs:re] = n
+
+    # EM loop
     for it in range(1, max_iter + 1):
+        # ============================
+        #     E STEP (numba parallel)
+        # ============================
+        ambient_vals, bulk_vals, cell_vals, numer_gamma, A_n, ll_row, M_row = e_step_numba(
+            indptr, indices, data, alpha, float(beta), a, m_global,
+            gamma, p, K, N, G, float(eps), log_eps, freeze_empty_mask
+        )
 
-        p_numer = np.zeros((K, G), dtype=float)
-        a_numer = np.zeros(G, dtype=float)
-        numer_gamma = np.zeros((N, K), dtype=float)
-        A_n = np.zeros(N, dtype=float)
-        M_total = 0.0
+        # Reduce per-row scalars
+        ll = float(np.sum(ll_row))
+        M_total = float(np.sum(M_row))
 
-        # triplists for sparse ambient and bulk expected matrices
-        rows_A = []
-        cols_A = []
-        vals_A = []
+        # Build a_numer by summing ambient_vals into gene slots (fast, C-backed)
+        a_numer = np.zeros(G, dtype=np.float64)
+        # indices correspond to gene indices per entry
+        np.add.at(a_numer, indices, ambient_vals)
 
-        rows_M = []
-        cols_M = []
-        vals_M = []
-
-        # triplists for expected CELL (already existed)
-        rows_list = []
-        cols_list = []
-        vals_list = []
-
-        ll = 0.0
-
-        b_n = (1.0 - beta) * (1.0 - alpha)
-
-        # Iterate over sparse matrix row-by-row
-        for n in range(N):
-            rs = indptr[n]; re = indptr[n+1]
-            if rs == re:
-                continue
-
-            idx = indices[rs:re]
-            vals = data[rs:re].astype(float)
-            nnz = len(idx)
-
-            # ============================
-            #     EMPTY DROPLET CASE
-            # ============================
-            if freeze_empty and (not real_mask[n]):
-
-                w_a = (1.0 - beta) * alpha[n] * a[idx]
-                w_m = beta * m_global[idx]
-                p_tot = w_a + w_m
-                p_tot_safe = np.where(p_tot > eps, p_tot, eps)
-
-                # expected ambient
-                c_A = vals * w_a / p_tot_safe
-                A_n[n] = c_A.sum()
-                a_numer[idx] += c_A
-
-                rows_A.extend([n] * nnz)
-                cols_A.extend(idx.tolist())
-                vals_A.extend(c_A.tolist())
-
-                # expected bulk
-                c_M = vals * w_m / p_tot_safe
-                M_total += c_M.sum()
-
-                rows_M.extend([n] * nnz)
-                cols_M.extend(idx.tolist())
-                vals_M.extend(c_M.tolist())
-
-                ll += float(np.dot(vals, np.log(np.maximum(p_tot, log_eps))))
-                continue
-
-            # ============================
-            #     REAL DROPLET CASE
-            # ============================
-
-            w_a = (1.0 - beta) * alpha[n] * a[idx]
-            w_m = beta * m_global[idx]
-
-            b = b_n[n]
-            w_p_sum = np.zeros(nnz, dtype=float)
-            w_p_k = np.zeros((K, nnz), dtype=float)
-
-            for k in range(K):
-                wpk = b * gamma[n, k] * p[k, idx]
-                w_p_k[k] = wpk
-                w_p_sum += wpk
-
-            p_tot = w_a + w_m + w_p_sum
-            p_tot_safe = np.where(p_tot > eps, p_tot, eps)
-            c_scale = vals / p_tot_safe
-
-            # expected ambient
-            c_A = c_scale * w_a
-            a_numer[idx] += c_A
-            A_n[n] = c_A.sum()
-            rows_A.extend([n] * nnz)
-            cols_A.extend(idx.tolist())
-            vals_A.extend(c_A.tolist())
-
-            # expected bulk
-            c_M = c_scale * w_m
-            M_total += c_M.sum()
-            rows_M.extend([n] * nnz)
-            cols_M.extend(idx.tolist())
-            vals_M.extend(c_M.tolist())
-
-            # expected cell counts
-            row_expected = np.zeros(nnz, dtype=float)
-            for k in range(K):
-                c_P = c_scale * w_p_k[k]
-                numer_gamma[n, k] = c_P.sum()
-                p_numer[k, idx] += c_P
-                row_expected += c_P
-
-            rows_list.extend([n] * nnz)
-            cols_list.extend(idx.tolist())
-            vals_list.extend(row_expected.tolist())
-
-            ll += float(np.dot(vals, np.log(np.maximum(p_tot, log_eps))))
+        # Build p_numer: shape (K, G) by summing cell_vals rows into gene slots
+        p_numer = np.zeros((K, G), dtype=np.float64)
+        # for each k, add cell_vals[:,k] at positions indices
+        for k in range(K):
+            np.add.at(p_numer[k], indices, cell_vals[:, k])
 
         # ============================
         #     M STEP
@@ -380,27 +396,12 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 
         prev_ll = ll
 
-    # ============================
-    # CONSTRUCT EXPECTED MATRICES
-    # ============================
-
-    # C_A sparse
-    C_expected_ambient = sp.csr_matrix(
-        (np.array(vals_A), (np.array(rows_A), np.array(cols_A))),
-        shape=(N, G)
-    )
-
-    # C_M sparse
-    C_expected_bulk = sp.csr_matrix(
-        (np.array(vals_M), (np.array(rows_M), np.array(cols_M))),
-        shape=(N, G)
-    )
-
-    # C_cell sparse (if needed)
-    C_expected_cell = sp.csr_matrix(
-        (np.array(vals_list), (np.array(rows_list), np.array(cols_list))),
-        shape=(N, G)
-    )
+    # Construct CSR expected matrices from per-entry arrays
+    # C_expected_cell: per-entry cell sum across K
+    cell_sum_per_entry = np.sum(cell_vals, axis=1)
+    C_expected_cell = sp.csr_matrix((cell_sum_per_entry, (row_of_entry, indices)), shape=(N, G))
+    C_expected_ambient = sp.csr_matrix((ambient_vals, (row_of_entry, indices)), shape=(N, G))
+    C_expected_bulk = sp.csr_matrix((bulk_vals, (row_of_entry, indices)), shape=(N, G))
 
     return C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll
 
@@ -423,7 +424,6 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         alpha[~real_mask] = 1.0
         gamma[~real_mask, :] = 0.0
 
-    # its, lls = [], []
     for it in range(1, max_iter + 1):
         # Precompute per-row scalars and per-column vectors
         b_n = (1.0 - beta) * (1.0 - alpha)      # (N,)
@@ -502,8 +502,6 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         a = (a_numer + dirichlet_lambda)
         a = a / max(a.sum(), eps)
 
-        # its.append(it)
-        # lls.append(ll)
         if verbose and logger is not None:
             logger.info(f"EM Iter {it:3d}: ll={ll:.3f} beta={beta:.6f}")
 
@@ -513,10 +511,6 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
                 logger.info("Converged.")
             break
         prev_ll = ll
-    
-    # # plot likelihood over iterations
-    # lls_out_path = os.path.join(os.getcwd(), "cellmender_em_lls.csv")
-    # plot_cellmender_likelihood_over_epochs(its, lls, out_path=lls_out_path)
 
     # final expected matrices
     C_expected_cell = C_cell    # ndarray (N,G)
@@ -537,6 +531,7 @@ def denoise_count_matrix(
     log_eps: Annotated[float, Field(gt=0)] = 1e-300,
     dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 0.1,
     integer_out: bool = False,
+    thread_num: Optional[Annotated[int, Field(gt=0)]] = 1,
     fixed_celltype: bool = False,
     freeze_empty: bool = True,
     empty_droplet_method: str = "threshold",
@@ -607,6 +602,9 @@ def denoise_count_matrix(
     integer_out : bool, default False
         If True, rounds denoised counts to nearest integer before saving.
 
+    thread_num : int, default 1
+        number of numba threads
+
     fixed_celltype : bool, default False
         If True, keeps cell-type assignments fixed during EM updates.
 
@@ -663,6 +661,9 @@ def denoise_count_matrix(
     Designed primarily for benchmarking correctness of parameter updates rather than
     for production-level denoising on empty droplets.
     """
+
+    # set thread number
+    numba.set_num_threads(thread_num)
     
     logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
     adata = load_adata(adata, logger=logger)
@@ -748,7 +749,7 @@ def denoise_count_matrix(
     if sp.issparse(C):
         if not sp.isspmatrix_csr(C):
             C = sp.csr_matrix(C)
-        logger.info("Performing Sparse EM")
+        logger.info(f"Performing Sparse EM with {numba.get_num_threads()} Numba threads")
         C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
                                                                                                             max_iter, tol, freeze_empty, fixed_celltype, real_mask,                                                                                                         
                                                                                                             beta_0, beta_prior_strength, eps, dirichlet_lambda, 

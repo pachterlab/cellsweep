@@ -350,7 +350,7 @@ def simple_simulation(
 
 
     adata.uns["simulation_params"] = dict(N=N, G=G, K=K, pi_true=pi_true, p=p, fragility = fragility, 
-                                            ambient_scale=ambient_scale, alpha_dist=alpha_dist, beta=beta,
+                                            ambient_scale=ambient_scale, alpha_dist=np.array(alpha_dist), beta=beta,
                                             frac_real=frac_real, umi_mean=umi_mean, umi_disp=umi_disp,
                                             ambient_umi_mean=ambient_umi_mean, gene_prefix=gene_prefix, 
                                             cell_prefix=cell_prefix)
