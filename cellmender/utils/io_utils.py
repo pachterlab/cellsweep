@@ -49,7 +49,22 @@ def load_adata(adata, logger=None, verbose=0, quiet=False):
         elif adata.endswith(".h5"):
             logger.info(f"Loading adata from {adata!r}")
             import scanpy as sc
-            adata = sc.read_10x_h5(adata)
+            import h5py
+            with h5py.File(adata, "r") as f:
+                genomes = list(f.keys())
+            if len(genomes) == 1:
+                adata = sc.read_10x_h5(adata)
+            else:
+                logger.info(f"Multiple genomes found in {adata!r}: {genomes}. Loading each separately.")
+                adatas = []
+                for genome in genomes:
+                    logger.info(f"Loading genome {genome!r} from {adata!r}")
+                    adata_tmp = sc.read_10x_h5(adata, genome=genome)
+                    # adata_tmp.var_names = genome + "_" + adata_tmp.var_names
+                    adata_tmp.var_names_make_unique()
+                    adata_tmp.obs['genome'] = genome
+                    adatas.append(adata_tmp)
+                adata = ad.concat(adatas, join="outer", index_unique=None)
         elif os.path.exists(f"{adata}.mtx"):
             logger.info(f"Loading adata from matrix files with prefix {adata!r}")
             adata = read_r_matrix_into_anndata(adata)
@@ -148,6 +163,15 @@ def write_10x_like(
         subdir = os.path.join(parent_dir, subdir_name)
         os.makedirs(subdir, exist_ok=True)
 
+        suffix = ".gz" if gzip_output else ""
+        barcodes_path = os.path.join(subdir, f"barcodes.tsv{suffix}")
+        genes_path = os.path.join(subdir, f"genes.tsv{suffix}")
+        matrix_path = os.path.join(subdir, f"matrix.mtx{suffix}")
+
+        if os.path.exists(barcodes_path) and os.path.exists(genes_path) and os.path.exists(matrix_path):
+            print(f"Found existing 10x files in {subdir!r}. Skipping write.")
+            return {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
+
         X = adata.X[mask]
         if sparse.issparse(X):
             X = X.tocoo()
@@ -156,12 +180,6 @@ def write_10x_like(
 
         genes = adata.var_names
         barcodes = adata.obs_names[mask]
-
-        suffix = ".gz" if gzip_output else ""
-
-        barcodes_path = os.path.join(subdir, f"barcodes.tsv{suffix}")
-        genes_path = os.path.join(subdir, f"genes.tsv{suffix}")
-        matrix_path = os.path.join(subdir, f"matrix.mtx{suffix}")
 
         if gzip_output:
             with gzip.open(barcodes_path, "wt") as f:
@@ -185,12 +203,12 @@ def write_10x_like(
     if write_raw:
         paths["raw"] = _write_10x_subdir("raw_gene_bc_matrices", mask=np.ones(adata.n_obs, dtype=bool))
 
-    if cluster_col in adata.obs.columns and is_empty_col in adata.obs.columns:
+    clusters_path = os.path.join(parent_dir, "clusters.csv")
+    paths["clusters"] = clusters_path
+    if not os.path.exists(clusters_path) and cluster_col in adata.obs.columns and is_empty_col in adata.obs.columns:
         # Clusters
-        clusters_path = os.path.join(parent_dir, "clusters.csv")
         adata_filtered = adata[~adata.obs[is_empty_col].astype(bool)].copy()
         adata_filtered.obs[[cluster_col]].to_csv(clusters_path)
-        paths["clusters"] = clusters_path
 
     if write_filtered:
         # Filtered matrix (is_empty == False)

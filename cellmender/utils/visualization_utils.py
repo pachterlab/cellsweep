@@ -21,9 +21,6 @@ from upsetplot import from_contents, UpSet
 from .data_utils import take_adata_cell_gene_intersection
 from .logger_utils import setup_logger
 
-def my_hello_world2():
-    print("Hello, world!2")
-
 def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None, title: str = None, show: bool = True):
     """
     eg upset_data_dict: {
@@ -748,4 +745,101 @@ def plot_cellmender_likelihood_over_epochs(iters=None, lls=None, log_path=None, 
     if show:
         plt.show()
     else:
+        plt.close()
+
+def identify_human_and_mouse_cells(adata, human_prefix="hg19_", mouse_prefix="mm10_"):
+    is_human = adata.var_names.str.startswith(human_prefix)
+    is_mouse = adata.var_names.str.startswith(mouse_prefix)
+    adata.obs["human_counts_total"] = np.array(adata.X[:, is_human].sum(axis=1)).ravel()
+    adata.obs["mouse_counts_total"] = np.array(adata.X[:, is_mouse].sum(axis=1)).ravel()
+    return adata
+
+def plot_cross_species_histogram(adata, out_path_human=None, out_path_mouse=None, show=True):
+    if adata is None:
+        return
+
+    if "human_counts_total" not in adata.obs.columns or "mouse_counts_total" not in adata.obs.columns:
+        adata = identify_human_and_mouse_cells(adata)
+
+    sns.histplot(
+        data=adata.obs[adata.obs["genome"] == "mm10"],
+        x="human_counts_total",
+        bins=50,
+        alpha=0.6
+    )
+    if out_path_mouse:
+        plt.savefig(out_path_mouse, dpi=300, bbox_inches="tight")
+
+    sns.histplot(
+        data=adata.obs[adata.obs["genome"] == "hg19"],
+        x="mouse_counts_total",
+        bins=50,
+        alpha=0.6
+    )
+    if out_path_human:
+        plt.savefig(out_path_human, dpi=300, bbox_inches="tight")
+    if not show:
+        plt.close()
+
+def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", show_marginal_ticks=False, show_point_movement=False, max_points=15_000, seed=42, out_path=None, show=True):    
+    if adata_processed is None:
+        return  # nothing to plot
+    
+    if marginal_type not in ["histogram", "kde"]:
+        raise ValueError("marginal_type must be either 'histogram' or 'kde'")
+
+    adata_raw, adata_processed = take_adata_cell_gene_intersection(adata_raw, adata_processed)
+    
+    if adata_raw.n_obs > max_points:
+        np.random.seed(seed)
+        sampled_indices = np.random.choice(adata_raw.obs_names, size=max_points, replace=False)
+        adata_raw = adata_raw[sampled_indices].copy()
+        adata_processed = adata_processed[sampled_indices].copy()
+    
+    if "human_counts_total" not in adata_raw.obs.columns or "mouse_counts_total" not in adata_raw.obs.columns:
+        adata_raw = identify_human_and_mouse_cells(adata_raw)
+    if "human_counts_total" not in adata_processed.obs.columns or "mouse_counts_total" not in adata_processed.obs.columns:
+        adata_processed = identify_human_and_mouse_cells(adata_processed)
+    
+    human_raw = adata_raw.obs["human_counts_total"].values + 1
+    mouse_raw = adata_raw.obs["mouse_counts_total"].values + 1
+
+    human_processed = adata_processed.obs["human_counts_total"].values + 1
+    mouse_processed = adata_processed.obs["mouse_counts_total"].values + 1
+
+    df = pd.DataFrame({
+        "x": np.concatenate([human_raw, human_processed]),
+        "y": np.concatenate([mouse_raw, mouse_processed]),
+        "group": (["raw"] * len(human_raw)) + ([processed_name] * len(human_processed))
+    })
+
+    g = sns.JointGrid(data=df, x="x", y="y", hue="group", palette={"raw": "gray", processed_name: "blue"}, marginal_ticks=show_marginal_ticks)
+
+    if show_point_movement:
+        for xr, yr, xp, yp in zip(human_raw, mouse_raw, human_processed, mouse_processed):
+            g.ax_joint.plot(
+                [xr, xp],
+                [yr, yp],
+                color="lightgray",
+                alpha=0.4,
+                linewidth=0.5,
+                zorder=1
+            )
+
+    # Main scatter axes log scale
+    g.ax_joint.set_xscale("log")
+    g.ax_joint.set_yscale("log")
+
+    g.ax_joint.set_xlabel("Human counts + 1")
+    g.ax_joint.set_ylabel("Mouse counts + 1")
+
+    
+    if marginal_type == "kde":
+        g.plot(sns.scatterplot, sns.kdeplot, alpha=.7, linewidth=.5)
+    elif marginal_type == "histogram":
+        g.plot(sns.scatterplot, sns.histplot, alpha=.7, linewidth=.5)
+    
+    if out_path:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    if not show:
         plt.close()
