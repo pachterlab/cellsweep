@@ -8,7 +8,7 @@ import anndata as ad
 import scipy.sparse as sp
 from pydantic import validate_call, Field, ConfigDict
 from typing import Annotated, Optional
-from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types
+from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types  # , plot_cellmender_likelihood_over_epochs
 
 #* take the mean expression of each gene across all empty droplets, and normalize to sum to 1.
 def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
@@ -423,6 +423,7 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         alpha[~real_mask] = 1.0
         gamma[~real_mask, :] = 0.0
 
+    # its, lls = [], []
     for it in range(1, max_iter + 1):
         # Precompute per-row scalars and per-column vectors
         b_n = (1.0 - beta) * (1.0 - alpha)      # (N,)
@@ -501,6 +502,8 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         a = (a_numer + dirichlet_lambda)
         a = a / max(a.sum(), eps)
 
+        # its.append(it)
+        # lls.append(ll)
         if verbose and logger is not None:
             logger.info(f"EM Iter {it:3d}: ll={ll:.3f} beta={beta:.6f}")
 
@@ -510,6 +513,10 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
                 logger.info("Converged.")
             break
         prev_ll = ll
+    
+    # # plot likelihood over iterations
+    # lls_out_path = os.path.join(os.getcwd(), "cellmender_em_lls.csv")
+    # plot_cellmender_likelihood_over_epochs(its, lls, out_path=lls_out_path)
 
     # final expected matrices
     C_expected_cell = C_cell    # ndarray (N,G)
@@ -522,7 +529,7 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def denoise_count_matrix(
     adata: str | ad.AnnData,
-    adata_out: Annotated[str, Field(pattern=r"\.h5ad$")] = None,
+    adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = "adata_straightened.h5ad",
     max_iter: Annotated[int, Field(gt=0)] = 40,
     beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
     beta_prior_strength: Annotated[float, Field(ge=0)] = None,
@@ -642,7 +649,7 @@ def denoise_count_matrix(
     AnnData
         Denoised AnnData object with updated `adata.X`, and
         added fields such as:
-        - `adata.layers["denoised"]` : denoised count matrix
+        - `adata.layers["raw"]` : raw count matrix
         - `adata.obs["cell_ambient_fraction"]` : estimated ambient fraction per cell
         - `adata.uns["em_convergence"]` : diagnostics and log-likelihood trace
 
@@ -791,5 +798,7 @@ def denoise_count_matrix(
         if os.path.dirname(adata_out):
             os.makedirs(os.path.dirname(adata_out), exist_ok=True)
         adata.write_h5ad(adata_out)
+    else:
+        logger.warning("adata_out not specified; not saving inferred adata to a file.")
 
     return adata
