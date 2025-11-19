@@ -21,9 +21,6 @@ from upsetplot import from_contents, UpSet
 from .data_utils import take_adata_cell_gene_intersection
 from .logger_utils import setup_logger
 
-def my_hello_world2():
-    print("Hello, world!2")
-
 def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None, title: str = None, show: bool = True):
     """
     eg upset_data_dict: {
@@ -745,6 +742,91 @@ def plot_cellmender_likelihood_over_epochs(iters=None, lls=None, log_path=None, 
 
     if out_path:
         plt.savefig(out_path, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+def identify_human_and_mouse_cells(adata, human_prefix="hg19_", mouse_prefix="mm10_"):
+    is_human = adata.var_names.str.startswith(human_prefix)
+    is_mouse = adata.var_names.str.startswith(mouse_prefix)
+    adata.obs["human_counts_total"] = np.array(adata.X[:, is_human].sum(axis=1)).ravel()
+    adata.obs["mouse_counts_total"] = np.array(adata.X[:, is_mouse].sum(axis=1)).ravel()
+    return adata
+
+def plot_joint_scatterplot(adata_raw, adata_processed, show_marginal_ticks=False, show_point_movement=False, max_points=15_000, seed=42, out_path=None, show=True):
+    if adata_processed is None:
+        return  # nothing to plot
+    adata_raw, adata_processed = take_adata_cell_gene_intersection(adata_raw, adata_processed)
+    
+    if adata_raw.n_obs > max_points:
+        np.random.seed(seed)
+        sampled_indices = np.random.choice(adata_raw.obs_names, size=max_points, replace=False)
+        adata_raw = adata_raw[sampled_indices].copy()
+        adata_processed = adata_processed[sampled_indices].copy()
+    
+    if "human_counts_total" not in adata_raw.obs.columns or "mouse_counts_total" not in adata_raw.obs.columns:
+        adata_raw = identify_human_and_mouse_cells(adata_raw)
+    if "human_counts_total" not in adata_processed.obs.columns or "mouse_counts_total" not in adata_processed.obs.columns:
+        adata_processed = identify_human_and_mouse_cells(adata_processed)
+    
+    human_raw = adata_raw.obs["human_counts_total"].values + 1
+    mouse_raw = adata_raw.obs["mouse_counts_total"].values + 1
+
+    human_processed = adata_processed.obs["human_counts_total"].values + 1
+    mouse_processed = adata_processed.obs["mouse_counts_total"].values + 1
+
+    g = sns.JointGrid(x=human_raw, y=mouse_raw, marginal_ticks=show_marginal_ticks)
+
+    if show_point_movement:
+        for xr, yr, xp, yp in zip(human_raw, mouse_raw, human_processed, mouse_processed):
+            g.ax_joint.plot(
+                [xr, xp],
+                [yr, yp],
+                color="lightgray",
+                alpha=0.4,
+                linewidth=0.5,
+                zorder=1
+            )
+
+    # Scatter – as before
+    g.ax_joint.scatter(human_raw, mouse_raw, s=5, alpha=0.4, color="gray", edgecolors="none")
+    g.ax_joint.scatter(human_processed, mouse_processed, s=5, alpha=0.4, color="blue", edgecolors="none")
+
+    # --- KDE MARGINALS (CURVES ONLY) ---
+
+    # Top KDE curves (X)
+    sns.kdeplot(human_raw, ax=g.ax_marg_x, color="gray", log_scale=True, fill=False, bw_method="silverman")
+    sns.kdeplot(human_processed, ax=g.ax_marg_x, color="blue", log_scale=True, fill=False, bw_method="silverman")
+
+    # Right KDE curves (Y)
+    sns.kdeplot(mouse_raw, ax=g.ax_marg_y, color="gray", log_scale=True, fill=False, vertical=True, bw_method="silverman")
+    sns.kdeplot(mouse_processed, ax=g.ax_marg_y, color="blue", log_scale=True, fill=False, vertical=True, bw_method="silverman")
+
+    # Main scatter axes log scale
+    g.ax_joint.set_xscale("log")
+    g.ax_joint.set_yscale("log")
+
+    g.ax_joint.set_xlabel("Human counts + 1")
+    g.ax_joint.set_ylabel("Mouse counts + 1")
+
+    # if show_marginal_ticks:
+    #     from matplotlib.ticker import MaxNLocator
+    #     g.ax_marg_x.tick_params(labelleft=True)
+    #     g.ax_marg_x.grid(True, axis='y', ls=':')
+    #     g.ax_marg_x.yaxis.set_major_locator(MaxNLocator(5))
+    #     for label in g.ax_marg_x.get_xticklabels():
+    #         label.set_rotation(-90)
+
+    #     g.ax_marg_y.tick_params(labeltop=True)
+    #     g.ax_marg_y.grid(True, axis='x', ls=':')
+    #     g.ax_marg_y.xaxis.set_major_locator(MaxNLocator(5))
+    #     for label in g.ax_marg_y.get_xticklabels():
+    #         label.set_rotation(-90)
+
+    plt.tight_layout()
+    if out_path:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
     if show:
         plt.show()
     else:
