@@ -185,6 +185,7 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
                           (np.array(rows, dtype=int), np.array(cols, dtype=int))),
                          shape=(N, G))
 
+
 # ---------- Numba-parallel E-step kernel ----------
 @njit(parallel=True, nogil=True)
 def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
@@ -277,13 +278,17 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
 def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
               max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
               beta_0, beta_prior_strength, eps, dirichlet_lambda, 
-              log_eps, verbose, logger):
+              log_eps, verbose, logger, freeze_ambient_profile):
     """
     Helper for denoise_count_matrix. Performs sparse compatible EM on model
     """
     indptr = C.indptr.copy()
     indices = C.indices.copy()
     data = C.data.astype(np.float64).copy()  # ensure float64
+
+    alpha_m = np.zeros(N, dtype=float)   # first moments
+    alpha_v = np.zeros(N, dtype=float)   # second moments
+    alpha_vhat = np.zeros(N, dtype=float)  # AMSGrad max second moment
 
     nnz = data.shape[0]
 
@@ -318,10 +323,11 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         ll = float(np.sum(ll_row))
         M_total = float(np.sum(M_row))
 
-        # Build a_numer by summing ambient_vals into gene slots (fast, C-backed)
-        a_numer = np.zeros(G, dtype=np.float64)
-        # indices correspond to gene indices per entry
-        np.add.at(a_numer, indices, ambient_vals)
+        if not freeze_ambient_profile:
+            # Build a_numer by summing ambient_vals into gene slots (fast, C-backed)
+            a_numer = np.zeros(G, dtype=np.float64)
+            # indices correspond to gene indices per entry
+            np.add.at(a_numer, indices, ambient_vals)
 
         # Build p_numer: shape (K, G) by summing cell_vals rows into gene slots
         p_numer = np.zeros((K, G), dtype=np.float64)
@@ -349,26 +355,45 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 
         # update alpha
         Ccell_n = numer_gamma.sum(axis=1)
-        # Compute raw update
-        alpha_raw = A_n / np.maximum(A_n + Ccell_n, eps)
 
-        # Measure how large the jump is
-        step = np.max(np.abs(alpha_raw[real_mask] - alpha[real_mask]))
+        # ------------------------------------------------------------
+        #  Compute raw EM estimate for alpha
+        # ------------------------------------------------------------
+        alpha_target = A_n / np.maximum(A_n + Ccell_n, eps)
 
-        # Dynamic LR schedule
-        if step > 0.5:
-            alpha_lr = 0.05     # very small
-        elif step > 0.2:
-            alpha_lr = 0.1
-        elif step > 0.05:
-            alpha_lr = 0.2
-        else:
-            alpha_lr = 0.3      # default maximum LR
+        # ------------------------------------------------------------
+        #  AdamW + AMSGrad update
+        # ------------------------------------------------------------
+        beta1 = 0.9         # momentum
+        beta2 = 0.999       # variance smoothing
+        lr = 0.05           # base LR (safe for alpha)
+        weight_decay = 0.01 # decoupled shrinkage toward 0
+        t = it              # iteration number (1-based)
 
-        # Apply smooth update
-        alpha = (1 - alpha_lr) * alpha + alpha_lr * alpha_raw
+        # Gradient is difference between current and target
+        # (EM fixed point update = 0 when alpha = alpha_target)
+        g = alpha - alpha_target
 
-        # Clip for safety
+        # 1st moment
+        alpha_m[:] = beta1 * alpha_m + (1 - beta1) * g
+
+        # 2nd moment
+        alpha_v[:] = beta2 * alpha_v + (1 - beta2) * (g * g)
+
+        # AMSGrad: monotonic variance
+        alpha_vhat = np.maximum(alpha_vhat, alpha_v)
+
+        # Bias-corrected moments
+        m_hat = alpha_m / (1 - beta1**t)
+        v_hat = alpha_vhat / (1 - beta2**t)
+
+        # AdamW update rule
+        alpha -= lr * (
+            m_hat / (np.sqrt(v_hat) + eps)   # adaptive Adam step
+            + weight_decay * alpha           # decoupled L2 decay
+        )
+
+        # Valid range enforcement
         alpha[real_mask] = np.clip(alpha[real_mask], 1e-6, 0.95)
         if freeze_empty:
             alpha[~real_mask] = 1.0
@@ -377,17 +402,18 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         total_counts = M_total + A_n.sum() + numer_gamma.sum()
         beta = float((M_total + beta_0*beta_prior_strength) / np.maximum(total_counts + beta_prior_strength, eps))
 
-        # update ambient profile
-        a_numer += dirichlet_lambda
-        a = a_numer / max(a_numer.sum(), eps)
+        if not freeze_ambient_profile:
+            # update ambient profile
+            a_numer += dirichlet_lambda
+            a = a_numer / max(a_numer.sum(), eps)
 
         if freeze_empty:
-            alpha_mean = np.mean(alpha[real_mask])
+            alpha_median = np.median(alpha[real_mask])
         else:
-            alpha_mean = np.mean(alpha)
+            alpha_median = np.median(alpha)
 
         if verbose:
-            logger.info(f"EM Iter {it:3d}: ll={ll:.3f} mean_alpha={alpha_mean:.6f} beta={beta:.6f}")
+            logger.info(f"EM Iter {it:3d}: ll={ll:.3f} mean_alpha={alpha_median:.6f} beta={beta:.6f}")
 
         if it > 1 and abs((ll - prev_ll) / max(abs(prev_ll), 1.0)) < tol:
             if verbose:
@@ -408,7 +434,7 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
              max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
              beta_0, beta_prior_strength, eps, dirichlet_lambda,
-             log_eps, verbose, logger):
+             log_eps, verbose, logger, freeze_ambient_profile):
     """
     Helper for denoise_count_matrix. Performs EM on model (dense arrays only)
     """
@@ -461,7 +487,8 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 
         # Sufficient statistics for M-step:
         p_numer = np.sum(C_Pk, axis=0)  # (K, G)
-        a_numer = np.sum(C_A, axis=0)   # (G,)
+        if not freeze_ambient_profile:
+            a_numer = np.sum(C_A, axis=0)   # (G,)
         numer_gamma = np.sum(C_Pk, axis=2)  # (N,K)
 
         # per-cell ambient counts
@@ -498,9 +525,10 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         total_counts = M_total + A_n.sum() + numer_gamma.sum()
         beta = float((M_total + beta_0*beta_prior_strength) / np.maximum(total_counts + beta_prior_strength, eps))
 
-        # update ambient profile a
-        a = (a_numer + dirichlet_lambda)
-        a = a / max(a.sum(), eps)
+        if not freeze_ambient_profile:
+            # update ambient profile a
+            a = (a_numer + dirichlet_lambda)
+            a = a / max(a.sum(), eps)
 
         if verbose and logger is not None:
             logger.info(f"EM Iter {it:3d}: ll={ll:.3f} beta={beta:.6f}")
@@ -534,6 +562,7 @@ def denoise_count_matrix(
     thread_num: Optional[Annotated[int, Field(gt=0)]] = 1,
     fixed_celltype: bool = False,
     freeze_empty: bool = True,
+    freeze_ambient_profile: bool = False,
     empty_droplet_method: str = "threshold",
     umi_cutoff: Optional[Annotated[int, Field(ge=0)]] = None,
     expected_cells: Optional[Annotated[int, Field(ge=0)]] = None,
@@ -610,6 +639,9 @@ def denoise_count_matrix(
 
     freeze_empty : bool, default True
         If True, does not attempt to reestimate empty droplets
+
+    freeze_ambient_profile: bool, default True
+        If True, does not update the ambient profile (a) based upon alpha
 
     empty_droplet_method : str, default "threshold"
         Strategy to infer empty droplets if `is_empty` is not present.
@@ -749,18 +781,18 @@ def denoise_count_matrix(
     if sp.issparse(C):
         if not sp.isspmatrix_csr(C):
             C = sp.csr_matrix(C)
-        logger.info(f"Performing Sparse EM with {numba.get_num_threads()} Numba threads")
+        logger.info(f"Performing Sparse EM with {numba.get_num_threads()} Numba thread(s)")
         C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
                                                                                                             max_iter, tol, freeze_empty, fixed_celltype, real_mask,                                                                                                         
                                                                                                             beta_0, beta_prior_strength, eps, dirichlet_lambda, 
-                                                                                                            log_eps, verbose, logger)
+                                                                                                            log_eps, verbose, logger, freeze_ambient_profile)
     else:
         np.asarray(C)
         logger.info("Performing Dense EM")
         C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
                                                                                                            max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
                                                                                                            beta_0, beta_prior_strength, eps, dirichlet_lambda, 
-                                                                                                           log_eps, verbose, logger)
+                                                                                                           log_eps, verbose, logger, freeze_ambient_profile)
 
     # ============================
     #      DENOISED COUNTS
