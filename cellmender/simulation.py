@@ -223,3 +223,137 @@ def simulate_cells(
     adata.uns["type_profiles"] = cell_profiles
 
     return adata
+
+import numpy as np
+from typing import Optional, Tuple
+
+def simple_simulation(
+    N=5000,        # droplets
+    G=2000,        # genes
+    K=8,           # cell types
+    pi_true=None,  # true underlying cell-type proportions in the experiment (before droplet capture)
+    p=None,        # cell-type profiles
+    fragility = None, # array of cell-type fragility (likelihood of being lysed)
+    ambient_scale=1.0, # scaling before normalizing
+    alpha_dist=(2,20), # Beta prior for alpha_n
+    beta=0.03,        # Beta Fraction
+    frac_real=0.2,    # fraction of droplets containing cells
+    umi_mean=5000,    # depth distribution for real cells
+    umi_disp=0.3,     # lognormal dispersion for UMI depth
+    ambient_umi_mean=80, # empty droplet UMI depth
+    gene_prefix="gene", # prefix genes in Anndata
+    cell_prefix="cell", # prefix cells in Anndata
+):
+
+    # -----------------------
+    # 1. Cell-type proportions
+    # -----------------------
+    if pi_true is None:
+        pi_true = np.random.dirichlet(np.ones(K))
+    pi_true = pi_true / pi_true.sum()  # ensure simplex
+
+    if fragility is None:
+        fragility = np.random.dirichlet(np.ones(K))
+    fragility = fragility / fragility.sum()  # ensure simplex
+
+    # -----------------------
+    # 2. Cell-type profiles p_k(g)
+    # -----------------------
+    if p is None:
+        # draw random Dirichlet profiles
+        p = np.random.dirichlet(np.ones(G), size=K)
+    else:
+        # normalize rows
+        p = p / p.sum(axis=1, keepdims=True)
+
+    # -----------------------
+    # 3. Construct ambient profile a
+    # -----------------------
+    # Lysed cells of type k contribute proportionally to pi_true[k]
+    ambient_weights = fragility * pi_true
+    ambient_weights /= ambient_weights.sum()
+
+    # mixture of cell-type profiles
+    a_raw = np.sum(ambient_weights[:,None] * p, axis=0)
+    # optional smoothing
+    a = a_raw ** ambient_scale
+    a = a / a.sum()
+
+    # -----------------------
+    # 4. Construct bulk profile m
+    # -----------------------
+    # Bulk contamination approximates transcriptome of entire experiment
+    m_raw = np.sum(pi_true[:,None] * p, axis=0)
+    m = m_raw / m_raw.sum()
+
+    # -----------------------
+    # 5. Sample droplets
+    # -----------------------
+    real_mask = np.random.rand(N) < frac_real
+    is_empty = ~real_mask
+    C = np.zeros((N,G), dtype=int)
+    cell_type_id = np.full(N, -1) # -1 = empty droplet
+    alpha_n = np.zeros(N)
+
+    for n in range(N):
+
+        if not real_mask[n]:
+            # EMPTY DROPLET
+            Tn = np.random.poisson(ambient_umi_mean)
+            C[n] = np.random.multinomial(Tn, (1-beta)*a + beta*m)
+            alpha_n[n] = 1.0
+            continue
+
+        # REAL CELL
+        k = np.random.choice(K, p=pi_true)
+        cell_type_id[n] = k
+
+        # UMI depth
+        Tn = int(np.random.lognormal(mean=np.log(umi_mean), sigma=umi_disp))
+
+        # ambient fraction for this droplet
+        alpha_n[n] = np.random.beta(alpha_dist[0], alpha_dist[1])
+
+        # composition
+        chi_n = (
+            (1 - beta) * (
+                alpha_n[n] * a
+                + (1 - alpha_n[n]) * p[k]
+            )
+            + beta * m
+        )
+        chi_n = chi_n / chi_n.sum()
+
+        C[n] = np.random.multinomial(Tn, chi_n)
+
+    # --- 9. Build AnnData ---
+    gene_names = [f"{gene_prefix}_{g}" for g in range(G)]
+    cell_names = [f"{cell_prefix}_{c}" for c in range(N)]
+
+    # make sparse for memory efficiency
+    X = sp.csr_matrix(C) 
+
+    obs = pd.DataFrame({
+        "cellid": [k+1 for k in cell_type_id],
+        "celltype": [f"Type_{k+1}" for k in cell_type_id],
+        "is_empty": is_empty.astype(bool),
+        "ambient_fraction": alpha_n,
+    }, index=cell_names)
+
+    obs["celltype"] = obs["celltype"].mask(is_empty, "Empty Droplet")
+    obs["cellid"] = obs["cellid"].mask(is_empty, -1)
+
+    var = pd.DataFrame(index=gene_names)
+    var["ambient_profile"] = a
+
+    adata = ad.AnnData(X=X, obs=obs, var=var)
+
+
+    adata.uns["simulation_params"] = dict(N=N, G=G, K=K, pi_true=pi_true, p=p, fragility = fragility, 
+                                            ambient_scale=ambient_scale, alpha_dist=alpha_dist, beta=beta,
+                                            frac_real=frac_real, umi_mean=umi_mean, umi_disp=umi_disp,
+                                            ambient_umi_mean=ambient_umi_mean, gene_prefix=gene_prefix, 
+                                            cell_prefix=cell_prefix)
+    adata.uns["type_profiles"] = p
+
+    return adata

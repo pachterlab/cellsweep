@@ -186,7 +186,7 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
 def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
               max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
               beta_0, beta_prior_strength, eps, dirichlet_lambda, 
-              verbose, logger):
+              log_eps, verbose, logger):
     """
     Helper for denoise_count_matrix. Performs sparse compatible EM on model
     """
@@ -241,10 +241,11 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 
                 w_a = (1.0 - beta) * alpha[n] * a[idx]
                 w_m = beta * m_global[idx]
-                p_tot = w_a + w_m + eps
+                p_tot = w_a + w_m
+                p_tot_safe = np.where(p_tot > eps, p_tot, eps)
 
                 # expected ambient
-                c_A = vals * w_a / p_tot
+                c_A = vals * w_a / p_tot_safe
                 A_n[n] = c_A.sum()
                 a_numer[idx] += c_A
 
@@ -253,14 +254,14 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
                 vals_A.extend(c_A.tolist())
 
                 # expected bulk
-                c_M = vals * w_m / p_tot
+                c_M = vals * w_m / p_tot_safe
                 M_total += c_M.sum()
 
                 rows_M.extend([n] * nnz)
                 cols_M.extend(idx.tolist())
                 vals_M.extend(c_M.tolist())
 
-                ll += float(np.dot(vals, np.log(p_tot)))
+                ll += float(np.dot(vals, np.log(np.maximum(p_tot, log_eps))))
                 continue
 
             # ============================
@@ -279,8 +280,9 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
                 w_p_k[k] = wpk
                 w_p_sum += wpk
 
-            p_tot = w_a + w_m + w_p_sum + eps
-            c_scale = vals / p_tot
+            p_tot = w_a + w_m + w_p_sum
+            p_tot_safe = np.where(p_tot > eps, p_tot, eps)
+            c_scale = vals / p_tot_safe
 
             # expected ambient
             c_A = c_scale * w_a
@@ -309,7 +311,7 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
             cols_list.extend(idx.tolist())
             vals_list.extend(row_expected.tolist())
 
-            ll += float(np.dot(vals, np.log(p_tot)))
+            ll += float(np.dot(vals, np.log(np.maximum(p_tot, log_eps))))
 
         # ============================
         #     M STEP
@@ -323,26 +325,53 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
                 p[k] = numer / max(denom, eps)
 
             row_sums = numer_gamma.sum(axis=1)
-            nz = row_sums > 0
-            gamma[nz] = numer_gamma[nz] / row_sums[nz, None]
-            gamma[~nz] = gamma[~nz]
+            if freeze_empty:
+                gamma[real_mask] = numer_gamma[real_mask] / np.maximum(row_sums[real_mask, None], eps)
+                gamma[~real_mask, :] = 0
+            else:
+                gamma = numer_gamma / np.maximum(row_sums[:,None], eps)
 
         # update alpha
         Ccell_n = numer_gamma.sum(axis=1)
-        alpha = A_n / np.maximum(A_n + Ccell_n, eps)
+        # Compute raw update
+        alpha_raw = A_n / np.maximum(A_n + Ccell_n, eps)
+
+        # Measure how large the jump is
+        step = np.max(np.abs(alpha_raw[real_mask] - alpha[real_mask]))
+
+        # Dynamic LR schedule
+        if step > 0.5:
+            alpha_lr = 0.05     # very small
+        elif step > 0.2:
+            alpha_lr = 0.1
+        elif step > 0.05:
+            alpha_lr = 0.2
+        else:
+            alpha_lr = 0.3      # default maximum LR
+
+        # Apply smooth update
+        alpha = (1 - alpha_lr) * alpha + alpha_lr * alpha_raw
+
+        # Clip for safety
+        alpha[real_mask] = np.clip(alpha[real_mask], 1e-6, 0.95)
         if freeze_empty:
             alpha[~real_mask] = 1.0
 
         # update beta
-        total_counts = C.sum()
-        beta = float((M_total + beta_0*beta_prior_strength) / (total_counts + beta_prior_strength + eps))
+        total_counts = M_total + A_n.sum() + numer_gamma.sum()
+        beta = float((M_total + beta_0*beta_prior_strength) / np.maximum(total_counts + beta_prior_strength, eps))
 
         # update ambient profile
         a_numer += dirichlet_lambda
         a = a_numer / max(a_numer.sum(), eps)
 
+        if freeze_empty:
+            alpha_mean = np.mean(alpha[real_mask])
+        else:
+            alpha_mean = np.mean(alpha)
+
         if verbose:
-            logger.info(f"EM Iter {it:3d}: ll={ll:.3f} beta={beta:.6f}")
+            logger.info(f"EM Iter {it:3d}: ll={ll:.3f} mean_alpha={alpha_mean:.6f} beta={beta:.6f}")
 
         if it > 1 and abs((ll - prev_ll) / max(abs(prev_ll), 1.0)) < tol:
             if verbose:
@@ -378,7 +407,7 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
              max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
              beta_0, beta_prior_strength, eps, dirichlet_lambda,
-             verbose, logger):
+             log_eps, verbose, logger):
     """
     Helper for denoise_count_matrix. Performs EM on model (dense arrays only)
     """
@@ -407,10 +436,11 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         w_p_sum = np.sum(w_Pk, axis=1)
 
         # total mixture probabilities 
-        p_tot = w_a + w_m + w_p_sum + eps  # (N,G)
+        p_tot = w_a + w_m + w_p_sum  # (N,G)
+        p_tot_safe = np.where(p_tot > eps, p_tot, eps)
 
         # E-step: expected counts per component
-        c_scale = C / p_tot                             # (N,G)
+        c_scale = C / p_tot_safe                        # (N,G)
 
         C_A = c_scale * w_a                             # ambient expected counts (N,G)
         C_M = c_scale * w_m                             # bulk expected counts (N,G)
@@ -439,7 +469,7 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         M_total = np.sum(C_M)            # scalar
 
         # compute log-likelihood
-        ll = float(np.sum(C * np.log(p_tot)))
+        ll = float(np.sum(C * np.log(np.maximum(p_tot, log_eps))))
 
         # ---------------- M-step ----------------
         if not fixed_celltype:
@@ -450,11 +480,12 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
                 p[k, :] = numer / max(denom, eps)
 
             # update gamma for real droplets only (keep empties unchanged if freeze_empty)
-            row_sums = np.sum(numer_gamma, axis=1)  # (N,)
-            nz = row_sums > 0
-            gamma_new = gamma.copy()
-            gamma_new[nz, :] = numer_gamma[nz, :] / row_sums[nz, None]
-            gamma = gamma_new
+            row_sums = numer_gamma.sum(axis=1)
+            if freeze_empty:
+                gamma[real_mask] = numer_gamma[real_mask] / np.maximum(row_sums[real_mask, None], eps)
+                gamma[~real_mask, :] = 0
+            else:
+                gamma = numer_gamma / np.maximum(row_sums[:,None], eps)
 
         # update alpha
         Ccell_n = np.sum(numer_gamma, axis=1)  # (N,)
@@ -463,8 +494,8 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
             alpha[~real_mask] = 1.0
 
         # update beta (with numerical guard)
-        total_counts = np.sum(C)
-        beta = float((M_total + beta_0*beta_prior_strength) / (total_counts + beta_prior_strength + eps))
+        total_counts = M_total + A_n.sum() + numer_gamma.sum()
+        beta = float((M_total + beta_0*beta_prior_strength) / np.maximum(total_counts + beta_prior_strength, eps))
 
         # update ambient profile a
         a = (a_numer + dirichlet_lambda)
@@ -491,11 +522,12 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def denoise_count_matrix(
     adata: str | ad.AnnData,
-    adata_out: Annotated[str, Field(pattern=r"\.h5ad$")] = "adata_straightened.h5ad",
+    adata_out: Annotated[str, Field(pattern=r"\.h5ad$")] = None,
     max_iter: Annotated[int, Field(gt=0)] = 40,
     beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
     beta_prior_strength: Annotated[float, Field(ge=0)] = None,
-    eps: Annotated[float, Field(gt=0)] = 1e-9,
+    eps: Annotated[float, Field(gt=0)] = 1e-15,
+    log_eps: Annotated[float, Field(gt=0)] = 1e-300,
     dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 0.1,
     integer_out: bool = False,
     fixed_celltype: bool = False,
@@ -555,8 +587,12 @@ def denoise_count_matrix(
         before inference. If None, will estimate prior strength to be
         0.1% of the size of the dataset
 
-    eps : float, default 1e-9
+    eps : float, default 1e-15
         Numerical stability constant to prevent division by zero or log(0).
+
+    log_eps : float, default 1e-300
+        Numerical stability constant to prevent division by zero or log(0).
+        Lower than eps for log values
 
     dirichlet_lambda: float, default 0.01
         Pseudocount
@@ -676,8 +712,6 @@ def denoise_count_matrix(
         ct = z_true.iloc[i]
         if ct in z_true_str_to_int and ct != empty_droplet_celltype_name:
             gamma[i, z_true_str_to_int[ct]] = 1.0
-        else:
-            gamma[i, :] = 1.0 / K
 
     # initial alpha
     if "cell_ambient_fraction" not in adata.obs.columns:
@@ -699,19 +733,26 @@ def denoise_count_matrix(
     m_raw = np.array(C.sum(axis=0)).ravel().astype(float)
     m_global = (m_raw + dirichlet_lambda) / (m_raw.sum() + G * dirichlet_lambda)
 
+    alpha = alpha.astype(np.float64)
+    a = a.astype(np.float64)
+    p = p.astype(np.float64)
+    gamma = gamma.astype(np.float64)
+
     if sp.issparse(C):
         if not sp.isspmatrix_csr(C):
             C = sp.csr_matrix(C)
+        logger.info("Performing Sparse EM")
         C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
                                                                                                             max_iter, tol, freeze_empty, fixed_celltype, real_mask,                                                                                                         
                                                                                                             beta_0, beta_prior_strength, eps, dirichlet_lambda, 
-                                                                                                            verbose, logger)
+                                                                                                            log_eps, verbose, logger)
     else:
         np.asarray(C)
+        logger.info("Performing Dense EM")
         C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
                                                                                                            max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
                                                                                                            beta_0, beta_prior_strength, eps, dirichlet_lambda, 
-                                                                                                           verbose, logger)
+                                                                                                           log_eps, verbose, logger)
 
     # ============================
     #      DENOISED COUNTS
