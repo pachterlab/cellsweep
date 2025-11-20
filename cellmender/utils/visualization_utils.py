@@ -844,7 +844,7 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
     if not show:
         plt.close()
 
-def print_top_empty_genes(adata, top_n=10):
+def print_top_empty_genes(adata, top_n=10, out_path=None):
     if 'empty_counts' not in adata.var.columns:
         if 'is_empty' not in adata.obs.columns:
             raise ValueError("adata.obs must contain 'is_empty' column indicating empty droplets.")
@@ -858,6 +858,13 @@ def print_top_empty_genes(adata, top_n=10):
     
     for gene, val in zip(top_genes, top_vals):
         print(f"{gene}: {val}")
+    
+    if out_path:
+        df = pd.DataFrame({
+            "gene": adata.var_names[idx[:]],
+            "empty_counts": adata.var['empty_counts'].iloc[idx[:]].values
+        })
+        df.to_csv(out_path, index=False)
 
 def plot_empty_gene_counts(adata, out_path=None, show=True):
     if 'empty_counts' not in adata.var.columns:

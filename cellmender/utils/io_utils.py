@@ -38,6 +38,35 @@ def read_r_matrix_into_anndata(file_prefix):
     adata.obs_names = barcodes
     return adata
 
+def concat_on_barcodes(adatas):
+    # --- 1. union of all barcodes ---
+    all_barcodes = sorted(set().union(*[a.obs_names for a in adatas]))
+
+    aligned = []
+    for a in adatas:
+        # a.obs_names is indexed, so we create a new AnnData with reindexed obs
+
+        # --- reindex the obs ---
+        new_obs = a.obs.reindex(all_barcodes)
+
+        # --- reindex X ---
+        # Convert X to a DataFrame to reindex rows easily
+        X_df = pd.DataFrame.sparse.from_spmatrix(a.X, index=a.obs_names, columns=a.var_names)
+        X_df = X_df.reindex(all_barcodes).fillna(0)
+
+        # --- rebuild AnnData ---
+        a2 = ad.AnnData(
+            X=X_df.sparse.to_coo(),
+            obs=new_obs,
+            var=a.var.copy()
+        )
+        aligned.append(a2)
+
+    # --- 3. concatenate genes ---
+    combined = ad.concat(aligned, axis=1, join="outer", index_unique=None)
+
+    return combined
+
 # anndata object, h5 path, h5ad path, a 10x matrix directory (containing matrix.mtx, genes.tsv, barcodes.tsv), or an R matrix prefix ({prefix}.mtx, {prefix}_genes.csv, {prefix}_barcodes.csv)
 def load_adata(adata, logger=None, verbose=0, quiet=False):
     if logger is None:
@@ -63,10 +92,8 @@ def load_adata(adata, logger=None, verbose=0, quiet=False):
                     # adata_tmp.var_names = genome + "_" + adata_tmp.var_names  # at least for the sample hgmm12k dataset, gene names are already prepended with genome
                     adata_tmp.var_names_make_unique()
                     adata_tmp.var['genome'] = genome
-                    adata_tmp.obs_names = genome + "_" + adata_tmp.obs_names
-                    adata_tmp.obs['genome'] = genome
                     adatas.append(adata_tmp)
-                adata = ad.concat(adatas, join="outer", index_unique=None)
+                adata = concat_on_barcodes(adatas)
                 assert adata.obs_names.is_unique, f"Non-unique obs names found"
         elif os.path.exists(f"{adata}.mtx"):
             logger.info(f"Loading adata from matrix files with prefix {adata!r}")
