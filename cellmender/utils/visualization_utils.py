@@ -1240,13 +1240,9 @@ def plot_iterative_difference_counts(
     diff_results : dict
         key -> list of metric results for each adjacent iteration pair.
     """
-    import numpy as np
-    import matplotlib.pyplot as plt
-    import seaborn as sns
-    from scipy import sparse
 
-    if metric not in ("cells", "counts"):
-        raise ValueError('metric must be "cells" or "counts"')
+    if metric not in ("cells", "counts", "number_of_cells"):
+        raise ValueError('metric must be "cells", "counts", or "number_of_cells"')
 
     keys = list(adatas_dict.keys())
 
@@ -1286,6 +1282,9 @@ def plot_iterative_difference_counts(
             elif metric == "counts":
                 # Total absolute difference
                 result = float(np.sum(np.abs(row_sums)))
+            
+            elif metric == "number_of_cells":
+                result = X_A.shape[0]
 
             results.append(result)
 
