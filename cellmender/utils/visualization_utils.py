@@ -21,6 +21,13 @@ from upsetplot import from_contents, UpSet
 from .data_utils import take_adata_cell_gene_intersection
 from .logger_utils import setup_logger
 
+default_colors = [
+    "#D55E00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#E69F00", "#CC79A7", "#666666", "#AD7700", "#1C91D4", "#007756", "#D5C711", "#005685",
+    "#A04700", "#B14380", "#4D4D4D", "#FFBE2D", "#80C7EF", "#00F6B3", "#F4EB71", "#06A5FF", "#FF8320", "#D99BBD", "#8C8C8C", "#FFCB57", "#9AD2F2",
+    "#2CFFC6", "#F6EF8E", "#38B7FF", "#FF9B4D", "#E0AFCA", "#A3A3A3", "#8A5F00", "#1674A9", "#005F45", "#AA9F0D", "#00446B", "#803800", "#8D3666",
+    "#3D3D3D"
+]
+
 def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None, title: str = None, show: bool = True):
     """
     eg upset_data_dict: {
@@ -953,3 +960,254 @@ def plot_ambient_hat_vs_empty_fraction(adata_raw, adata_cellmender, log=False, r
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
     if not show:
         plt.close() 
+
+
+
+
+
+
+
+
+def plot_per_cell_correlation_multi(
+    adata1_list,
+    adata2_list,
+    labels=None,
+    title="Per-cell Expression Correlation (Multiple Comparisons)",
+    colors=None,
+    out_path=None,
+    show=True,
+    fill=False
+):
+    """
+    Compute and plot per-cell Pearson correlation curves (KDE) 
+    for multiple pairs of AnnData objects.
+    """
+
+    # --- Validation ---
+    if len(adata1_list) != len(adata2_list):
+        raise ValueError("adata1_list and adata2_list must have same length.")
+
+    n = len(adata1_list)
+    if labels is None:
+        labels = [f"set_{i+1}" for i in range(n)]
+
+    if (colors is not None) and (len(colors) != n):
+        raise ValueError("colors list must match number of datasets.")
+
+    if colors is None:
+        # default seaborn color cycle
+        colors = sns.color_palette("tab10", n)
+
+    # --- Collect correlations from each pair ---
+    corr_sets = []
+
+    for ad1, ad2 in zip(adata1_list, adata2_list):
+
+        # match intersection
+        ad1i, ad2i = take_adata_cell_gene_intersection(ad1, ad2)
+        X1 = ad1i.X
+        X2 = ad2i.X
+
+        correlations = []
+        for i in range(X1.shape[0]):
+            corr = sparse_row_pearson(X1[i, :], X2[i, :])
+            correlations.append(corr)
+
+        corr_sets.append(np.array(correlations))
+
+    # --- Plotting ---
+    plt.figure(figsize=(8, 6))
+
+    # Estimate maximum count for y-limits
+    max_count = 0
+    for values in corr_sets:
+        hist_counts, _ = np.histogram(values, bins=50, range=(0, 1))
+        max_count = max(max_count, hist_counts.max())
+
+    # Final y-limit with log-scale padding
+    y_max = 10 ** np.ceil(np.log10(max_count))
+
+    # Plot each KDE
+    for values, label, color in zip(corr_sets, labels, colors):
+        sns.kdeplot(
+            values,
+            bw_adjust=1,
+            fill=fill,
+            color=color,
+            label=label
+        )
+
+    plt.xlim(0, 1)
+    plt.ylim(1, y_max)
+    plt.yscale("log")
+    plt.xlabel("Cell Pearson Correlation")
+    plt.ylabel("Density (log scale)")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight")
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
+
+def plot_per_cell_difference_multi(
+    adata_raw_list,
+    adata_denoised_list,
+    labels=None,
+    colors=None,
+    bins=50,
+    title="Per-cell Difference Distribution: raw − denoised",
+    out_path=None,
+    show=True
+):
+    if len(adata_raw_list) != len(adata_denoised_list):
+        raise ValueError("adata_raw_list and adata_denoised_list must have same length.")
+
+    n = len(adata_raw_list)
+    if labels is None:
+        labels = [f"set_{i+1}" for i in range(n)]
+    if colors is None:
+        colors = sns.color_palette("tab10", n)
+
+    diff_sets = []
+
+    for ad_raw, ad_den in zip(adata_raw_list, adata_denoised_list):
+        ad_raw_i, ad_den_i = take_adata_cell_gene_intersection(ad_raw, ad_den)
+        X_raw = ad_raw_i.X
+        X_den = ad_den_i.X
+
+        if not sparse.issparse(X_raw) or not sparse.issparse(X_den):
+            raise ValueError("adata.X must be sparse.")
+
+        D = X_raw - X_den
+        row_sums = np.array(D.sum(axis=1)).ravel()
+        diff_sets.append(row_sums)
+
+    plt.figure(figsize=(8, 6))
+
+    for values, label, color in zip(diff_sets, labels, colors):
+        sns.histplot(
+            values,
+            bins=bins,
+            element="step",
+            fill=False,
+            stat="count",
+            color=color,
+            label=label
+        )
+
+    plt.yscale("log")
+    plt.xlabel("Per-cell difference sum: raw − denoised")
+    plt.ylabel("Number of cells (log)")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
+
+
+def plot_knee_multi(
+    adata_list,
+    labels=None,
+    colors=None,
+    title="Knee Plot (UMI Counts per Barcode)",
+    linewidth=2,
+    out_path=None,
+    filter_empty=False,
+    show=True
+):
+    """
+    Compute and plot knee curves for multiple AnnData objects.
+    A knee curve is defined as sorted descending per-cell UMI totals.
+
+    Parameters
+    ----------
+    adata_list : list of AnnData
+        List of AnnData objects.
+
+    labels : list of str (optional)
+        Names for each curve.
+
+    colors : list of colors (optional)
+        Colors for each curve.
+
+    title : str
+        Plot title.
+
+    linewidth : float
+        Line width for curves.
+
+    out_path : str (optional)
+        If provided, save figure.
+
+    show : bool
+        Whether to display the plot.
+
+    """
+    n = len(adata_list)
+
+    if labels is None:
+        labels = [f"adata_{i+1}" for i in range(n)]
+
+    if (colors is not None) and (len(colors) != n):
+        raise ValueError("colors list must match number of adatas.")
+
+    if colors is None:
+        colors = sns.color_palette("tab10", n)
+
+    plt.figure(figsize=(8, 6))
+
+    # ---- Generate curves ----
+    for adata, label, color in zip(adata_list, labels, colors):
+
+        if filter_empty:
+            if "is_empty" in adata.obs.columns:
+                adata = adata[~adata.obs["is_empty"]].copy()
+            else:
+                print("Warning: filter_empty=True but 'is_empty' column not found in adata.obs. Proceeding without filtering.")
+
+        X = adata.X
+
+        # Sparse-safe
+        if sparse.issparse(X):
+            row_sums = np.array(X.sum(axis=1)).ravel()
+        else:
+            row_sums = X.sum(axis=1)
+
+        knee = np.sort(row_sums)[::-1]              # descending
+        barcodes = np.arange(1, len(knee) + 1)      # rank axis
+
+        plt.plot(
+            barcodes,
+            knee,
+            color=color,
+            linewidth=linewidth,
+            label=label
+        )
+
+    # ---- Formatting ----
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.xlabel("Barcode Rank (log)", fontsize=12)
+    plt.ylabel("Total UMI Counts (log)", fontsize=12)
+    plt.title(title, fontsize=14)
+    plt.legend()
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+
+    if not show:
+        plt.close()
+    else:
+        plt.show()
