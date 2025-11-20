@@ -972,7 +972,7 @@ def plot_per_cell_correlation_multi(
     adata1_list,
     adata2_list,
     labels=None,
-    title="Per-cell Expression Correlation (Multiple Comparisons)",
+    title="Per-cell Expression Correlation Distribution",
     colors=None,
     out_path=None,
     show=True,
@@ -1211,3 +1211,124 @@ def plot_knee_multi(
         plt.close()
     else:
         plt.show()
+
+
+def plot_iterative_difference_counts(
+    adatas_dict,
+    threshold=0.0,
+    metric="cells",   # "cells" or "counts"
+    colors=None,
+    title="Difference per Iteration",
+    out_path=None,
+    show=True
+):
+    """
+    Parameters
+    ----------
+    adatas_dict : dict
+        key -> list of AnnData objects (iterations)
+
+    threshold : float
+        Used only when metric="cells"
+
+    metric : {"cells", "counts"}
+        "cells"  -> count rows where |row_sum| > threshold
+        "counts" -> sum of absolute row differences
+
+    Returns
+    -------
+    diff_results : dict
+        key -> list of metric results for each adjacent iteration pair.
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    from scipy import sparse
+
+    if metric not in ("cells", "counts"):
+        raise ValueError('metric must be "cells" or "counts"')
+
+    keys = list(adatas_dict.keys())
+
+    # --- Colors ---
+    if colors is None:
+        palette = sns.color_palette("tab10", len(keys))
+        colors = {k: c for k, c in zip(keys, palette)}
+
+    diff_results = {}
+    max_iter_count = 0
+
+    plt.figure(figsize=(8, 6))
+
+    # --- Compute metric for each method/key ---
+    for key in keys:
+        adata_list = adatas_dict[key]
+        results = []
+
+        for i in range(len(adata_list) - 1):
+            A = adata_list[i]
+            B = adata_list[i + 1]
+
+            Ai, Bi = take_adata_cell_gene_intersection(A, B)
+            X_A = Ai.X
+            X_B = Bi.X
+
+            if not sparse.issparse(X_A) or not sparse.issparse(X_B):
+                raise ValueError("AnnData.X must be sparse.")
+
+            D = X_A - X_B
+            row_sums = np.array(D.sum(axis=1)).ravel()
+
+            if metric == "cells":
+                # Count cells whose |difference| exceeds threshold
+                result = int(np.sum(np.abs(row_sums) > threshold))
+
+            elif metric == "counts":
+                # Total absolute difference
+                result = float(np.sum(np.abs(row_sums)))
+
+            results.append(result)
+
+        diff_results[key] = results
+
+        # --- Plotting ---
+        x = np.arange(len(results))
+        max_iter_count = max(max_iter_count, len(results))
+
+        plt.plot(
+            x, results,
+            marker='o',
+            color=colors[key],
+            label=key
+        )
+
+    # --- Integer ticks ---
+    plt.xticks(
+        ticks=np.arange(max_iter_count),
+        labels=[str(i) for i in range(max_iter_count)],
+        fontsize=11
+    )
+
+    # --- Labels ---
+    if metric == "cells":
+        ylabel = f"# Cells With |Difference| > {threshold}"
+    else:
+        ylabel = "Total Absolute Row-Sum Difference"
+
+    plt.xlabel("Iteration Comparison (i → i+1)", fontsize=12)
+    plt.ylabel(ylabel, fontsize=12)
+    plt.ylim(bottom=0)
+    plt.title(title, fontsize=14)
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
+    return diff_results
