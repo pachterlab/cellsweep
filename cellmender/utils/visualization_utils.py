@@ -498,6 +498,7 @@ def plot_per_cell_correlation(
     plt.xlim(0, 1)
     plt.ylim(1, y_max)
     plt.yscale("log")
+    plt.xlabel("Cell Pearson Correlation")
     plt.ylabel("Number of cells")
     plt.title(title)
     plt.tight_layout()
