@@ -171,7 +171,7 @@ def write_10x_like(
     ----------
     adata : anndata.AnnData
         Object containing X (cell x gene), obs, var.
-        adata.obs must include columns specified by `is_empty_col` and `celltype_col`.
+        adata.obs must include columns specified by `is_empty_col` and `cluster_col`.
 
     parent_dir : str
         Output directory path to create/write into.
@@ -242,7 +242,7 @@ def write_10x_like(
 
     clusters_path = os.path.join(parent_dir, "clusters.csv")
     paths["clusters"] = clusters_path
-    if not os.path.exists(clusters_path) and cluster_col in adata.obs.columns and is_empty_col in adata.obs.columns:
+    if cluster_col is not None and not os.path.exists(clusters_path) and cluster_col in adata.obs.columns and is_empty_col in adata.obs.columns:
         # Clusters
         adata_filtered = adata[~adata.obs[is_empty_col].astype(bool)].copy()
         adata_filtered.obs[[cluster_col]].to_csv(clusters_path)
