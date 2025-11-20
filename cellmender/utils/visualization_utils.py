@@ -843,3 +843,105 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
     if not show:
         plt.close()
+
+def print_top_empty_genes(adata, top_n=10):
+    if 'empty_counts' not in adata.var.columns:
+        if 'is_empty' not in adata.obs.columns:
+            raise ValueError("adata.obs must contain 'is_empty' column indicating empty droplets.")
+        adata.var['empty_counts'] = np.array(adata.X[adata.obs['is_empty'].values, :].sum(axis=0)).flatten()
+    
+    # Get sorted indices
+    idx = np.argsort(adata.var['empty_counts'])[::-1]
+    
+    top_genes = adata.var_names[idx[:top_n]]
+    top_vals  = adata.var['empty_counts'].iloc[idx[:top_n]]
+    
+    for gene, val in zip(top_genes, top_vals):
+        print(f"{gene}: {val}")
+
+def plot_empty_gene_counts(adata, out_path=None, show=True):
+    if 'empty_counts' not in adata.var.columns:
+        if 'is_empty' not in adata.obs.columns:
+            raise ValueError("adata.obs must contain 'is_empty' column indicating empty droplets.")
+        adata.var['empty_counts'] = np.array(adata.X[adata.obs['is_empty'].values, :].sum(axis=0)).flatten()
+
+    sorted_vals = np.sort(adata.var['empty_counts'])[::-1]
+    sorted_vals = sorted_vals[sorted_vals > 0]
+    
+    plt.figure(figsize=(10, 4))
+    plt.plot(sorted_vals)
+    plt.xlabel("Gene rank")
+    plt.ylabel("Empty-droplet counts")
+    plt.title(f"Counts per gene in empty droplets (total genes: {adata.n_vars})")
+    plt.yscale("log")
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    if not show:
+        plt.close() 
+
+def plot_ambient_hat_vs_empty_fraction(adata_raw, adata_cellmender, log=False, remove_zeroes=False, lower_quantile_removed=None, upper_quantile_removed=None, out_path=None, show=True):
+    """
+    Plots ambient_hat from CellMender vs empty fraction from raw data.
+    """
+    if upper_quantile_removed is not None and (not isinstance(upper_quantile_removed, (int, float)) or not (0 < upper_quantile_removed < 1)):
+        raise ValueError("upper_quantile_removed must be a float between 0 and 1 (or None for no outlier removal).")
+    
+    if 'empty_fraction' not in adata_raw.var.columns:
+        total_empty_counts = adata_raw.var['empty_counts'].sum()
+        adata_raw.var['empty_fraction'] = adata_raw.var['empty_counts'] / total_empty_counts if total_empty_counts > 0 else 0
+
+    # intersection of genes
+    genes = adata_raw.var_names.intersection(adata_cellmender.var_names)
+
+    x = adata_raw.var.loc[genes, 'empty_fraction']
+    y = adata_cellmender.var.loc[genes, 'ambient_hat']
+
+    # # --- remove NaNs ---
+    # mask = ~(np.isnan(x) | np.isnan(y))
+    # x, y = x[mask], y[mask]
+
+    # --- optional outlier removal ---
+    if upper_quantile_removed is not None:
+        qx = np.quantile(x, upper_quantile_removed)
+        qy = np.quantile(y, upper_quantile_removed)
+        mask2 = (x <= qx) & (y <= qy)
+        x, y = x[mask2], y[mask2]
+    
+    if lower_quantile_removed is not None:
+        qx = np.quantile(x, lower_quantile_removed)
+        qy = np.quantile(y, lower_quantile_removed)
+        mask3 = (x >= qx) & (y >= qy)
+        x, y = x[mask3], y[mask3]
+    
+    if remove_zeroes:
+        mask4 = (x > 0) & (y > 0)
+        x, y = x[mask4], y[mask4]
+
+    # --- y = x line ---
+    mn = min(x.min(), y.min())
+    mx = max(x.max(), y.max())
+    plt.plot([mn, mx], [mn, mx], 'k--', alpha=0.3, lw=1)
+
+    # --- density via KDE ---
+    xy = np.vstack([x, y])
+    z = gaussian_kde(xy)(xy)
+
+    sc = plt.scatter(x, y, s=8, c=z, alpha=0.5, cmap="viridis")
+    cb = plt.colorbar(sc)
+    cb.set_label("Empty fraction")
+
+    # --- log scale if requested ---
+    if log:
+        plt.xscale("log")
+        plt.yscale("log")
+
+    plt.xlabel("Empty fraction (raw)")
+    plt.ylabel("Ambient_hat (cellmender)")
+    plt.title("Empty fraction vs ambient_hat")
+    plt.tight_layout()
+    if out_path:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    if not show:
+        plt.close() 

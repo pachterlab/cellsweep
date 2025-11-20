@@ -167,13 +167,13 @@ def write_10x_like(
     paths = {}
 
     def _write_10x_subdir(subdir_name, mask):
-        subdir = os.path.join(parent_dir, subdir_name)
+        subdir = os.path.join(parent_dir, subdir_name, genome)
         os.makedirs(subdir, exist_ok=True)
 
         suffix = ".gz" if gzip_output else ""
-        barcodes_path = os.path.join(subdir, genome, f"barcodes.tsv{suffix}")
-        genes_path = os.path.join(subdir, genome, f"genes.tsv{suffix}")
-        matrix_path = os.path.join(subdir, genome, f"matrix.mtx{suffix}")
+        barcodes_path = os.path.join(subdir, f"barcodes.tsv{suffix}")
+        genes_path = os.path.join(subdir, f"genes.tsv{suffix}")
+        matrix_path = os.path.join(subdir, f"matrix.mtx{suffix}")
 
         if os.path.exists(barcodes_path) and os.path.exists(genes_path) and os.path.exists(matrix_path):
             print(f"Found existing 10x files in {subdir!r}. Skipping write.")
