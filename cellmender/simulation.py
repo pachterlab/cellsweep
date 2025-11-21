@@ -241,30 +241,46 @@ def simple_simulation(
     umi_mean=5000,    # depth distribution for real cells
     umi_disp=0.3,     # lognormal dispersion for UMI depth
     ambient_umi_mean=80, # empty droplet UMI depth
+    markers_per_type=0.10, # Percent of markers per cell type
+    marker_strength=20.0, # strength of likelihood of marker
+    background_strength=1.0, # strength of likelihood of non-marker
     gene_prefix="gene", # prefix genes in Anndata
     cell_prefix="cell", # prefix cells in Anndata
+    random_state=42
 ):
+    rng = np.random.default_rng(random_state)
 
     # -----------------------
     # 1. Cell-type proportions
     # -----------------------
     if pi_true is None:
-        pi_true = np.random.dirichlet(np.ones(K))
+        pi_true = rng.dirichlet(np.ones(K))
     pi_true = pi_true / pi_true.sum()  # ensure simplex
 
     if fragility is None:
-        fragility = np.random.dirichlet(np.ones(K))
+        fragility = rng.dirichlet(np.ones(K))
     fragility = fragility / fragility.sum()  # ensure simplex
 
     # -----------------------
     # 2. Cell-type profiles p_k(g)
     # -----------------------
-    if p is None:
-        # draw random Dirichlet profiles
-        p = np.random.dirichlet(np.ones(G), size=K)
-    else:
-        # normalize rows
-        p = p / p.sum(axis=1, keepdims=True)
+    p = np.zeros((K, G))
+
+    n_markers = max(1, int(G * markers_per_type))
+
+    for k in range(K):
+
+        # Randomly choose marker genes for this cell type
+        marker_idx = rng.choice(G, size=n_markers, replace=False)
+
+        # Base Dirichlet concentrations
+        conc = np.ones(G) * background_strength
+
+        # Strong markers
+        conc[marker_idx] = marker_strength
+
+        # Draw p_k from Dirichlet
+        p[k] = rng.dirichlet(conc)
 
     # -----------------------
     # 3. Construct ambient profile a
@@ -289,7 +305,7 @@ def simple_simulation(
     # -----------------------
     # 5. Sample droplets
     # -----------------------
-    real_mask = np.random.rand(N) < frac_real
+    real_mask = rng.random(N) < frac_real
     is_empty = ~real_mask
     C = np.zeros((N,G), dtype=int)
     cell_type_id = np.full(N, -1) # -1 = empty droplet
@@ -299,20 +315,20 @@ def simple_simulation(
 
         if not real_mask[n]:
             # EMPTY DROPLET
-            Tn = np.random.poisson(ambient_umi_mean)
-            C[n] = np.random.multinomial(Tn, (1-beta)*a + beta*m)
+            Tn = rng.poisson(ambient_umi_mean)
+            C[n] = rng.multinomial(Tn, (1-beta)*a + beta*m)
             alpha_n[n] = 1.0
             continue
 
         # REAL CELL
-        k = np.random.choice(K, p=pi_true)
+        k = rng.choice(K, p=pi_true)
         cell_type_id[n] = k
 
         # UMI depth
-        Tn = int(np.random.lognormal(mean=np.log(umi_mean), sigma=umi_disp))
+        Tn = int(rng.lognormal(mean=np.log(umi_mean), sigma=umi_disp))
 
         # ambient fraction for this droplet
-        alpha_n[n] = np.random.beta(alpha_dist[0], alpha_dist[1])
+        alpha_n[n] = rng.beta(alpha_dist[0], alpha_dist[1])
 
         # composition
         chi_n = (
@@ -324,7 +340,7 @@ def simple_simulation(
         )
         chi_n = chi_n / chi_n.sum()
 
-        C[n] = np.random.multinomial(Tn, chi_n)
+        C[n] = rng.multinomial(Tn, chi_n)
 
     # --- 9. Build AnnData ---
     gene_names = [f"{gene_prefix}_{g}" for g in range(G)]

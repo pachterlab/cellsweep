@@ -11,9 +11,14 @@ import numba
 from numba import njit, prange
 from typing import Annotated, Optional
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types  # , plot_cellmender_likelihood_over_epochs
+import matplotlib.pyplot as plt
+from ipywidgets import IntSlider, VBox, Output
+from IPython.display import display
+import seaborn as sns
+
 
 #* take the mean expression of each gene across all empty droplets, and normalize to sum to 1.
-def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
+def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", dirichlet_lambda=0.1, umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
     """
     input: adata with adata.obs: is_empty (optional)
     output: adata with adata.obs: is_empty, and adata.var: ambient_fraction
@@ -35,18 +40,12 @@ def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", umi_cut
     if sp.issparse(X):
         X = X.tocsr()
 
-    # Mean across all cells
-    if sp.issparse(X):
-        mean_all = np.asarray(X.mean(axis=0)).ravel()
-        mean_empty = np.asarray(X[is_empty].mean(axis=0)).ravel()
-    else:
-        mean_all = X.mean(axis=0)
-        mean_empty = X[is_empty].mean(axis=0)
+    X_empty = X[is_empty,:]
+    G = X.shape[1]
 
-    # Avoid division by zero
-    with np.errstate(divide="ignore", invalid="ignore"):
-        ambient_fraction = np.divide(mean_empty, mean_all, where=mean_all > 0)
-        ambient_fraction = np.nan_to_num(ambient_fraction, nan=0.0, posinf=0.0, neginf=0.0)
+    a_raw = np.array(X_empty.sum(axis=0)).ravel().astype(float)
+    ambient_fraction = (a_raw + dirichlet_lambda) / (a_raw.sum() + G * dirichlet_lambda)
+
 
     adata.var["ambient_fraction"] = ambient_fraction
 
@@ -104,6 +103,150 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     adata.uns["celltype_profile_genes"] = np.array(adata.var_names)  # G-length array
 
     return adata
+
+def cdf_vals(arr, n_pts=200):
+    """Return (xs, ys) for empirical CDF plotting (sorted unique + linear interpolation)."""
+    a = np.asarray(arr).ravel()
+    if a.size == 0:
+        return np.array([0.0]), np.array([0.0])
+    xs = np.sort(a)
+    ys = np.linspace(0, 1, len(xs), endpoint=True)
+    # optionally thin the CDF for plotting speed
+    if len(xs) > n_pts:
+        idx = np.linspace(0, len(xs) - 1, n_pts).astype(int)
+        return xs[idx], ys[idx]
+    return xs, ys
+
+def plot_epoch(a_history, p_history, m, epoch, max_G_to_plot=1000):
+    """
+    Plot distributions for a single epoch.
+    - a_history: list of arrays (epochs x G)
+    - p_history: list of arrays (epochs x K x G)
+    - m: array (G,)
+    - epoch: integer epoch index
+    - q_grid_a, q_levels: precomputed quantile grid for heatmap
+    - max_k_to_plot: maximum number of p_k curves to plot (thins if K large)
+    """
+    a = np.asarray(a_history[epoch])
+    P = np.asarray(p_history[epoch])   # (K, G)
+    K = P.shape[0]
+    G = P.shape[1]
+
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+
+    # ---- Sort genes by current ambient distribution ----
+    gene_order = np.argsort(a)
+    
+    a_sorted = a[gene_order]
+    m_sorted = m[gene_order]
+    P_sorted = P[:, gene_order]
+
+    if G > max_G_to_plot:
+        a_sorted = a_sorted[-1*max_G_to_plot:]
+        m_sorted = m_sorted[-1*max_G_to_plot:]
+        P_sorted = P_sorted[:, -1*max_G_to_plot:]
+
+    # ---------------------------------------------------------
+    # 1. Rank-aligned gene curves
+    # ---------------------------------------------------------
+    plt.subplot(2,2,1)
+    plt.plot(a_sorted, label="ambient a", lw=2)
+
+    for k in range(K):
+        plt.plot(P_sorted[k], alpha=0.5, lw=1, label=f"p_{k}")
+
+    plt.plot(m_sorted, label="bulk m", lw=2)
+    plt.title(f"Rank-aligned gene profiles (epoch {epoch})")
+    plt.xlabel("Genes (sorted by a)")
+    plt.ylabel("Probability")
+    plt.legend(loc="upper right")
+
+    # ---------------------------------------------------------
+    # 2. Ambient to Bulk Ratio
+    # ---------------------------------------------------------
+    plt.subplot(2,2,2)
+    ratio = a / m
+    ratio = ratio[gene_order]
+    if G > max_G_to_plot:
+        ratio = ratio[-1*max_G_to_plot:]
+    plt.plot(ratio)
+    plt.title("Ambient to bulk ratio (a/m)")
+    plt.xlabel("Genes (sorted by a)")
+    plt.ylabel("Ratio")
+
+    # -------------------------
+    # 3) Ridge plot of a across epochs
+    # -------------------------
+    plt.subplot(2,2,4)
+    offset = 0
+    for t in range(len(a_history)):
+        sns.kdeplot(a_history[t], bw_adjust=0.7, fill=True)
+        offset += 1.2
+    plt.title("Ridge plot of a over epochs")
+    plt.yticks([])
+
+    # -------------------------
+    # 4) Same as 1 but sorted by final ambient distribution
+    # -------------------------
+    # ---- Sort genes by current ambient distribution ----
+    gene_order = np.argsort(a_history[-1])
+    
+    a_sorted = a[gene_order]
+    m_sorted = m[gene_order]
+    P_sorted = P[:, gene_order]
+
+    if G > max_G_to_plot:
+        a_sorted = a_sorted[-1*max_G_to_plot:]
+        m_sorted = m_sorted[-1*max_G_to_plot:]
+        P_sorted = P_sorted[:, -1*max_G_to_plot:]
+
+    plt.subplot(2,2,3)
+    plt.plot(a_sorted, label="ambient a", lw=2)
+
+    for k in range(K):
+        plt.plot(P_sorted[k], alpha=0.5, lw=1, label=f"p_{k}")
+
+    plt.plot(m_sorted, label="bulk m", lw=2)
+    plt.title(f"Rank-aligned gene profiles (epoch {epoch})")
+    plt.xlabel("Genes (sorted by a)")
+    plt.ylabel("Probability")
+    plt.legend(loc="upper right")
+
+    plt.tight_layout()
+    # display and then close figure so Jupyter doesn't duplicate it
+    display(fig)
+    plt.close(fig)
+
+
+def interactive_distribution_viewer(a_history, p_history, m, max_G_to_plot=1000):
+    """
+    Create an interactive viewer that shows epoch slider and redraws plots into a single Output widget.
+    """
+
+    slider = IntSlider(
+        min=0,
+        max=len(a_history) - 1,
+        step=1,
+        value=0,
+        description="Epoch:",
+        continuous_update=False
+    )
+
+    out = Output()
+
+    # initial draw
+    with out:
+        plot_epoch(a_history, p_history, m, epoch=0, max_G_to_plot=max_G_to_plot)
+
+    def _on_change(change):
+        if change['name'] == 'value' and change['type'] == 'change':
+            epoch = change['new']
+            with out:
+                out.clear_output(wait=True)   # clear previous content
+                plot_epoch(a_history, p_history, m, epoch=epoch, max_G_to_plot=max_G_to_plot)
+
+    slider.observe(_on_change)
+    display(VBox([slider, out]))
 
 def dense_integerize(expected_cell, random_state=None): 
     """
@@ -184,7 +327,6 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
     return sp.csr_matrix((np.array(vals, dtype=int),
                           (np.array(rows, dtype=int), np.array(cols, dtype=int))),
                          shape=(N, G))
-
 
 # ---------- Numba-parallel E-step kernel ----------
 @njit(parallel=True, nogil=True)
@@ -277,18 +419,25 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
 
 def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
               max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
-              beta_0, beta_prior_strength, eps, dirichlet_lambda, 
-              log_eps, verbose, logger, freeze_ambient_profile):
+              eps, dirichlet_lambda, 
+              log_eps, verbose, logger, freeze_ambient_profile, debug):
+    
+    if debug:
+        a_tracker = []
+        p_tracker = []
+        
+        a_tracker.append(a)
+        p_tracker.append(p)
+    else: 
+        a_tracker = None
+        p_tracker = None
+    
     """
     Helper for denoise_count_matrix. Performs sparse compatible EM on model
     """
     indptr = C.indptr.copy()
     indices = C.indices.copy()
     data = C.data.astype(np.float64).copy()  # ensure float64
-
-    alpha_m = np.zeros(N, dtype=float)   # first moments
-    alpha_v = np.zeros(N, dtype=float)   # second moments
-    alpha_vhat = np.zeros(N, dtype=float)  # AMSGrad max second moment
 
     nnz = data.shape[0]
 
@@ -346,53 +495,25 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
                 denom = numer.sum()
                 p[k] = numer / max(denom, eps)
 
-            row_sums = numer_gamma.sum(axis=1)
+            row_sums = numer_gamma.sum(axis=1)  # shape (N,)
+
             if freeze_empty:
-                gamma[real_mask] = numer_gamma[real_mask] / np.maximum(row_sums[real_mask, None], eps)
-                gamma[~real_mask, :] = 0
+                # update only real droplets in-place to preserve same array object
+                # protect division by zero with eps
+                denom_real = np.maximum(row_sums[real_mask, None], eps)
+                gamma[real_mask, :] = numer_gamma[real_mask, :] / denom_real
+                # ensure empties explicitly zero
+                gamma[~real_mask, :] = 0.0
             else:
-                gamma = numer_gamma / np.maximum(row_sums[:,None], eps)
+                # update all rows in-place
+                denom_all = np.maximum(row_sums[:, None], eps)
+                gamma[:] = numer_gamma / denom_all
+
 
         # update alpha
         Ccell_n = numer_gamma.sum(axis=1)
 
-        # ------------------------------------------------------------
-        #  Compute raw EM estimate for alpha
-        # ------------------------------------------------------------
-        alpha_target = A_n / np.maximum(A_n + Ccell_n, eps)
-
-        # ------------------------------------------------------------
-        #  AdamW + AMSGrad update
-        # ------------------------------------------------------------
-        beta1 = 0.9         # momentum
-        beta2 = 0.999       # variance smoothing
-        lr = 0.05           # base LR (safe for alpha)
-        weight_decay = 0.01 # decoupled shrinkage toward 0
-        t = it              # iteration number (1-based)
-
-        # Gradient is difference between current and target
-        # (EM fixed point update = 0 when alpha = alpha_target)
-        g = alpha - alpha_target
-
-        # 1st moment
-        alpha_m[:] = beta1 * alpha_m + (1 - beta1) * g
-
-        # 2nd moment
-        alpha_v[:] = beta2 * alpha_v + (1 - beta2) * (g * g)
-
-        # AMSGrad: monotonic variance
-        alpha_vhat = np.maximum(alpha_vhat, alpha_v)
-
-        # Bias-corrected moments
-        m_hat = alpha_m / (1 - beta1**t)
-        v_hat = alpha_vhat / (1 - beta2**t)
-
-        # AdamW update rule
-        alpha -= lr * (
-            m_hat / (np.sqrt(v_hat) + eps)   # adaptive Adam step
-            + weight_decay * alpha           # decoupled L2 decay
-        )
-
+        alpha = A_n / np.maximum(A_n + Ccell_n, eps)
         # Valid range enforcement
         alpha[real_mask] = np.clip(alpha[real_mask], 1e-6, 0.95)
         if freeze_empty:
@@ -400,7 +521,7 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 
         # update beta
         total_counts = M_total + A_n.sum() + numer_gamma.sum()
-        beta = float((M_total + beta_0*beta_prior_strength) / np.maximum(total_counts + beta_prior_strength, eps))
+        beta = M_total / np.maximum(total_counts, eps)
 
         if not freeze_ambient_profile:
             # update ambient profile
@@ -420,6 +541,10 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
                 logger.info("Converged.")
             break
 
+        if debug:
+            a_tracker.append(a)
+            p_tracker.append(p)
+
         prev_ll = ll
 
     # Construct CSR expected matrices from per-entry arrays
@@ -429,21 +554,40 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
     C_expected_ambient = sp.csr_matrix((ambient_vals, (row_of_entry, indices)), shape=(N, G))
     C_expected_bulk = sp.csr_matrix((bulk_vals, (row_of_entry, indices)), shape=(N, G))
 
-    return C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll
+    return {"C_expected_cell" : C_expected_cell, 
+            "C_expected_ambient": C_expected_ambient, 
+            "C_expected_bulk": C_expected_bulk, 
+            "alpha": alpha, 
+            "beta": beta, 
+            "gamma": gamma, 
+            "p": p, 
+            "a": a, 
+            "prev_ll": prev_ll, 
+            "a_tracker": a_tracker, 
+            "p_tracker": p_tracker}
 
 def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
              max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
-             beta_0, beta_prior_strength, eps, dirichlet_lambda,
-             log_eps, verbose, logger, freeze_ambient_profile):
+             eps, dirichlet_lambda,
+             log_eps, verbose, logger, freeze_ambient_profile, debug):
     """
     Helper for denoise_count_matrix. Performs EM on model (dense arrays only)
     """
+
+    if debug:
+        a_tracker = []
+        p_tracker = []
+        
+        a_tracker.append(a)
+        p_tracker.append(p)
+    else: 
+        a_tracker = None
+        p_tracker = None
     
     if real_mask is None:
         real_mask = np.ones(N, dtype=bool)
 
     prev_ll = -np.inf
-
 
     # if freeze_empty, ensure empties have alpha=1 and gamma=0
     if freeze_empty:
@@ -523,7 +667,8 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 
         # update beta (with numerical guard)
         total_counts = M_total + A_n.sum() + numer_gamma.sum()
-        beta = float((M_total + beta_0*beta_prior_strength) / np.maximum(total_counts + beta_prior_strength, eps))
+        
+        beta = float(M_total/np.maximum(total_counts,eps))
 
         if not freeze_ambient_profile:
             # update ambient profile a
@@ -538,14 +683,28 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
             if verbose and logger is not None:
                 logger.info("Converged.")
             break
+
+        if debug:
+            a_tracker.append(a)
+            p_tracker.append(p)
+
         prev_ll = ll
 
-    # final expected matrices
     C_expected_cell = C_cell    # ndarray (N,G)
     C_expected_ambient = C_A
     C_expected_bulk = C_M
 
-    return C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll
+    return {"C_expected_cell" : C_expected_cell, 
+            "C_expected_ambient": C_expected_ambient, 
+            "C_expected_bulk": C_expected_bulk, 
+            "alpha": alpha, 
+            "beta": beta, 
+            "gamma": gamma, 
+            "p": p, 
+            "a": a, 
+            "prev_ll": prev_ll, 
+            "a_tracker": a_tracker, 
+            "p_tracker": p_tracker}
 
 
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
@@ -553,8 +712,8 @@ def denoise_count_matrix(
     adata: str | ad.AnnData,
     adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = "adata_straightened.h5ad",
     max_iter: Annotated[int, Field(gt=0)] = 40,
+    eps_gamma: Annotated[int, Field(ge=0)] = 0.02,
     beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
-    beta_prior_strength: Annotated[float, Field(ge=0)] = None,
     eps: Annotated[float, Field(gt=0)] = 1e-15,
     log_eps: Annotated[float, Field(gt=0)] = 1e-300,
     dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 0.1,
@@ -572,7 +731,8 @@ def denoise_count_matrix(
     random_state: Optional[Annotated[int, Field(ge=0)]] = 42,
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
-    log_file: Optional[str] = None
+    log_file: Optional[str] = None,
+    debug: bool = False,
 ):
     """
     Denoise a count matrix using an Expectation-Maximization (EM) algorithm that
@@ -609,14 +769,8 @@ def denoise_count_matrix(
     max_iter : int, default 40
         Maximum number of EM iterations.
 
-    beta : float, default 0.03
-        Initial fraction of counts attributed to bulk RNA contamination
-
-    beta_prior_strength : float, default None
-        Confidence in initial beta estimate. Can be interpreted as the 
-        number of droplets observed to have a bulk ontamination of `beta`
-        before inference. If None, will estimate prior strength to be
-        0.1% of the size of the dataset
+    eps_gamma: float, default 0.02
+        Initital cell-type softening to allow continuous cell-type estimation
 
     eps : float, default 1e-15
         Numerical stability constant to prevent division by zero or log(0).
@@ -712,6 +866,7 @@ def denoise_count_matrix(
     if "ambient_fraction" not in adata.var.columns:
         logger.info("Inferring gene ambient fractions.")
         adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method,
+                                            dirichlet_lambda=dirichlet_lambda,
                                             verbose=verbose, quiet=quiet, logger=logger)
 
     if "celltype_profile" not in adata.uns or "celltype_names" not in adata.uns:
@@ -752,6 +907,16 @@ def denoise_count_matrix(
         ct = z_true.iloc[i]
         if ct in z_true_str_to_int and ct != empty_droplet_celltype_name:
             gamma[i, z_true_str_to_int[ct]] = 1.0
+    
+    gamma = gamma.astype(float)
+    gamma = (1.0 - eps_gamma) * gamma + (eps_gamma / K)
+    # renormalize rows (defensive)
+    row_sums = gamma.sum(axis=1)
+    gamma = gamma / np.maximum(row_sums[:, None], eps)
+
+    # still keep empties zero if freeze_empty
+    if freeze_empty:
+        gamma[~real_mask, :] = 0.0
 
     # initial alpha
     if "cell_ambient_fraction" not in adata.obs.columns:
@@ -767,9 +932,6 @@ def denoise_count_matrix(
 
     # initial beta + bulk m
     beta = float(beta)
-    beta_0 = beta
-    if not beta_prior_strength:
-        beta_prior_strength = 0.01*N
     m_raw = np.array(C.sum(axis=0)).ravel().astype(float)
     m_global = (m_raw + dirichlet_lambda) / (m_raw.sum() + G * dirichlet_lambda)
 
@@ -782,17 +944,31 @@ def denoise_count_matrix(
         if not sp.isspmatrix_csr(C):
             C = sp.csr_matrix(C)
         logger.info(f"Performing Sparse EM with {numba.get_num_threads()} Numba thread(s)")
-        C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
-                                                                                                            max_iter, tol, freeze_empty, fixed_celltype, real_mask,                                                                                                         
-                                                                                                            beta_0, beta_prior_strength, eps, dirichlet_lambda, 
-                                                                                                            log_eps, verbose, logger, freeze_ambient_profile)
+        em_dict = sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+                                max_iter, tol, freeze_empty, fixed_celltype, real_mask,                                                                                                         
+                                eps, dirichlet_lambda, 
+                                log_eps, verbose, logger, freeze_ambient_profile, debug)
     else:
         np.asarray(C)
         logger.info("Performing Dense EM")
-        C_expected_cell, C_expected_ambient, C_expected_bulk, alpha, beta, gamma, p, a, prev_ll = dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
-                                                                                                           max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
-                                                                                                           beta_0, beta_prior_strength, eps, dirichlet_lambda, 
-                                                                                                           log_eps, verbose, logger, freeze_ambient_profile)
+        em_dict = dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+                                max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
+                                eps, dirichlet_lambda, 
+                                log_eps, verbose, logger, freeze_ambient_profile)
+
+    C_expected_cell = em_dict['C_expected_cell']
+    C_expected_ambient = em_dict['C_expected_ambient']
+    C_expected_bulk = em_dict['C_expected_bulk']
+    alpha = em_dict["alpha"]
+    beta = em_dict["beta"]
+    p = em_dict["p"]
+    a = em_dict["a"]
+    prev_ll = em_dict["prev_ll"]
+    a_tracker = em_dict["a_tracker"]
+    p_tracker = em_dict["p_tracker"]
+
+    if debug:
+        interactive_distribution_viewer(a_tracker, p_tracker, m_global)
 
     # ============================
     #      DENOISED COUNTS
