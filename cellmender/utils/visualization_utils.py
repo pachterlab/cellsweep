@@ -8,6 +8,7 @@ import numpy as np
 from scipy.stats import gaussian_kde
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.scale import SymmetricalLogScale
 import seaborn as sns
 import scanpy as sc
 import logging
@@ -760,6 +761,7 @@ def identify_human_and_mouse_cells(adata, human_prefix="hg19_", mouse_prefix="mm
     is_mouse = adata.var_names.str.startswith(mouse_prefix)
     adata.obs["human_counts_total"] = np.array(adata.X[:, is_human].sum(axis=1)).ravel()
     adata.obs["mouse_counts_total"] = np.array(adata.X[:, is_mouse].sum(axis=1)).ravel()
+    adata.obs['genome'] = np.where(adata.obs['human_counts_total'] >= adata.obs['mouse_counts_total'], 'hg19', 'mm10')  # predict genome
     return adata
 
 def plot_cross_species_histogram(adata, out_path_human=None, out_path_mouse=None, show=True):
@@ -769,27 +771,44 @@ def plot_cross_species_histogram(adata, out_path_human=None, out_path_mouse=None
     if "human_counts_total" not in adata.obs.columns or "mouse_counts_total" not in adata.obs.columns:
         adata = identify_human_and_mouse_cells(adata)
 
+    fig, ax = plt.subplots(figsize=(6, 4))
+
+    # --- Mouse cells: plotting human_counts_total in red ---
     sns.histplot(
         data=adata.obs[adata.obs["genome"] == "mm10"],
         x="human_counts_total",
-        bins=50,
-        alpha=0.6
+        bins=100,
+        alpha=0.6,
+        color="blue",
+        ax=ax,
+        label="Mouse cell human gene contamination"
     )
-    if out_path_mouse:
-        plt.savefig(out_path_mouse, dpi=300, bbox_inches="tight")
 
+    # --- Human cells: plotting mouse_counts_total in gray ---
     sns.histplot(
         data=adata.obs[adata.obs["genome"] == "hg19"],
         x="mouse_counts_total",
-        bins=50,
-        alpha=0.6
+        bins=100,
+        alpha=0.6,
+        color="gray",
+        ax=ax,
+        label="Human cell mouse gene contamination"
     )
-    if out_path_human:
-        plt.savefig(out_path_human, dpi=300, bbox_inches="tight")
+
+    ax.set_xlabel("Cross-species counts")
+    ax.set_ylabel("Frequency")
+    ax.set_yscale("log")
+    ax.legend(title="Genome", loc="upper right")
+
+    if out_path_mouse or out_path_human:
+        # Save once, with both distributions together
+        save_path = out_path_mouse or out_path_human
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
     if not show:
         plt.close()
 
-def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", show_marginal_ticks=False, show_point_movement=False, max_points=15_000, seed=42, out_path=None, show=True):    
+def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", show_marginal_ticks=False, show_point_movement=False, max_points=None, seed=42, out_path=None, show=True):    
     if adata_processed is None:
         return  # nothing to plot
     
@@ -798,7 +817,7 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
 
     adata_raw, adata_processed = take_adata_cell_gene_intersection(adata_raw, adata_processed)
     
-    if adata_raw.n_obs > max_points:
+    if max_points and adata_raw.n_obs > max_points:
         np.random.seed(seed)
         sampled_indices = np.random.choice(adata_raw.obs_names, size=max_points, replace=False)
         adata_raw = adata_raw[sampled_indices].copy()
@@ -833,6 +852,16 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
                 linewidth=0.5,
                 zorder=1
             )
+    
+    # enforce square plot
+    min_val = 0.8
+    max_val = max(g.ax_joint.get_xlim()[1], g.ax_joint.get_ylim()[1])
+    g.ax_joint.set_xlim(min_val, max_val)
+    g.ax_joint.set_ylim(min_val, max_val)
+    g.ax_joint.set_aspect('equal', adjustable='box')
+
+    # plot y=x
+    g.ax_joint.plot([min_val, max_val], [min_val, max_val], color='gray', linestyle='--', linewidth=1, zorder=0)
 
     # Main scatter axes log scale
     g.ax_joint.set_xscale("log")
@@ -841,11 +870,26 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
     g.ax_joint.set_xlabel("Human counts + 1")
     g.ax_joint.set_ylabel("Mouse counts + 1")
 
-    
     if marginal_type == "kde":
         g.plot(sns.scatterplot, sns.kdeplot, alpha=.7, linewidth=.5)
     elif marginal_type == "histogram":
         g.plot(sns.scatterplot, sns.histplot, alpha=.7, linewidth=.5)
+    
+    leg = g.ax_joint.legend(loc="lower left")
+
+    # ensure side histograms have same max height    
+    x_hist_patches = g.ax_marg_x.patches
+    y_hist_patches = g.ax_marg_y.patches
+
+    max_height = 0
+    if x_hist_patches:
+        max_height = max(max_height, max(p.get_height() for p in x_hist_patches))
+    if y_hist_patches:
+        max_height = max(max_height, max(p.get_width() for p in y_hist_patches))  # note: width for y-hist
+
+    max_height *= 1.05
+    g.ax_marg_x.set_ylim(0, max_height)
+    g.ax_marg_y.set_xlim(0, max_height)
     
     if out_path:
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
