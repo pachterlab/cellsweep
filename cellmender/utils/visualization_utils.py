@@ -1217,6 +1217,7 @@ def plot_iterative_difference_counts(
     adatas_dict,
     threshold=0.0,
     metric="cells",   # "cells" or "counts"
+    expected_cells=None,
     colors=None,
     title="Difference per Iteration",
     out_path=None,
@@ -1315,6 +1316,11 @@ def plot_iterative_difference_counts(
         ylabel = "Total Absolute Row-Sum Difference"
     elif metric == "number_of_cells":
         ylabel = "Total Number of Cells"
+    
+    if expected_cells is not None and metric in ("cells", "number_of_cells"):
+        # plot horizontal line at expected_cells
+        plt.axhline(y=expected_cells, color='gray', linestyle='--')
+        plt.text(x=(max_iter_count-1), y=expected_cells - 0.03*(plt.ylim()[1] - plt.ylim()[0]), s=f'Expected cells: {expected_cells}', fontsize=10, color='gray', ha='right')
 
     plt.xlabel("Iteration Comparison (i → i+1)", fontsize=12)
     plt.ylabel(ylabel, fontsize=12)
