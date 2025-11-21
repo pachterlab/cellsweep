@@ -1,12 +1,19 @@
-name: cellmender2
+name: cellmender
 channels:
   - conda-forge
   - defaults
   - bioconda
-  - r
 dependencies:
-  - python==3.10
-  - pip
-  - r-base
+  - pip=25.2
+  - python=3.10.19
   - pip:
-    - .[analysis]
+      - anndata==0.11.4
+      - celltypist==1.7.1
+      - matplotlib==3.10.7
+      - numba==0.62.1
+      - numpy==2.2.6
+      - pandas==2.3.3
+      - scanpy==1.11.5
+      - scipy==1.15.3
+      - seaborn==0.13.2
+      - cellmender[analysis]==0.1.0

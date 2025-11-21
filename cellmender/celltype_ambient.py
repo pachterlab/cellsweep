@@ -718,7 +718,7 @@ def denoise_count_matrix(
     log_eps: Annotated[float, Field(gt=0)] = 1e-300,
     dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 0.1,
     integer_out: bool = False,
-    thread_num: Optional[Annotated[int, Field(gt=0)]] = 1,
+    threads: Optional[Annotated[int, Field(gt=0)]] = 1,
     fixed_celltype: bool = False,
     freeze_empty: bool = True,
     freeze_ambient_profile: bool = False,
@@ -785,7 +785,7 @@ def denoise_count_matrix(
     integer_out : bool, default False
         If True, rounds denoised counts to nearest integer before saving.
 
-    thread_num : int, default 1
+    threads : int, default 1
         number of numba threads
 
     fixed_celltype : bool, default False
@@ -849,7 +849,7 @@ def denoise_count_matrix(
     """
 
     # set thread number
-    numba.set_num_threads(thread_num)
+    numba.set_num_threads(threads)
     
     logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
     adata = load_adata(adata, logger=logger)

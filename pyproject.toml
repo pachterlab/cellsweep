@@ -9,13 +9,15 @@ description = "Denoising scRNA-seq in a smart and efficient way."
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {file = "LICENSE"}
 authors = [
-    {name = "Joseph Rich", email = "josephrich98@gmail.com"}
+    {name = "Maya Caskey", email = "mcaskey@caltech.edu"},
+    {name = "Joseph Rich", email = "jmrich@caltech.edu"},
 ]
 maintainers = [
-    {name = "Joseph Rich", email = "josephrich98@gmail.com"}
+    {name = "Maya Caskey", email = "mcaskey@caltech.edu"},
+    {name = "Joseph Rich", email = "jmrich@caltech.edu"}
 ]
 requires-python = ">=3.9"
-keywords = ["bioinformatics", "single-cell", "scRNA-seq", "denoising", "data-analysis"]
+keywords = ["bioinformatics", "machine learning", "single-cell", "scRNA-seq", "denoising", "data-analysis"]
 classifiers = [
     "Environment :: Console",
     "Framework :: Jupyter",
@@ -52,8 +54,7 @@ analysis = [
     "scanpy",
     "seaborn",
     "matplotlib",
-    "celltypist",
-    "scikit-misc"
+    "celltypist"
 ]
 
 [project.urls]

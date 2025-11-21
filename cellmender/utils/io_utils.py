@@ -38,15 +38,48 @@ def read_r_matrix_into_anndata(file_prefix):
     adata.obs_names = barcodes
     return adata
 
+def concat_on_barcodes(adatas):
+    # --- 1. union of all barcodes ---
+    all_barcodes = sorted(set().union(*[a.obs_names for a in adatas]))
+
+    aligned = []
+    for a in adatas:
+        # a.obs_names is indexed, so we create a new AnnData with reindexed obs
+
+        # --- reindex the obs ---
+        new_obs = a.obs.reindex(all_barcodes)
+
+        # --- reindex X ---
+        # Convert X to a DataFrame to reindex rows easily
+        X_df = pd.DataFrame.sparse.from_spmatrix(a.X, index=a.obs_names, columns=a.var_names)
+        X_df = X_df.reindex(all_barcodes).fillna(0)
+
+        # --- rebuild AnnData ---
+        a2 = ad.AnnData(
+            X=X_df.sparse.to_coo(),
+            obs=new_obs,
+            var=a.var.copy()
+        )
+        aligned.append(a2)
+
+    # --- 3. concatenate genes ---
+    combined = ad.concat(aligned, axis=1, join="outer", index_unique=None)
+
+    return combined
+
 # anndata object, h5 path, h5ad path, a 10x matrix directory (containing matrix.mtx, genes.tsv, barcodes.tsv), or an R matrix prefix ({prefix}.mtx, {prefix}_genes.csv, {prefix}_barcodes.csv)
 def load_adata(adata, logger=None, verbose=0, quiet=False):
     if logger is None:
         logger = setup_logger(verbose=verbose, quiet=quiet)
     if isinstance(adata, str):
         if adata.endswith(".h5ad"):
+            if not os.path.exists(adata):
+                raise FileNotFoundError(f"File not found: {adata!r}")
             logger.info(f"Loading adata from {adata!r}")
             adata = ad.read_h5ad(adata)
         elif adata.endswith(".h5"):
+            if not os.path.exists(adata):
+                raise FileNotFoundError(f"File not found: {adata!r}")
             logger.info(f"Loading adata from {adata!r}")
             import scanpy as sc
             import h5py
@@ -60,11 +93,12 @@ def load_adata(adata, logger=None, verbose=0, quiet=False):
                 for genome in genomes:
                     logger.info(f"Loading genome {genome!r} from {adata!r}")
                     adata_tmp = sc.read_10x_h5(adata, genome=genome)
-                    # adata_tmp.var_names = genome + "_" + adata_tmp.var_names
+                    # adata_tmp.var_names = genome + "_" + adata_tmp.var_names  # at least for the sample hgmm12k dataset, gene names are already prepended with genome
                     adata_tmp.var_names_make_unique()
-                    adata_tmp.obs['genome'] = genome
+                    adata_tmp.var['genome'] = genome
                     adatas.append(adata_tmp)
-                adata = ad.concat(adatas, join="outer", index_unique=None)
+                adata = concat_on_barcodes(adatas)
+                assert adata.obs_names.is_unique, f"Non-unique obs names found"
         elif os.path.exists(f"{adata}.mtx"):
             logger.info(f"Loading adata from matrix files with prefix {adata!r}")
             adata = read_r_matrix_into_anndata(adata)
@@ -113,31 +147,35 @@ def write_10x_like(
     adata,
     parent_dir,
     gzip_output=True,
+    genome="genome",
     is_empty_col="is_empty",
     cluster_col="leiden",
     write_raw=True,
-    write_filtered=True
+    write_filtered=True,
+    transpose_matrix=True
 ):
     """
     Write an AnnData object to a 10x-like directory structure.
 
     Structure:
-      parent_dir/
+      <parent_dir>/
           raw_gene_bc_matrices/
-              barcodes.tsv[.gz]
-              genes.tsv[.gz]
-              matrix.mtx[.gz]
-          filtered_gene_bc_matrices/
-              barcodes.tsv[.gz]
-              genes.tsv[.gz]
-              matrix.mtx[.gz]
+              <genome>/
+                barcodes.tsv[.gz]
+                genes.tsv[.gz]
+                matrix.mtx[.gz]
+            filtered_gene_bc_matrices/
+              <genome>/
+                barcodes.tsv[.gz]
+                genes.tsv[.gz]
+                matrix.mtx[.gz]
         #   clusters.csv
 
     Parameters
     ----------
     adata : anndata.AnnData
-        Object containing X, obs, var.
-        adata.obs must include columns specified by `is_empty_col` and `celltype_col`.
+        Object containing X (cell x gene), obs, var.
+        adata.obs must include columns specified by `is_empty_col` and `cluster_col`.
 
     parent_dir : str
         Output directory path to create/write into.
@@ -160,7 +198,7 @@ def write_10x_like(
     paths = {}
 
     def _write_10x_subdir(subdir_name, mask):
-        subdir = os.path.join(parent_dir, subdir_name)
+        subdir = os.path.join(parent_dir, subdir_name, genome)
         os.makedirs(subdir, exist_ok=True)
 
         suffix = ".gz" if gzip_output else ""
@@ -170,13 +208,16 @@ def write_10x_like(
 
         if os.path.exists(barcodes_path) and os.path.exists(genes_path) and os.path.exists(matrix_path):
             print(f"Found existing 10x files in {subdir!r}. Skipping write.")
-            return {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
+            return subdir  # {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
 
         X = adata.X[mask]
         if sparse.issparse(X):
             X = X.tocoo()
         else:
             X = sparse.coo_matrix(X)
+        
+        if transpose_matrix:  # needed for scanpy's read 10x function
+            X = X.T  # genes x cells
 
         genes = adata.var_names
         barcodes = adata.obs_names[mask]
@@ -197,7 +238,7 @@ def write_10x_like(
             )
             io.mmwrite(matrix_path, X)
 
-        return {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
+        return subdir  # {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
 
     # Raw matrix (all cells)
     if write_raw:
@@ -205,7 +246,7 @@ def write_10x_like(
 
     clusters_path = os.path.join(parent_dir, "clusters.csv")
     paths["clusters"] = clusters_path
-    if not os.path.exists(clusters_path) and cluster_col in adata.obs.columns and is_empty_col in adata.obs.columns:
+    if cluster_col is not None and not os.path.exists(clusters_path) and cluster_col in adata.obs.columns and is_empty_col in adata.obs.columns:
         # Clusters
         adata_filtered = adata[~adata.obs[is_empty_col].astype(bool)].copy()
         adata_filtered.obs[[cluster_col]].to_csv(clusters_path)

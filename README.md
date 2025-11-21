@@ -11,7 +11,7 @@ pip install cellmender  #!!! not yet uploaded on pypi - see below
 pip install cellmender[analysis]  #!!! not yet uploaded on pypi - see below
 ```
 
-### To remake local environments:
+### To remake figures from the paper:
 ```
 git clone https://github.com/pachterlab/cellmender.git
 cd cellmender

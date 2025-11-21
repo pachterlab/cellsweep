@@ -8,6 +8,7 @@ import numpy as np
 from scipy.stats import gaussian_kde
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.scale import SymmetricalLogScale
 import seaborn as sns
 import scanpy as sc
 import logging
@@ -20,6 +21,13 @@ import tarfile
 from upsetplot import from_contents, UpSet
 from .data_utils import take_adata_cell_gene_intersection
 from .logger_utils import setup_logger
+
+default_colors = [
+    "#D55E00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#E69F00", "#CC79A7", "#666666", "#AD7700", "#1C91D4", "#007756", "#D5C711", "#005685",
+    "#A04700", "#B14380", "#4D4D4D", "#FFBE2D", "#80C7EF", "#00F6B3", "#F4EB71", "#06A5FF", "#FF8320", "#D99BBD", "#8C8C8C", "#FFCB57", "#9AD2F2",
+    "#2CFFC6", "#F6EF8E", "#38B7FF", "#FF9B4D", "#E0AFCA", "#A3A3A3", "#8A5F00", "#1674A9", "#005F45", "#AA9F0D", "#00446B", "#803800", "#8D3666",
+    "#3D3D3D"
+]
 
 def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None, title: str = None, show: bool = True):
     """
@@ -498,6 +506,7 @@ def plot_per_cell_correlation(
     plt.xlim(0, 1)
     plt.ylim(1, y_max)
     plt.yscale("log")
+    plt.xlabel("Cell Pearson Correlation")
     plt.ylabel("Number of cells")
     plt.title(title)
     plt.tight_layout()
@@ -752,6 +761,7 @@ def identify_human_and_mouse_cells(adata, human_prefix="hg19_", mouse_prefix="mm
     is_mouse = adata.var_names.str.startswith(mouse_prefix)
     adata.obs["human_counts_total"] = np.array(adata.X[:, is_human].sum(axis=1)).ravel()
     adata.obs["mouse_counts_total"] = np.array(adata.X[:, is_mouse].sum(axis=1)).ravel()
+    adata.obs['genome'] = np.where(adata.obs['human_counts_total'] >= adata.obs['mouse_counts_total'], 'hg19', 'mm10')  # predict genome
     return adata
 
 def plot_cross_species_histogram(adata, out_path_human=None, out_path_mouse=None, show=True):
@@ -761,27 +771,44 @@ def plot_cross_species_histogram(adata, out_path_human=None, out_path_mouse=None
     if "human_counts_total" not in adata.obs.columns or "mouse_counts_total" not in adata.obs.columns:
         adata = identify_human_and_mouse_cells(adata)
 
+    fig, ax = plt.subplots(figsize=(6, 4))
+
+    # --- Mouse cells: plotting human_counts_total in red ---
     sns.histplot(
         data=adata.obs[adata.obs["genome"] == "mm10"],
         x="human_counts_total",
-        bins=50,
-        alpha=0.6
+        bins=100,
+        alpha=0.6,
+        color="blue",
+        ax=ax,
+        label="Mouse cell human gene contamination"
     )
-    if out_path_mouse:
-        plt.savefig(out_path_mouse, dpi=300, bbox_inches="tight")
 
+    # --- Human cells: plotting mouse_counts_total in gray ---
     sns.histplot(
         data=adata.obs[adata.obs["genome"] == "hg19"],
         x="mouse_counts_total",
-        bins=50,
-        alpha=0.6
+        bins=100,
+        alpha=0.6,
+        color="gray",
+        ax=ax,
+        label="Human cell mouse gene contamination"
     )
-    if out_path_human:
-        plt.savefig(out_path_human, dpi=300, bbox_inches="tight")
+
+    ax.set_xlabel("Cross-species counts")
+    ax.set_ylabel("Frequency")
+    ax.set_yscale("log")
+    ax.legend(title="Genome", loc="upper right")
+
+    if out_path_mouse or out_path_human:
+        # Save once, with both distributions together
+        save_path = out_path_mouse or out_path_human
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+
     if not show:
         plt.close()
 
-def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", show_marginal_ticks=False, show_point_movement=False, max_points=15_000, seed=42, out_path=None, show=True):    
+def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", show_marginal_ticks=False, show_point_movement=False, max_points=None, seed=42, out_path=None, show=True):    
     if adata_processed is None:
         return  # nothing to plot
     
@@ -790,7 +817,7 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
 
     adata_raw, adata_processed = take_adata_cell_gene_intersection(adata_raw, adata_processed)
     
-    if adata_raw.n_obs > max_points:
+    if max_points and adata_raw.n_obs > max_points:
         np.random.seed(seed)
         sampled_indices = np.random.choice(adata_raw.obs_names, size=max_points, replace=False)
         adata_raw = adata_raw[sampled_indices].copy()
@@ -825,6 +852,16 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
                 linewidth=0.5,
                 zorder=1
             )
+    
+    # enforce square plot
+    min_val = 0.8
+    max_val = max(g.ax_joint.get_xlim()[1], g.ax_joint.get_ylim()[1])
+    g.ax_joint.set_xlim(min_val, max_val)
+    g.ax_joint.set_ylim(min_val, max_val)
+    g.ax_joint.set_aspect('equal', adjustable='box')
+
+    # plot y=x
+    g.ax_joint.plot([min_val, max_val], [min_val, max_val], color='gray', linestyle='--', linewidth=1, zorder=0)
 
     # Main scatter axes log scale
     g.ax_joint.set_xscale("log")
@@ -833,13 +870,516 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
     g.ax_joint.set_xlabel("Human counts + 1")
     g.ax_joint.set_ylabel("Mouse counts + 1")
 
-    
     if marginal_type == "kde":
         g.plot(sns.scatterplot, sns.kdeplot, alpha=.7, linewidth=.5)
     elif marginal_type == "histogram":
         g.plot(sns.scatterplot, sns.histplot, alpha=.7, linewidth=.5)
     
+    leg = g.ax_joint.legend(loc="lower left")
+
+    # ensure side histograms have same max height    
+    x_hist_patches = g.ax_marg_x.patches
+    y_hist_patches = g.ax_marg_y.patches
+
+    max_height = 0
+    if x_hist_patches:
+        max_height = max(max_height, max(p.get_height() for p in x_hist_patches))
+    if y_hist_patches:
+        max_height = max(max_height, max(p.get_width() for p in y_hist_patches))  # note: width for y-hist
+
+    max_height *= 1.05
+    g.ax_marg_x.set_ylim(0, max_height)
+    g.ax_marg_y.set_xlim(0, max_height)
+    
     if out_path:
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
     if not show:
         plt.close()
+
+def print_top_empty_genes(adata, top_n=10, out_path=None):
+    if 'empty_counts' not in adata.var.columns:
+        if 'is_empty' not in adata.obs.columns:
+            raise ValueError("adata.obs must contain 'is_empty' column indicating empty droplets.")
+        adata.var['empty_counts'] = np.array(adata.X[adata.obs['is_empty'].values, :].sum(axis=0)).flatten()
+    
+    # Get sorted indices
+    idx = np.argsort(adata.var['empty_counts'])[::-1]
+    
+    top_genes = adata.var_names[idx[:top_n]]
+    top_vals  = adata.var['empty_counts'].iloc[idx[:top_n]]
+    
+    for gene, val in zip(top_genes, top_vals):
+        print(f"{gene}: {val}")
+    
+    if out_path:
+        df = pd.DataFrame({
+            "gene": adata.var_names[idx[:]],
+            "empty_counts": adata.var['empty_counts'].iloc[idx[:]].values
+        })
+        df.to_csv(out_path, index=False)
+
+def plot_empty_gene_counts(adata, out_path=None, show=True):
+    if 'empty_counts' not in adata.var.columns:
+        if 'is_empty' not in adata.obs.columns:
+            raise ValueError("adata.obs must contain 'is_empty' column indicating empty droplets.")
+        adata.var['empty_counts'] = np.array(adata.X[adata.obs['is_empty'].values, :].sum(axis=0)).flatten()
+
+    sorted_vals = np.sort(adata.var['empty_counts'])[::-1]
+    sorted_vals = sorted_vals[sorted_vals > 0]
+    
+    plt.figure(figsize=(10, 4))
+    plt.plot(sorted_vals)
+    plt.xlabel("Gene rank")
+    plt.ylabel("Empty-droplet counts")
+    plt.title(f"Counts per gene in empty droplets (total genes: {adata.n_vars})")
+    plt.yscale("log")
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    if not show:
+        plt.close() 
+
+def plot_ambient_hat_vs_empty_fraction(adata_raw, adata_cellmender, log=False, remove_zeroes=False, lower_quantile_removed=None, upper_quantile_removed=None, out_path=None, show=True):
+    """
+    Plots ambient_hat from CellMender vs empty fraction from raw data.
+    """
+    if upper_quantile_removed is not None and (not isinstance(upper_quantile_removed, (int, float)) or not (0 < upper_quantile_removed < 1)):
+        raise ValueError("upper_quantile_removed must be a float between 0 and 1 (or None for no outlier removal).")
+    
+    if 'empty_fraction' not in adata_raw.var.columns:
+        total_empty_counts = adata_raw.var['empty_counts'].sum()
+        adata_raw.var['empty_fraction'] = adata_raw.var['empty_counts'] / total_empty_counts if total_empty_counts > 0 else 0
+
+    # intersection of genes
+    genes = adata_raw.var_names.intersection(adata_cellmender.var_names)
+
+    x = adata_raw.var.loc[genes, 'empty_fraction']
+    y = adata_cellmender.var.loc[genes, 'ambient_hat']
+
+    # # --- remove NaNs ---
+    # mask = ~(np.isnan(x) | np.isnan(y))
+    # x, y = x[mask], y[mask]
+
+    # --- optional outlier removal ---
+    if upper_quantile_removed is not None:
+        qx = np.quantile(x, upper_quantile_removed)
+        qy = np.quantile(y, upper_quantile_removed)
+        mask2 = (x <= qx) & (y <= qy)
+        x, y = x[mask2], y[mask2]
+    
+    if lower_quantile_removed is not None:
+        qx = np.quantile(x, lower_quantile_removed)
+        qy = np.quantile(y, lower_quantile_removed)
+        mask3 = (x >= qx) & (y >= qy)
+        x, y = x[mask3], y[mask3]
+    
+    if remove_zeroes:
+        mask4 = (x > 0) & (y > 0)
+        x, y = x[mask4], y[mask4]
+
+    # --- y = x line ---
+    mn = min(x.min(), y.min())
+    mx = max(x.max(), y.max())
+    plt.plot([mn, mx], [mn, mx], 'k--', alpha=0.3, lw=1)
+
+    # --- density via KDE ---
+    xy = np.vstack([x, y])
+    z = gaussian_kde(xy)(xy)
+
+    sc = plt.scatter(x, y, s=8, c=z, alpha=0.5, cmap="viridis")
+    cb = plt.colorbar(sc)
+    cb.set_label("Empty fraction")
+
+    # --- log scale if requested ---
+    if log:
+        plt.xscale("log")
+        plt.yscale("log")
+
+    plt.xlabel("Empty fraction (raw)")
+    plt.ylabel("Ambient_hat (cellmender)")
+    plt.title("Empty fraction vs ambient_hat")
+    plt.tight_layout()
+    if out_path:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
+    if not show:
+        plt.close() 
+
+
+
+
+
+
+
+
+def plot_per_cell_correlation_multi(
+    adata1_list,
+    adata2_list,
+    labels=None,
+    title="Per-cell Expression Correlation Distribution",
+    colors=None,
+    out_path=None,
+    show=True,
+    fill=False
+):
+    """
+    Compute and plot per-cell Pearson correlation curves (KDE) 
+    for multiple pairs of AnnData objects.
+    """
+
+    # --- Validation ---
+    if len(adata1_list) != len(adata2_list):
+        raise ValueError("adata1_list and adata2_list must have same length.")
+
+    n = len(adata1_list)
+    if labels is None:
+        labels = [f"set_{i+1}" for i in range(n)]
+
+    if (colors is not None) and (len(colors) != n):
+        raise ValueError("colors list must match number of datasets.")
+
+    if colors is None:
+        # default seaborn color cycle
+        colors = sns.color_palette("tab10", n)
+
+    # --- Collect correlations from each pair ---
+    corr_sets = []
+
+    for ad1, ad2 in zip(adata1_list, adata2_list):
+
+        # match intersection
+        ad1i, ad2i = take_adata_cell_gene_intersection(ad1, ad2)
+        X1 = ad1i.X
+        X2 = ad2i.X
+
+        correlations = []
+        for i in range(X1.shape[0]):
+            corr = sparse_row_pearson(X1[i, :], X2[i, :])
+            correlations.append(corr)
+
+        corr_sets.append(np.array(correlations))
+
+    # --- Plotting ---
+    plt.figure(figsize=(8, 6))
+
+    # Estimate maximum count for y-limits
+    max_count = 0
+    for values in corr_sets:
+        hist_counts, _ = np.histogram(values, bins=50, range=(0, 1))
+        max_count = max(max_count, hist_counts.max())
+
+    # Final y-limit with log-scale padding
+    y_max = 10 ** np.ceil(np.log10(max_count))
+
+    # Plot each KDE
+    for values, label, color in zip(corr_sets, labels, colors):
+        sns.kdeplot(
+            values,
+            bw_adjust=1,
+            fill=fill,
+            color=color,
+            label=label
+        )
+
+    plt.xlim(0, 1)
+    plt.ylim(1, y_max)
+    plt.yscale("log")
+    plt.xlabel("Cell Pearson Correlation")
+    plt.ylabel("Density (log scale)")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight")
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
+
+def plot_per_cell_difference_multi(
+    adata_raw_list,
+    adata_denoised_list,
+    labels=None,
+    colors=None,
+    bins=50,
+    title="Per-cell Difference Distribution: raw − denoised",
+    out_path=None,
+    show=True
+):
+    if len(adata_raw_list) != len(adata_denoised_list):
+        raise ValueError("adata_raw_list and adata_denoised_list must have same length.")
+
+    n = len(adata_raw_list)
+    if labels is None:
+        labels = [f"set_{i+1}" for i in range(n)]
+    if colors is None:
+        colors = sns.color_palette("tab10", n)
+
+    diff_sets = []
+
+    for ad_raw, ad_den in zip(adata_raw_list, adata_denoised_list):
+        ad_raw_i, ad_den_i = take_adata_cell_gene_intersection(ad_raw, ad_den)
+        X_raw = ad_raw_i.X
+        X_den = ad_den_i.X
+
+        if not sparse.issparse(X_raw) or not sparse.issparse(X_den):
+            raise ValueError("adata.X must be sparse.")
+
+        D = X_raw - X_den
+        row_sums = np.array(D.sum(axis=1)).ravel()
+        diff_sets.append(row_sums)
+
+    plt.figure(figsize=(8, 6))
+
+    for values, label, color in zip(diff_sets, labels, colors):
+        sns.histplot(
+            values,
+            bins=bins,
+            element="step",
+            fill=False,
+            stat="count",
+            color=color,
+            label=label
+        )
+
+    plt.yscale("log")
+    plt.xlabel("Per-cell difference sum: raw − denoised")
+    plt.ylabel("Number of cells (log)")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
+
+
+def plot_knee_multi(
+    adata_list,
+    labels=None,
+    colors=None,
+    title="Knee Plot (UMI Counts per Barcode)",
+    linewidth=2,
+    out_path=None,
+    filter_empty=False,
+    show=True
+):
+    """
+    Compute and plot knee curves for multiple AnnData objects.
+    A knee curve is defined as sorted descending per-cell UMI totals.
+
+    Parameters
+    ----------
+    adata_list : list of AnnData
+        List of AnnData objects.
+
+    labels : list of str (optional)
+        Names for each curve.
+
+    colors : list of colors (optional)
+        Colors for each curve.
+
+    title : str
+        Plot title.
+
+    linewidth : float
+        Line width for curves.
+
+    out_path : str (optional)
+        If provided, save figure.
+
+    show : bool
+        Whether to display the plot.
+
+    """
+    n = len(adata_list)
+
+    if labels is None:
+        labels = [f"adata_{i+1}" for i in range(n)]
+
+    if (colors is not None) and (len(colors) != n):
+        raise ValueError("colors list must match number of adatas.")
+
+    if colors is None:
+        colors = sns.color_palette("tab10", n)
+
+    plt.figure(figsize=(8, 6))
+
+    # ---- Generate curves ----
+    for adata, label, color in zip(adata_list, labels, colors):
+
+        if filter_empty:
+            if "is_empty" in adata.obs.columns:
+                adata = adata[~adata.obs["is_empty"]].copy()
+            else:
+                print("Warning: filter_empty=True but 'is_empty' column not found in adata.obs. Proceeding without filtering.")
+
+        X = adata.X
+
+        # Sparse-safe
+        if sparse.issparse(X):
+            row_sums = np.array(X.sum(axis=1)).ravel()
+        else:
+            row_sums = X.sum(axis=1)
+
+        knee = np.sort(row_sums)[::-1]              # descending
+        barcodes = np.arange(1, len(knee) + 1)      # rank axis
+
+        plt.plot(
+            barcodes,
+            knee,
+            color=color,
+            linewidth=linewidth,
+            label=label
+        )
+
+    # ---- Formatting ----
+    plt.xscale("log")
+    plt.yscale("log")
+    plt.xlabel("Barcode Rank (log)", fontsize=12)
+    plt.ylabel("Total UMI Counts (log)", fontsize=12)
+    plt.title(title, fontsize=14)
+    plt.legend()
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
+
+def plot_iterative_difference_counts(
+    adatas_dict,
+    threshold=0.0,
+    metric="cells",   # "cells" or "counts"
+    expected_cells=None,
+    colors=None,
+    title="Difference per Iteration",
+    out_path=None,
+    show=True
+):
+    """
+    Parameters
+    ----------
+    adatas_dict : dict
+        key -> list of AnnData objects (iterations)
+
+    threshold : float
+        Used only when metric="cells"
+
+    metric : {"cells", "counts"}
+        "cells"  -> count rows where |row_sum| > threshold
+        "counts" -> sum of absolute row differences
+
+    Returns
+    -------
+    diff_results : dict
+        key -> list of metric results for each adjacent iteration pair.
+    """
+
+    if metric not in ("cells", "counts", "number_of_cells"):
+        raise ValueError('metric must be "cells", "counts", or "number_of_cells"')
+
+    keys = list(adatas_dict.keys())
+
+    # --- Colors ---
+    if colors is None:
+        palette = sns.color_palette("tab10", len(keys))
+        colors = {k: c for k, c in zip(keys, palette)}
+
+    diff_results = {}
+    max_iter_count = 0
+
+    plt.figure(figsize=(8, 6))
+
+    # --- Compute metric for each method/key ---
+    for key in keys:
+        adata_list = adatas_dict[key]
+        results = []
+
+        for i in range(len(adata_list) - 1):
+            A = adata_list[i]
+            B = adata_list[i + 1]
+
+            Ai, Bi = take_adata_cell_gene_intersection(A, B)
+            X_A = Ai.X
+            X_B = Bi.X
+
+            if not sparse.issparse(X_A) or not sparse.issparse(X_B):
+                raise ValueError("AnnData.X must be sparse.")
+
+            D = X_A - X_B
+            row_sums = np.array(D.sum(axis=1)).ravel()
+
+            if metric == "cells":
+                # Count cells whose |difference| exceeds threshold
+                result = int(np.sum(np.abs(row_sums) > threshold))
+
+            elif metric == "counts":
+                # Total absolute difference
+                result = float(np.sum(np.abs(row_sums)))
+            
+            elif metric == "number_of_cells":
+                result = X_A.shape[0]
+
+            results.append(result)
+
+        diff_results[key] = results
+
+        # --- Plotting ---
+        x = np.arange(len(results))
+        max_iter_count = max(max_iter_count, len(results))
+
+        plt.plot(
+            x, results,
+            marker='o',
+            color=colors[key],
+            label=key
+        )
+
+    # --- Integer ticks ---
+    plt.xticks(
+        ticks=np.arange(max_iter_count),
+        labels=[str(i) for i in range(max_iter_count)],
+        fontsize=11
+    )
+
+    # --- Labels ---
+    if metric == "cells":
+        ylabel = f"# Cells With |Difference| > {threshold}"
+    elif metric == "counts":
+        ylabel = "Total Absolute Row-Sum Difference"
+    elif metric == "number_of_cells":
+        ylabel = "Total Number of Cells"
+    
+    if expected_cells is not None and metric in ("cells", "number_of_cells"):
+        # plot horizontal line at expected_cells
+        plt.axhline(y=expected_cells, color='gray', linestyle='--')
+        plt.text(x=(max_iter_count-1), y=expected_cells - 0.03*(plt.ylim()[1] - plt.ylim()[0]), s=f'Expected cells: {expected_cells}', fontsize=10, color='gray', ha='right')
+
+    plt.xlabel("Iteration Comparison (i → i+1)", fontsize=12)
+    plt.ylabel(ylabel, fontsize=12)
+    plt.ylim(bottom=0)
+    plt.title(title, fontsize=14)
+    plt.legend()
+    plt.grid(alpha=0.3)
+    plt.tight_layout()
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
+    return diff_results

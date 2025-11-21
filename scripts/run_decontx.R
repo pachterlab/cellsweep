@@ -3,7 +3,7 @@
 # --- Parse command-line arguments ---
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 4) {
-  cat("Usage: Rscript run_decontx.R <raw_tar_file_dir> <filtered_tar_file_dir> <sequencing_technology> <decontx_out_prefix>\n")
+  cat("Usage: Rscript run_decontx.R <raw_tar_file_dir> <filtered_tar_file_dir> <sequencing_technology> <decontx_out_prefix> [--prepend_sample_to_barcodes]\n")
   quit(status = 1)
 }
 
@@ -11,6 +11,7 @@ raw_tar_file_dir      <- args[1]
 filtered_tar_file_dir <- args[2]
 sequencing_technology <- toupper(args[3])
 decontx_out_prefix    <- args[4]
+prepend_sample_to_barcodes <- ifelse("--prepend_sample_to_barcodes" %in% args, TRUE, FALSE)
 
 # --- Load libraries ---
 suppressPackageStartupMessages({
@@ -55,7 +56,11 @@ sce.raw  <- load_cellranger(raw_tar_file_dir,      data_type = "raw",      techn
 
 # --- Standardize column and row names ---
 cat("Standardizing cell and gene names...\n")
-colnames(sce) <- paste(sce$sample, sce$cell_barcode, sep = "_")   #!!! might need to modify this line based on the dataset (if cell csv is empty after running)
+if (prepend_sample_to_barcodes) {
+  colnames(sce) <- paste(sce$sample, sce$cell_barcode, sep = "_")   #!!! might need to modify this line based on the dataset (if cell csv is empty after running)
+} else {
+  colnames(sce) <- sce$cell_barcode
+}
 rownames(sce) <- rowData(sce)$feature_name   #!!! might need to modify this line based on the dataset (if gene csv is empty after running)
 counts(sce) <- as(counts(sce), "dgCMatrix")
 
