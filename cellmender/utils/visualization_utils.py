@@ -1311,8 +1311,10 @@ def plot_iterative_difference_counts(
     # --- Labels ---
     if metric == "cells":
         ylabel = f"# Cells With |Difference| > {threshold}"
-    else:
+    elif metric == "counts":
         ylabel = "Total Absolute Row-Sum Difference"
+    elif metric == "number_of_cells":
+        ylabel = "Total Number of Cells"
 
     plt.xlabel("Iteration Comparison (i → i+1)", fontsize=12)
     plt.ylabel(ylabel, fontsize=12)

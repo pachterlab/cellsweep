@@ -73,9 +73,13 @@ def load_adata(adata, logger=None, verbose=0, quiet=False):
         logger = setup_logger(verbose=verbose, quiet=quiet)
     if isinstance(adata, str):
         if adata.endswith(".h5ad"):
+            if not os.path.exists(adata):
+                raise FileNotFoundError(f"File not found: {adata!r}")
             logger.info(f"Loading adata from {adata!r}")
             adata = ad.read_h5ad(adata)
         elif adata.endswith(".h5"):
+            if not os.path.exists(adata):
+                raise FileNotFoundError(f"File not found: {adata!r}")
             logger.info(f"Loading adata from {adata!r}")
             import scanpy as sc
             import h5py
