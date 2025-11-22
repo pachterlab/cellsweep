@@ -31,6 +31,17 @@ default_colors = [
     "#3D3D3D"
 ]
 
+def auto_bins(x):
+    x = np.asarray(x)
+    x = x[np.isfinite(x)]
+    q25, q75 = np.percentile(x, [25, 75])
+    iqr = q75 - q25
+    if iqr == 0:
+        return 20    # fallback
+    bin_width = 2 * iqr * (len(x) ** (-1/3))
+    bins = int((x.max() - x.min()) / bin_width)
+    return max(10, min(bins, 200))
+
 def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None, title: str = None, show: bool = True):
     """
     eg upset_data_dict: {
@@ -300,7 +311,7 @@ def plot_matrix_scatterplot(
 
     ax.set_xlabel(x_axis, fontsize=12)
     ax.set_ylabel(y_axis, fontsize=12)
-    ax.set_title(f"{y_axis} vs {x_axis} Cell×Gene Scatterplot", fontsize=14, fontweight='bold')
+    ax.set_title(f"{y_axis} vs {x_axis} {point_type} Scatterplot", fontsize=14, fontweight='bold')
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
 
@@ -410,12 +421,18 @@ def compute_sparse_pearson(
 
         return corrs
 
+def sparse_cosine(x, y):
+    # x and y are 1 × G sparse rows (CSR)
+    num = x.multiply(y).sum()
+    den = np.sqrt(x.multiply(x).sum()) * np.sqrt(y.multiply(y).sum())
+    return float(num / den) if den != 0 else 0.0
+
 # --------------------------------------------
 # Main per-cell correlation plotting function
 # --------------------------------------------
 def plot_per_cell_correlation(
     adata1, adata2,
-    bins=20,
+    bins=None,
     plot_type="cell",
     metric="cosine",
     title="Per-cell Expression Correlation Histogram",
@@ -435,15 +452,19 @@ def plot_per_cell_correlation(
 
     # Compute correlation row-by-row (sparse)
     if metric == "pearson":
+        x_label = f"{plot_type.capitalize()} Pearson Correlation"
         correlations = compute_sparse_pearson(X1, X2, mode=plot_type)
     elif metric == "cosine":
+        x_label = f"{plot_type.capitalize()} Cosine Similarity"
         from sklearn.metrics.pairwise import cosine_similarity
         if plot_type == "gene":
+            X1c = X1.tocsc()
+            X2c = X2.tocsc()
+
             for j in range(X1.shape[1]):
-                x_col = X1[:, j].T.tocsr()
-                y_col = X2[:, j].T.tocsr()
-                sim = cosine_similarity(x_col, y_col)[0, 0]
-                correlations.append(sim)
+                x_col = X1c[:, j].T  # CSC → 1×G
+                y_col = X2c[:, j].T
+                correlations.append(sparse_cosine(x_col, y_col))
         elif plot_type == "cell":
             for i in range(X1.shape[0]):
                 sim = cosine_similarity(X1[i, :], X2[i, :])[0, 0]
@@ -454,13 +475,15 @@ def plot_per_cell_correlation(
     correlations = np.array(correlations)
 
     # Plot
+    if not bins:
+        bins = int(2 * (len(correlations) ** (1/3)))
     y_max = 10 ** np.ceil(np.log10(len(correlations)))
     sns.histplot(correlations, bins=bins, color='steelblue')
 
     plt.xlim(0, 1)
-    plt.ylim(1, y_max)
+    # plt.ylim(0.75, y_max)
     plt.yscale("log")
-    plt.xlabel("Cell Pearson Correlation")
+    plt.xlabel(x_label)
     plt.ylabel("Number of cells")
     plt.title(title)
     plt.tight_layout()
@@ -472,7 +495,7 @@ def plot_per_cell_correlation(
     else:
         plt.show()
 
-def plot_per_cell_difference(adata_raw, adata_denoised, bins=10, plot_type="cell", tool_raw="raw", tool_processed="denoised", out_path=None, show=True):
+def plot_per_cell_difference(adata_raw, adata_denoised, bins=None, plot_type="cell", tool_raw="raw", tool_processed="denoised", out_path=None, show=True):
     """
     Compute D = X_raw − X_denoised (sparse), take per-row sums, and plot histogram.
     """
@@ -507,9 +530,12 @@ def plot_per_cell_difference(adata_raw, adata_denoised, bins=10, plot_type="cell
     # 4. Plot
     y_max = 10 ** np.ceil(np.log10(len(sums)))
 
+    if not bins:
+        bins = int(2 * (len(sums) ** (1/3)))
+
     sns.histplot(sums, bins=bins, color='steelblue')
     plt.yscale("log")
-    plt.ylim(1, y_max)
+    # plt.ylim(0.75, y_max)
     plt.ylabel("Number of cells", fontsize=12)
     plt.title(f"Per-{plot_type.capitalize()} Difference Histogram: {tool_raw} − {tool_processed}", fontsize=14)
     plt.tight_layout()
@@ -1140,25 +1166,24 @@ def plot_ambient_hat_vs_empty_fraction(adata_raw, adata_cellmender, log=False, r
         plt.close() 
 
 
-
-
-
-
-
-
 def plot_per_cell_correlation_multi(
     adata1_list,
     adata2_list,
+    plot_type="cell",
     labels=None,
-    title="Per-cell Expression Correlation Distribution",
+    title="Expression Correlation Distribution",
     colors=None,
     out_path=None,
     show=True,
-    fill=False
+    fill=False,
 ):
     """
-    Compute and plot per-cell Pearson correlation curves (KDE) 
+    Compute and plot Pearson correlation curves (KDE)
     for multiple pairs of AnnData objects.
+
+    plot_type:
+        "cell" → row-wise correlation (per cell)
+        "gene" → column-wise correlation (per gene)
     """
 
     # --- Validation ---
@@ -1166,6 +1191,7 @@ def plot_per_cell_correlation_multi(
         raise ValueError("adata1_list and adata2_list must have same length.")
 
     n = len(adata1_list)
+
     if labels is None:
         labels = [f"set_{i+1}" for i in range(n)]
 
@@ -1173,52 +1199,68 @@ def plot_per_cell_correlation_multi(
         raise ValueError("colors list must match number of datasets.")
 
     if colors is None:
-        # default seaborn color cycle
         colors = sns.color_palette("tab10", n)
 
-    # --- Collect correlations from each pair ---
+    if plot_type not in ("cell", "gene"):
+        raise ValueError("plot_type must be 'cell' or 'gene'")
+
+    # --- Collect correlations for each pair ---
     corr_sets = []
 
     for ad1, ad2 in zip(adata1_list, adata2_list):
-
         # match intersection
         ad1i, ad2i = take_adata_cell_gene_intersection(ad1, ad2)
-        X1 = ad1i.X
-        X2 = ad2i.X
+        X1, X2 = ad1i.X, ad2i.X
 
         correlations = []
-        for i in range(X1.shape[0]):
-            corr = sparse_row_pearson(X1[i, :], X2[i, :])
-            correlations.append(corr)
+
+        if plot_type == "cell":
+            # row-wise
+            for i in range(X1.shape[0]):
+                corr = sparse_row_pearson(X1[i, :], X2[i, :])
+                correlations.append(corr)
+
+        elif plot_type == "gene":
+            # column-wise: convert to CSC for fast slicing
+            X1c = X1.tocsc()
+            X2c = X2.tocsc()
+
+            for j in range(X1c.shape[1]):
+                # slice column j → 1×G row vector
+                corr = sparse_row_pearson(X1c[:, j].T, X2c[:, j].T)
+                correlations.append(corr)
 
         corr_sets.append(np.array(correlations))
 
     # --- Plotting ---
     plt.figure(figsize=(8, 6))
 
-    # Estimate maximum count for y-limits
+    # Estimate maximum count for y-limits (for log scale)
     max_count = 0
     for values in corr_sets:
         hist_counts, _ = np.histogram(values, bins=50, range=(0, 1))
         max_count = max(max_count, hist_counts.max())
 
-    # Final y-limit with log-scale padding
     y_max = 10 ** np.ceil(np.log10(max_count))
 
-    # Plot each KDE
+    # KDE curves
     for values, label, color in zip(corr_sets, labels, colors):
         sns.kdeplot(
             values,
             bw_adjust=1,
             fill=fill,
             color=color,
-            label=label
+            label=label,
         )
 
     plt.xlim(0, 1)
     plt.ylim(1, y_max)
     plt.yscale("log")
-    plt.xlabel("Cell Pearson Correlation")
+
+    # axis label changes dynamically
+    xlabel = "Cell Pearson Correlation" if plot_type == "cell" else "Gene Pearson Correlation"
+    plt.xlabel(xlabel)
+
     plt.ylabel("Density (log scale)")
     plt.title(title)
     plt.legend()
@@ -1226,6 +1268,7 @@ def plot_per_cell_correlation_multi(
 
     if out_path:
         plt.savefig(out_path, bbox_inches="tight")
+
     if not show:
         plt.close()
     else:
@@ -1236,8 +1279,9 @@ def plot_per_cell_difference_multi(
     adata_raw_list,
     adata_denoised_list,
     labels=None,
+    plot_type="cell",
     colors=None,
-    bins=50,
+    bins=100,
     title="Per-cell Difference Distribution: raw − denoised",
     out_path=None,
     show=True
@@ -1262,8 +1306,13 @@ def plot_per_cell_difference_multi(
             raise ValueError("adata.X must be sparse.")
 
         D = X_raw - X_den
-        row_sums = np.array(D.sum(axis=1)).ravel()
-        diff_sets.append(row_sums)
+        if plot_type == "cell":
+            sums = np.array(D.sum(axis=1)).ravel()
+        elif plot_type == "gene":
+            sums = np.array(D.sum(axis=0)).ravel()
+        elif plot_type == "matrix":
+            sums = np.array(D.sum()).ravel()
+        diff_sets.append(sums)
 
     plt.figure(figsize=(8, 6))
 
