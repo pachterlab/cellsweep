@@ -166,151 +166,53 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
     else:
         plt.close()
 
-# def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), s=20, scale="log", alpha=0.6, cmap='viridis', x_axis='adata1', y_axis='adata2', sample_frac=1.0, seed=42, out_path=None, show=True):
-#     adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
-
-#     X1 = adata1.X.toarray() if hasattr(adata1.X, "toarray") else np.array(adata1.X)
-#     X2 = adata2.X.toarray() if hasattr(adata2.X, "toarray") else np.array(adata2.X)
-
-#     # Flatten matrices to 1D arrays
-#     x = np.array(X1).flatten()
-#     y = np.array(X2).flatten()
-
-#     if sample_frac < 1.0:
-#         np.random.seed(seed)
-#         n = int(len(x) * sample_frac)
-#         idx = np.random.choice(len(x), n, replace=False)
-#         x, y = x[idx], y[idx]
-#     else:
-#         print(f"Using all {len(x)} points for scatterplot. This may be slow if the dataset is large.")
-    
-#     if scale == "log":
-#         # Replace 0 values with 0.5 (so they appear at log2(0.5) = -1)
-#         x = np.where(x < 0.5, 0.5, x)
-#         y = np.where(y < 0.5, 0.5, y)
-    
-#     # Calculate density using KDE
-#     xy = np.vstack([x, y])
-#     z = gaussian_kde(xy)(xy)
-    
-#     # Sort by density so densest points are plotted last
-#     idx = z.argsort()
-#     x, y, z = x[idx], y[idx], z[idx]
-    
-#     # Create figure
-#     fig, ax = plt.subplots(figsize=figsize)
-    
-#     # Create scatterplot
-#     scatter = ax.scatter(x, y, c=z, s=s, alpha=alpha, cmap=cmap, 
-#                         edgecolors='none')
-    
-#     # Set equal ranges for x and y axes
-#     all_vals = np.concatenate([x, y])
-#     vmin, vmax = all_vals.min(), all_vals.max()
-#     margin_factor = 1.1
-#     ax.set_xlim(vmin / margin_factor, vmax * margin_factor)
-#     ax.set_ylim(vmin / margin_factor, vmax * margin_factor)
-
-#     if scale == "log":
-#         # Set log scale for both axes
-#         ax.set_xscale('log', base=2)
-#         ax.set_yscale('log', base=2)
-
-#         # Define tick locations at powers of 2
-#         xticks = np.logspace(np.floor(np.log2(vmin)), np.ceil(np.log2(vmax)), num=int(np.ceil(np.log2(vmax)) - np.floor(np.log2(vmin))) + 1, base=2)
-#         yticks = np.logspace(np.floor(np.log2(vmin)), np.ceil(np.log2(vmax)), num=int(np.ceil(np.log2(vmax)) - np.floor(np.log2(vmin))) + 1, base=2)
-#         ax.set_xticks(xticks)
-#         ax.set_yticks(yticks)
-
-#         # Optionally format tick labels as 2^n
-#         ax.get_xaxis().set_major_formatter(plt.FuncFormatter(lambda val, _: f"$2^{{{int(np.log2(val))}}}$"))
-#         ax.get_yaxis().set_major_formatter(plt.FuncFormatter(lambda val, _: f"$2^{{{int(np.log2(val))}}}$"))
-    
-#     # Add diagonal line for reference
-#     ax.plot([vmin / margin_factor, vmax * margin_factor], 
-#             [vmin / margin_factor, vmax * margin_factor], 
-#             'k--', alpha=0.3, linewidth=1, zorder=0)
-    
-#     # Labels and formatting
-#     ax.set_xlabel(x_axis, fontsize=12)
-#     ax.set_ylabel(y_axis, fontsize=12)
-#     ax.set_title(f"{y_axis} vs {x_axis} CellxGene Scatterplot", fontsize=14, fontweight='bold')
-#     ax.set_aspect('equal')
-#     ax.grid(True, alpha=0.3)
-    
-#     # Add colorbar
-#     cbar = plt.colorbar(scatter, ax=ax)
-#     cbar.set_label('Density', fontsize=11)
-    
-#     plt.tight_layout()
-#     if out_path is not None:
-#         plt.savefig(out_path, dpi=300)
-#     if show:
-#         plt.show()
-#     else:
-#         plt.close()
-
-
-# def plot_per_cell_correlation(adata1, adata2, title="Per-cell Expression Correlation", out_path=None, show=True):
-#     # adata1, adata2 = adata1.copy(), adata2.copy()
-#     adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
-
-#     X1 = adata1.X.toarray() if hasattr(adata1.X, "toarray") else np.array(adata1.X)
-#     X2 = adata2.X.toarray() if hasattr(adata2.X, "toarray") else np.array(adata2.X)
-
-#     correlations = np.array([
-#         pearsonr(X1[i, :], X2[i, :])[0]
-#         for i in range(X1.shape[0])
-#     ])
-
-#     y_max = 10 ** np.ceil(np.log10(len(correlations)))
-
-#     sns.histplot(correlations, bins=10, color='steelblue')
-#     plt.xlim(0, 1)
-#     plt.ylim(1, y_max)
-#     plt.ylabel("Number of cells")
-#     plt.yscale("log")
-#     plt.title(title)
-#     plt.tight_layout()
-#     if out_path:
-#         plt.savefig(out_path, bbox_inches="tight")
-#     if not show:
-#         plt.close()
-
 def plot_matrix_scatterplot(
     adata1, adata2,
-    figsize=(8, 8), scale="log", point_type="scatter_with_density", alpha=0.6,
+    figsize=(8, 8), scale="log", point_type="matrix", density_type="scatter_with_density", alpha=0.6,
     cmap='viridis', x_axis='adata1', y_axis='adata2', out_path=None, show=True
 ):
     # -------------------------
     # 1. Match cells + genes
     # -------------------------
+    if adata1 is None or adata2 is None:
+        print("One of the adatas is None, skipping matrix scatterplot.")
+        return 
     adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
-    X1 = adata1.X
-    X2 = adata2.X
+    
+    if point_type == "matrix":
+        X1 = adata1.X
+        X2 = adata2.X
 
-    if not sparse.issparse(X1) or not sparse.issparse(X2):
-        raise ValueError("This function requires sparse AnnData.X matrices.")
+        if not sparse.issparse(X1) or not sparse.issparse(X2):
+            raise ValueError("This function requires sparse AnnData.X matrices.")
 
-    n_cells, n_genes = X1.shape
-    N = n_cells * n_genes  # flattened total size
+        n_cells, n_genes = X1.shape
+        N = n_cells * n_genes  # flattened total size
 
-    def get_all_nonzero_pairs(X1, X2):
-        X1 = X1.tocsr()
-        X2 = X2.tocsr()
+        def get_all_nonzero_pairs(X1, X2):
+            X1 = X1.tocsr()
+            X2 = X2.tocsr()
 
-        # Extract all nonzero (row, col, value) in X1
-        rows = np.repeat(np.arange(X1.shape[0]), np.diff(X1.indptr))
-        cols = X1.indices
-        x_vals = X1.data
+            # Extract all nonzero (row, col, value) in X1
+            rows = np.repeat(np.arange(X1.shape[0]), np.diff(X1.indptr))
+            cols = X1.indices
+            x_vals = X1.data
 
-        # Extract matching values from X2 (vectorized)
-        y_vals = X2[rows, cols].A1
+            # Extract matching values from X2 (vectorized)
+            y_vals = X2[rows, cols].A1
 
-        return x_vals, y_vals
+            return x_vals, y_vals
 
-    print("Extracting all nonzero pairs from sparse matrices...")
-    x, y = get_all_nonzero_pairs(X1, X2)
+        print("Extracting all nonzero pairs from sparse matrices...")
+        x, y = get_all_nonzero_pairs(X1, X2)
+    elif point_type == "cell":
+        x = np.array(adata1.X.sum(axis=1)).ravel()
+        y = np.array(adata2.X.sum(axis=1)).ravel()
+    elif point_type == "gene":
+        x = np.array(adata1.X.sum(axis=0)).ravel()
+        y = np.array(adata2.X.sum(axis=0)).ravel()
+    else:
+        raise ValueError(f"Unknown point_type '{point_type}'. Use 'matrix', 'cell', or 'gene'.")
 
     # -------------------------
     # 4. Log handling
@@ -325,17 +227,17 @@ def plot_matrix_scatterplot(
     print("Creating scatterplot...")
     fig, ax = plt.subplots(figsize=figsize)
 
-    if point_type == "2d_hist":
+    if density_type == "2d_hist":
         print("Calculating 2D histogram...")
         h = ax.hist2d(x, y, bins=2000, cmap=cmap, norm=LogNorm())
         cbar = plt.colorbar(h[3], ax=ax)
         cbar.set_label("count density")
         # hb = ax.hexbin(x, y, gridsize=4000, cmap=cmap, norm=LogNorm(), mincnt=1)
         # plt.colorbar(hb, ax=ax).set_label("density")
-    elif point_type == "scatter":
+    elif density_type == "scatter":
         print("Calculating scatterplot...")
         ax.scatter(x, y, c='steelblue', s=2, alpha=0.05, edgecolors='none')
-    elif point_type == "scatter_with_density":
+    elif density_type == "scatter_with_density":
         print("Calculating scatterplot...")
         import mpl_scatter_density
         from astropy.visualization import LogStretch, AsinhStretch
@@ -350,7 +252,7 @@ def plot_matrix_scatterplot(
         cbar.set_ticks([1, 10, 100, 1000, 10000, 100000])
         cbar.set_ticklabels([r"$10^{{{}}}$".format(int(np.log10(tick))) for tick in cbar.get_ticks()])
 
-    elif point_type == "scatter_with_kde":
+    elif density_type == "scatter_with_kde":
         print("Calculating scatterplot...")
         xy = np.vstack([x, y])
         z = gaussian_kde(xy)(xy)
@@ -361,7 +263,7 @@ def plot_matrix_scatterplot(
         cbar = plt.colorbar(sc, ax=ax)
         cbar.set_label("Density", fontsize=11)
     else:
-        raise ValueError(f"Unknown point_type '{point_type}'. Use '2d_hist' or 'scatter'.")
+        raise ValueError(f"Unknown density_type '{density_type}'. Use '2d_hist', 'scatter', 'scatter_with_density', or 'scatter_with_kde'.")
 
     all_vals = np.concatenate([x, y])
     vmin, vmax = all_vals.min(), all_vals.max()
@@ -469,6 +371,44 @@ def sparse_row_pearson(x, y):
 
     return num / denom
 
+def compute_sparse_pearson(
+    X1, X2,
+    mode="cell"
+):
+    """
+    Compute Pearson correlations for either:
+        mode="cell": row-wise (per cell), compares X1[i,:] vs X2[i,:]
+        mode="gene": column-wise (per gene), compares X1[:,j] vs X2[:,j]
+
+    Returns
+    -------
+    numpy array of correlations (length = n_cells or n_genes)
+    """
+
+    if mode not in ("cell", "gene"):
+        raise ValueError("mode must be 'cell' or 'gene'")
+
+    if mode == "cell":
+        n = X1.shape[0]  # n_cells
+        corrs = np.zeros(n)
+
+        for i in range(n):
+            corrs[i] = sparse_row_pearson(X1[i, :], X2[i, :])
+
+        return corrs
+
+    else:  # mode == "gene"
+        # convert to CSC for fast column slicing
+        X1_c = X1.tocsc()
+        X2_c = X2.tocsc()
+
+        n = X1.shape[1]  # n_genes
+        corrs = np.zeros(n)
+
+        for j in range(n):
+            corrs[j] = sparse_row_pearson(X1_c[:, j].T, X2_c[:, j].T)
+
+        return corrs
 
 # --------------------------------------------
 # Main per-cell correlation plotting function
@@ -476,10 +416,15 @@ def sparse_row_pearson(x, y):
 def plot_per_cell_correlation(
     adata1, adata2,
     bins=20,
+    plot_type="cell",
+    metric="cosine",
     title="Per-cell Expression Correlation Histogram",
     out_path=None,
     show=True
 ):
+    if adata1 is None or adata2 is None:
+        print("One of the adatas is None, skipping per-cell correlation plot.")
+        return
 
     # Match intersection of cells + genes
     adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
@@ -489,9 +434,22 @@ def plot_per_cell_correlation(
     correlations = []
 
     # Compute correlation row-by-row (sparse)
-    for i in range(X1.shape[0]):
-        corr = sparse_row_pearson(X1[i, :], X2[i, :])
-        correlations.append(corr)
+    if metric == "pearson":
+        correlations = compute_sparse_pearson(X1, X2, mode=plot_type)
+    elif metric == "cosine":
+        from sklearn.metrics.pairwise import cosine_similarity
+        if plot_type == "gene":
+            for j in range(X1.shape[1]):
+                x_col = X1[:, j].T.tocsr()
+                y_col = X2[:, j].T.tocsr()
+                sim = cosine_similarity(x_col, y_col)[0, 0]
+                correlations.append(sim)
+        elif plot_type == "cell":
+            for i in range(X1.shape[0]):
+                sim = cosine_similarity(X1[i, :], X2[i, :])[0, 0]
+                correlations.append(sim)
+    else:
+        raise ValueError("Unknown metric")
 
     correlations = np.array(correlations)
 
@@ -514,10 +472,13 @@ def plot_per_cell_correlation(
     else:
         plt.show()
 
-def plot_per_cell_difference(adata_raw, adata_denoised, bins=10, tool="denoised", out_path=None, show=True):
+def plot_per_cell_difference(adata_raw, adata_denoised, bins=10, plot_type="cell", tool_raw="raw", tool_processed="denoised", out_path=None, show=True):
     """
     Compute D = X_raw − X_denoised (sparse), take per-row sums, and plot histogram.
     """
+    if adata_raw is None or adata_denoised is None:
+        print("One of the adatas is None, skipping per-cell difference plot.")
+        return
 
     # 1. Match cells + genes
     adata_raw, adata_denoised = take_adata_cell_gene_intersection(adata_raw, adata_denoised)
@@ -531,20 +492,26 @@ def plot_per_cell_difference(adata_raw, adata_denoised, bins=10, tool="denoised"
 
     # 2. Compute sparse difference
     D = X_raw - X_denoised  # remains sparse, no densification
-    print(f"Total differences for {tool}: {D.sum():,}")
+    total_matrix_difference = D.sum()
+    print(f"Total differences between {tool_raw} and {tool_processed}: {total_matrix_difference:,}")
 
     # 3. Per-cell (per-row) sums
     #    sum(axis=1) returns a (n,1) sparse matrix, convert safely:
-    row_sums = np.array(D.sum(axis=1)).ravel()
+    if plot_type == "cell":
+        sums = np.array(D.sum(axis=1)).ravel()
+    elif plot_type == "gene":
+        sums = np.array(D.sum(axis=0)).ravel()
+    elif plot_type == "matrix":
+        sums = np.array(total_matrix_difference).ravel()
 
     # 4. Plot
-    y_max = 10 ** np.ceil(np.log10(len(row_sums)))
+    y_max = 10 ** np.ceil(np.log10(len(sums)))
 
-    sns.histplot(row_sums, bins=bins, color='steelblue')
+    sns.histplot(sums, bins=bins, color='steelblue')
     plt.yscale("log")
     plt.ylim(1, y_max)
     plt.ylabel("Number of cells", fontsize=12)
-    plt.title(f"Per-cell Difference Histogram: raw − {tool}", fontsize=14)
+    plt.title(f"Per-{plot_type.capitalize()} Difference Histogram: {tool_raw} − {tool_processed}", fontsize=14)
     plt.tight_layout()
 
     if out_path:
@@ -554,7 +521,7 @@ def plot_per_cell_difference(adata_raw, adata_denoised, bins=10, tool="denoised"
     else:
         plt.show()
 
-    return row_sums  # return values if user wants to inspect/plot further
+    return sums  # return values if user wants to inspect/plot further
 
 def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column="celltype", wompwomp_env="wompwomp_env", wompwomp_path="wompwomp", verbose=0):
     logger = setup_logger(verbose=verbose)
