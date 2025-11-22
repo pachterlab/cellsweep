@@ -9,6 +9,7 @@ from scipy.stats import gaussian_kde
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.scale import SymmetricalLogScale
+from matplotlib.colors import LogNorm
 import seaborn as sns
 import scanpy as sc
 import logging
@@ -19,7 +20,7 @@ import anndata as ad
 import torch
 import tarfile
 from upsetplot import from_contents, UpSet
-from .data_utils import take_adata_cell_gene_intersection
+from .data_utils import take_adata_cell_gene_intersection, infer_empty_droplets
 from .logger_utils import setup_logger
 
 default_colors = [
@@ -277,9 +278,8 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
 
 def plot_matrix_scatterplot(
     adata1, adata2,
-    figsize=(8, 8), s=20, scale="log", alpha=0.6,
-    cmap='viridis', x_axis='adata1', y_axis='adata2',
-    max_points=1000, seed=42, out_path=None, show=True
+    figsize=(8, 8), scale="log", point_type="2d_hist", alpha=0.6,
+    cmap='viridis', x_axis='adata1', y_axis='adata2', out_path=None, show=True
 ):
     # -------------------------
     # 1. Match cells + genes
@@ -294,51 +294,22 @@ def plot_matrix_scatterplot(
     n_cells, n_genes = X1.shape
     N = n_cells * n_genes  # flattened total size
 
-    # -------------------------
-    # 2. Sample flattened positions
-    # -------------------------
-    if max_points is not None and max_points < N:
-        rng = np.random.default_rng(seed)
-        flat_idx = rng.choice(N, size=max_points, replace=False)
-    else:
-        print(f"Using all {N:,} values – may be slow.")
-        flat_idx = np.arange(N)
+    def get_all_nonzero_pairs(X1, X2):
+        X1 = X1.tocsr()
+        X2 = X2.tocsr()
 
-    # Convert flattened index → (row, col)
-    rows = flat_idx // n_genes
-    cols = flat_idx % n_genes
+        # Extract all nonzero (row, col, value) in X1
+        rows = np.repeat(np.arange(X1.shape[0]), np.diff(X1.indptr))
+        cols = X1.indices
+        x_vals = X1.data
 
-    # -------------------------
-    # 3. Safe sparse value extraction
-    # -------------------------
-    def get_values_from_sparse(X, rows, cols):
-        """
-        Efficiently extracts X[row, col] from a sparse matrix.
-        Handles:
-          - scalar returns
-          - 1×1 sparse
-          - 1×k sparse
-        Never densifies the full matrix.
-        """
-        out = np.empty(len(rows), dtype=float)
-        unique_rows = np.unique(rows)
+        # Extract matching values from X2 (vectorized)
+        y_vals = X2[rows, cols].A1
 
-        for r in unique_rows:
-            mask = (rows == r)
-            c_sub = cols[mask]
-            sub = X[r, c_sub]
+        return x_vals, y_vals
 
-            if sparse.issparse(sub):
-                sub_dense = sub.toarray().ravel()
-            else:
-                sub_dense = np.array(sub).ravel()  # scalar, or small ndarray
-
-            out[mask] = sub_dense
-
-        return out
-
-    x = get_values_from_sparse(X1, rows, cols)
-    y = get_values_from_sparse(X2, rows, cols)
+    print("Extracting all nonzero pairs from sparse matrices...")
+    x, y = get_all_nonzero_pairs(X1, X2)
 
     # -------------------------
     # 4. Log handling
@@ -348,21 +319,39 @@ def plot_matrix_scatterplot(
         y = np.where(y < 0.5, 0.5, y)
 
     # -------------------------
-    # 5. KDE density
-    # -------------------------
-    xy = np.vstack([x, y])
-    z = gaussian_kde(xy)(xy)
-
-    # Sort by density (lowest first → densest points plotted last)
-    order = z.argsort()
-    x, y, z = x[order], y[order], z[order]
-
-    # -------------------------
     # 6. Plotting
     # -------------------------
-    fig, ax = plt.subplots(figsize=figsize)
+    print("Creating scatterplot...")
+    # fig, ax = plt.subplots(figsize=figsize)  #!!!
+    fig = plt.figure()  #!!!
 
-    sc = ax.scatter(x, y, c=z, s=s, alpha=alpha, cmap=cmap, edgecolors='none')
+    if point_type == "2d_hist":
+        print("Calculating 2D histogram...")
+        h = ax.hist2d(x, y, bins=2000, cmap=cmap, norm=LogNorm())
+        cbar = plt.colorbar(h[3], ax=ax)
+        cbar.set_label("count density")
+        # hb = ax.hexbin(x, y, gridsize=4000, cmap=cmap, norm=LogNorm(), mincnt=1)
+        # plt.colorbar(hb, ax=ax).set_label("density")
+    elif point_type == "scatter":
+        print("Calculating scatterplot...")
+        ax.scatter(x, y, c='steelblue', s=2, alpha=0.05, edgecolors='none')
+    elif point_type == "scatter_with_density":
+        print("Calculating scatterplot...")
+        import mpl_scatter_density
+        ax = fig.add_subplot(1, 1, 1, projection='scatter_density')
+        ax.scatter_density(x, y)
+    elif point_type == "scatter_with_kde":
+        print("Calculating scatterplot...")
+        xy = np.vstack([x, y])
+        z = gaussian_kde(xy)(xy)
+        # Sort by density (lowest first → densest points plotted last)
+        order = z.argsort()
+        x, y, z = x[order], y[order], z[order]
+        sc = ax.scatter(x, y, c=z, s=20, alpha=alpha, cmap=cmap, edgecolors='none')
+        cbar = plt.colorbar(sc, ax=ax)
+        cbar.set_label("Density", fontsize=11)
+    else:
+        raise ValueError(f"Unknown point_type '{point_type}'. Use '2d_hist' or 'scatter'.")
 
     all_vals = np.concatenate([x, y])
     vmin, vmax = all_vals.min(), all_vals.max()
@@ -402,9 +391,6 @@ def plot_matrix_scatterplot(
     ax.set_title(f"{y_axis} vs {x_axis} Cell×Gene Scatterplot", fontsize=14, fontweight='bold')
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
-
-    cbar = plt.colorbar(sc, ax=ax)
-    cbar.set_label("Density", fontsize=11)
 
     plt.tight_layout()
     if out_path is not None:
@@ -764,22 +750,28 @@ def identify_human_and_mouse_cells(adata, human_prefix="hg19_", mouse_prefix="mm
     adata.obs['genome'] = np.where(adata.obs['human_counts_total'] >= adata.obs['mouse_counts_total'], 'hg19', 'mm10')  # predict genome
     return adata
 
-def plot_cross_species_histogram(adata, out_path_human=None, out_path_mouse=None, show=True):
+def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell_set=None, out_path_human=None, out_path_mouse=None, show=True):
     if adata is None:
         return
 
     if "human_counts_total" not in adata.obs.columns or "mouse_counts_total" not in adata.obs.columns:
         adata = identify_human_and_mouse_cells(adata)
+    
+    if isinstance(doublet_cell_set, set):  # remove doublets if provided
+        adata = adata[~adata.obs_names.isin(doublet_cell_set)].copy()
 
     fig, ax = plt.subplots(figsize=(6, 4))
 
-    # --- Mouse cells: plotting human_counts_total in red ---
+    # --- Mouse cells: plotting human_counts_total in blue ---
     sns.histplot(
         data=adata.obs[adata.obs["genome"] == "mm10"],
         x="human_counts_total",
         bins=100,
         alpha=0.6,
+        linewidth=1.5,
         color="blue",
+        element="step",
+        fill=False,
         ax=ax,
         label="Mouse cell human gene contamination"
     )
@@ -790,7 +782,10 @@ def plot_cross_species_histogram(adata, out_path_human=None, out_path_mouse=None
         x="mouse_counts_total",
         bins=100,
         alpha=0.6,
+        linewidth=1.5,
         color="gray",
+        element="step",
+        fill=False,
         ax=ax,
         label="Human cell mouse gene contamination"
     )
@@ -798,6 +793,7 @@ def plot_cross_species_histogram(adata, out_path_human=None, out_path_mouse=None
     ax.set_xlabel("Cross-species counts")
     ax.set_ylabel("Frequency")
     ax.set_yscale("log")
+    ax.set_title(f"Cross-species Gene Counts in {processed_name} Data")
     ax.legend(title="Genome", loc="upper right")
 
     if out_path_mouse or out_path_human:
@@ -1383,3 +1379,55 @@ def plot_iterative_difference_counts(
         plt.show()
 
     return diff_results
+
+
+def detect_doublets_human_mouse(adata_raw, fraction_doublet=0.15, plot_empty=False, umi_cutoff=None, expected_cells=None, out_path=None, show=True):
+    if "genome" not in adata_raw.var.columns:
+        raise ValueError("The adata_raw.var must contain a 'genome' column indicating the genome for each gene.")
+    if not set(adata_raw.var['genome']).issuperset({'hg19', 'mm10'}):
+        raise ValueError("The adata_raw.var['genome'] column must contain both 'hg19' and 'mm10' values.")
+    
+    adata_raw_original = adata_raw.copy()
+    if not plot_empty and "is_empty" not in adata_raw.obs.columns:
+        adata_raw = infer_empty_droplets(adata_raw, method="threshold", umi_cutoff=umi_cutoff, expected_cells=expected_cells)  # adds adata.obs["is_empty"]
+        adata_raw = adata_raw[~adata_raw.obs["is_empty"]].copy()
+    
+    if "hg19_total_counts" not in adata_raw.obs.columns:
+        adata_raw.obs['hg19_total_counts'] = np.asarray(adata_raw[:, adata_raw.var['genome'] == 'hg19'].X.sum(axis=1)).ravel()
+    if "mm10_total_counts" not in adata_raw.obs.columns:
+        adata_raw.obs['mm10_total_counts'] = np.asarray(adata_raw[:, adata_raw.var['genome'] == 'mm10'].X.sum(axis=1)).ravel()
+
+    if "total_counts" not in adata_raw.obs.columns:
+        adata_raw.obs["total_counts"] = adata_raw.obs["hg19_total_counts"] + adata_raw.obs["mm10_total_counts"]
+    if "frac_human" not in adata_raw.obs.columns:
+        adata_raw.obs["frac_human"] = adata_raw.obs["hg19_total_counts"] / adata_raw.obs["total_counts"]
+    if "frac_mouse" not in adata_raw.obs.columns:
+        adata_raw.obs["frac_mouse"] = 1 - adata_raw.obs["frac_human"]
+    
+    adata_raw.obs["is_doublet"] = (adata_raw.obs["frac_human"] > fraction_doublet) & (adata_raw.obs["frac_human"] < (1 - fraction_doublet))
+    # adata_raw = adata_raw[~adata_raw.obs["is_doublet"]].copy()
+    sns.scatterplot(
+        x=adata_raw.obs["hg19_total_counts"] + 1,
+        y=adata_raw.obs["mm10_total_counts"] + 1,
+        hue=adata_raw.obs["is_doublet"]
+    )
+    plt.xscale("log")
+    plt.yscale("log")
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
+    if not plot_empty:
+        adata_raw_original.obs["is_doublet"] = (
+            adata_raw.obs["is_doublet"]
+            .reindex(adata_raw_original.obs_names)   # align indices
+            .fillna(False)                           # missing → False
+        )
+    else:
+        adata_raw_original = adata_raw.copy()
+
+    return adata_raw_original

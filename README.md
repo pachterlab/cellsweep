@@ -8,7 +8,7 @@ pip install cellmender  #!!! not yet uploaded on pypi - see below
 
 ### To run notebooks:
 ```
-pip install cellmender[analysis]  #!!! not yet uploaded on pypi - see below
+pip install cellmender[analysis]  # pip install cellmender["analysis"] for Mac users  #!!! not yet uploaded on pypi - see below
 ```
 
 ### To remake figures from the paper:
