@@ -54,7 +54,9 @@ analysis = [
     "scanpy",
     "seaborn",
     "matplotlib",
-    "celltypist"
+    "celltypist",
+    "mpl-scatter-density",
+    "astropy"
 ]
 
 [project.urls]

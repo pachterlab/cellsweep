@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import re
+import matplotlib
 import numpy as np
 from scipy.stats import gaussian_kde
 import pandas as pd
@@ -278,7 +279,7 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
 
 def plot_matrix_scatterplot(
     adata1, adata2,
-    figsize=(8, 8), scale="log", point_type="2d_hist", alpha=0.6,
+    figsize=(8, 8), scale="log", point_type="scatter_with_density", alpha=0.6,
     cmap='viridis', x_axis='adata1', y_axis='adata2', out_path=None, show=True
 ):
     # -------------------------
@@ -322,8 +323,7 @@ def plot_matrix_scatterplot(
     # 6. Plotting
     # -------------------------
     print("Creating scatterplot...")
-    # fig, ax = plt.subplots(figsize=figsize)  #!!!
-    fig = plt.figure()  #!!!
+    fig, ax = plt.subplots(figsize=figsize)
 
     if point_type == "2d_hist":
         print("Calculating 2D histogram...")
@@ -338,8 +338,18 @@ def plot_matrix_scatterplot(
     elif point_type == "scatter_with_density":
         print("Calculating scatterplot...")
         import mpl_scatter_density
+        from astropy.visualization import LogStretch, AsinhStretch
+        from astropy.visualization.mpl_normalize import ImageNormalize
+        norm = ImageNormalize(vmin=0., vmax=100_000, stretch=LogStretch(a=100_000))  # big a for more log-like
+        ax.remove()
         ax = fig.add_subplot(1, 1, 1, projection='scatter_density')
-        ax.scatter_density(x, y)
+        density = ax.scatter_density(x, y, norm=norm, cmap=cmap)
+        # fig.colorbar(density, label='Number of points per pixel')
+        cbar = plt.colorbar(density, ax=ax)
+        cbar.set_label("Density", fontsize=11)
+        cbar.set_ticks([1, 10, 100, 1000, 10000, 100000])
+        cbar.set_ticklabels([r"$10^{{{}}}$".format(int(np.log10(tick))) for tick in cbar.get_ticks()])
+
     elif point_type == "scatter_with_kde":
         print("Calculating scatterplot...")
         xy = np.vstack([x, y])
