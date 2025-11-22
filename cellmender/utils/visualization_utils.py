@@ -814,7 +814,7 @@ def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell
     if not show:
         plt.close()
 
-def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", show_marginal_ticks=False, show_point_movement=False, max_points=None, seed=42, out_path=None, show=True):    
+def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", marginal_color_number=4, show_marginal_ticks=False, show_point_movement=False, max_points=None, seed=42, out_path=None, show=True):    
     if adata_processed is None:
         return  # nothing to plot
     
@@ -840,13 +840,42 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
     human_processed = adata_processed.obs["human_counts_total"].values + 1
     mouse_processed = adata_processed.obs["mouse_counts_total"].values + 1
 
-    df = pd.DataFrame({
-        "x": np.concatenate([human_raw, human_processed]),
-        "y": np.concatenate([mouse_raw, mouse_processed]),
-        "group": (["raw"] * len(human_raw)) + ([processed_name] * len(human_processed))
-    })
+    if marginal_color_number == 2:
+        df = pd.DataFrame({
+            "x": np.concatenate([human_raw, human_processed]),
+            "y": np.concatenate([mouse_raw, mouse_processed]),
+            "group": (["raw"] * len(human_raw)) + ([processed_name] * len(human_processed))
+        })
+        palette = {
+            "raw": "#a6c8ff",         # light blue
+            processed_name: "#0047b3",   # dark blue
+        }
+    elif marginal_color_number == 4:
+        if "genome" not in adata_raw.obs.columns or "genome" not in adata_processed.obs.columns:
+            raise ValueError("Both adata_raw and adata_processed must have 'genome' column in .obs for 4-color plotting.")
+    
+        genomes_raw = adata_raw.obs["genome"].values
+        genomes_processed = adata_processed.obs["genome"].values
+        genomes = np.concatenate([genomes_raw, genomes_processed])
+        raw_processed = (["raw"] * len(human_raw) + ["processed"] * len(human_processed))
+        
+        df = pd.DataFrame({
+            "x": np.concatenate([human_raw, human_processed]),
+            "y": np.concatenate([mouse_raw, mouse_processed]),
+            "group": [f"{'human' if g == 'hg19' else 'mouse'}_{rp}" for g, rp in zip(genomes, raw_processed)]
+        })
 
-    g = sns.JointGrid(data=df, x="x", y="y", hue="group", palette={"raw": "gray", processed_name: "blue"}, marginal_ticks=show_marginal_ticks)
+        palette = {
+            "human_raw": "#a6c8ff",         # light blue
+            "human_processed": "#0047b3",   # dark blue
+            "mouse_raw": "#ffd1a6",         # light orange
+            "mouse_processed": "#cc5500",   # dark orange
+        }
+
+    else:
+        raise ValueError("marginal_color_number must be either 2 or 4")
+
+    g = sns.JointGrid(data=df, x="x", y="y", hue="group", palette=palette, marginal_ticks=show_marginal_ticks)
 
     if show_point_movement:
         for xr, yr, xp, yp in zip(human_raw, mouse_raw, human_processed, mouse_processed):
