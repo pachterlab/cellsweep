@@ -814,7 +814,7 @@ def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell
     if not show:
         plt.close()
 
-def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", marginal_color_number=4, show_marginal_ticks=False, show_point_movement=False, max_points=None, seed=42, out_path=None, show=True):    
+def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", fill_histogram=True, marginal_color_number=4, bin_number=20, show_marginal_ticks=False, show_point_movement=False, max_points=None, seed=42, out_path=None, show=True):    
     if adata_processed is None:
         return  # nothing to plot
     
@@ -875,61 +875,193 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
     else:
         raise ValueError("marginal_color_number must be either 2 or 4")
 
-    g = sns.JointGrid(data=df, x="x", y="y", hue="group", palette=palette, marginal_ticks=show_marginal_ticks)
+    # --- Create JointGrid ---
+    g = sns.JointGrid(
+        data=df,
+        x="x", y="y",
+        hue="group",
+        palette=palette,
+        marginal_ticks=show_marginal_ticks
+    )
+    
+    #? apologies for the massive blocks
+    if marginal_type == "histogram" and fill_histogram == False:
+        # =============================
+        #   Movement lines BELOW points
+        # =============================
+        if show_point_movement:
+            for xr, yr, xp, yp in zip(human_raw, mouse_raw, human_processed, mouse_processed):
+                g.ax_joint.plot([xr, xp], [yr, yp],
+                                color="lightgray", alpha=0.25,
+                                linewidth=0.4, zorder=0)
 
-    if show_point_movement:
-        for xr, yr, xp, yp in zip(human_raw, mouse_raw, human_processed, mouse_processed):
-            g.ax_joint.plot(
-                [xr, xp],
-                [yr, yp],
-                color="lightgray",
-                alpha=0.4,
-                linewidth=0.5,
-                zorder=1
+        # =============================
+        #   Scatter (on top)
+        # =============================
+        sns.scatterplot(
+            data=df,
+            x="x", y="y",
+            hue="group",
+            palette=palette,
+            ax=g.ax_joint,
+            s=20,
+            edgecolor="white",
+            zorder=5
+        )
+
+        # =============================
+        #   Marginals
+        # =============================
+        if marginal_type == "histogram":
+            sns.histplot(
+                data=df,
+                x="x",
+                hue="group",
+                palette=palette,
+                ax=g.ax_marg_x,
+                bins=np.logspace(np.log10(df["x"].values.min()), np.log10(df["x"].values.max()), bin_number),
+                fill=False,
+                element="step",
+                linewidth=1.2
             )
-    
-    # enforce square plot
-    min_val = 0.8
-    max_val = max(g.ax_joint.get_xlim()[1], g.ax_joint.get_ylim()[1])
-    g.ax_joint.set_xlim(min_val, max_val)
-    g.ax_joint.set_ylim(min_val, max_val)
-    g.ax_joint.set_aspect('equal', adjustable='box')
+            sns.histplot(
+                data=df,
+                y="y",
+                hue="group",
+                palette=palette,
+                ax=g.ax_marg_y,
+                bins=np.logspace(np.log10(df["y"].values.min()), np.log10(df["y"].values.max()), bin_number),
+                fill=False,
+                element="step",
+                linewidth=1.2
+            )
 
-    # plot y=x
-    g.ax_joint.plot([min_val, max_val], [min_val, max_val], color='gray', linestyle='--', linewidth=1, zorder=0)
+        elif marginal_type == "kde":
+            sns.kdeplot(
+                data=df,
+                x="x",
+                hue="group",
+                palette=palette,
+                ax=g.ax_marg_x,
+                fill=False,
+                linewidth=1.5
+            )
+            sns.kdeplot(
+                data=df,
+                y="y",
+                hue="group",
+                palette=palette,
+                ax=g.ax_marg_y,
+                fill=False,
+                linewidth=1.5
+            )
 
-    # Main scatter axes log scale
-    g.ax_joint.set_xscale("log")
-    g.ax_joint.set_yscale("log")
+        # =============================
+        #  Remove marginal legends
+        # =============================
+        if g.ax_marg_x.get_legend():
+            g.ax_marg_x.get_legend().remove()
+        if g.ax_marg_y.get_legend():
+            g.ax_marg_y.get_legend().remove()
 
-    g.ax_joint.set_xlabel("Human counts + 1")
-    g.ax_joint.set_ylabel("Mouse counts + 1")
+        # =============================
+        #  Final clean legend
+        # =============================
+        handles, labels = g.ax_joint.get_legend_handles_labels()
+        g.ax_joint.legend(handles, labels, loc="lower left", title="group")
+        
+        # =============================
+        # Axes scaling + equal limits
+        # =============================
+        min_val = 0.8
+        max_val = max(df["x"].max(), df["y"].max())
+        g.ax_joint.set_xlim(min_val, max_val)
+        g.ax_joint.set_ylim(min_val, max_val)
+        g.ax_joint.set_aspect("equal", adjustable="box")
 
-    if marginal_type == "kde":
-        g.plot(sns.scatterplot, sns.kdeplot, alpha=.7, linewidth=.5)
-    elif marginal_type == "histogram":
-        g.plot(sns.scatterplot, sns.histplot, alpha=.7, linewidth=.5)
-    
-    leg = g.ax_joint.legend(loc="lower left")
+        # y = x line
+        g.ax_joint.plot([min_val, max_val], [min_val, max_val],
+                        color="gray", linestyle="--", linewidth=1)
 
-    # ensure side histograms have same max height    
-    x_hist_patches = g.ax_marg_x.patches
-    y_hist_patches = g.ax_marg_y.patches
+        # log scale
+        g.ax_joint.set_xscale("log")
+        g.ax_joint.set_yscale("log")
 
-    max_height = 0
-    if x_hist_patches:
-        max_height = max(max_height, max(p.get_height() for p in x_hist_patches))
-    if y_hist_patches:
-        max_height = max(max_height, max(p.get_width() for p in y_hist_patches))  # note: width for y-hist
+        g.ax_joint.set_xlabel("Human counts + 1")
+        g.ax_joint.set_ylabel("Mouse counts + 1")
 
-    max_height *= 1.05
-    g.ax_marg_x.set_ylim(0, max_height)
-    g.ax_marg_y.set_xlim(0, max_height)
-    
+        # ensure marginals have same height
+        g.ax_marg_x.relim()
+        g.ax_marg_x.autoscale_view()
+        g.ax_marg_y.relim()
+        g.ax_marg_y.autoscale_view()
+
+        # Extract current heights
+        x_max = g.ax_marg_x.get_ylim()[1]
+        y_max = g.ax_marg_y.get_xlim()[1]
+
+        # Use the global max so both marginals match visually
+        max_height = max(x_max, y_max)
+
+        # Apply uniform height
+        g.ax_marg_x.set_ylim(0, max_height)
+        g.ax_marg_y.set_xlim(0, max_height)
+    else:  #? apologies for the massive blocks
+        if show_point_movement:
+            for xr, yr, xp, yp in zip(human_raw, mouse_raw, human_processed, mouse_processed):
+                g.ax_joint.plot(
+                    [xr, xp],
+                    [yr, yp],
+                    color="lightgray",
+                    alpha=0.4,
+                    linewidth=0.5,
+                    zorder=1
+                )
+        
+        # enforce square plot
+        min_val = 0.8
+        max_val = max(g.ax_joint.get_xlim()[1], g.ax_joint.get_ylim()[1])
+        g.ax_joint.set_xlim(min_val, max_val)
+        g.ax_joint.set_ylim(min_val, max_val)
+        g.ax_joint.set_aspect('equal', adjustable='box')
+
+        # plot y=x
+        g.ax_joint.plot([min_val, max_val], [min_val, max_val], color='gray', linestyle='--', linewidth=1, zorder=0)
+
+        # Main scatter axes log scale
+        g.ax_joint.set_xscale("log")
+        g.ax_joint.set_yscale("log")
+
+        g.ax_joint.set_xlabel("Human counts + 1")
+        g.ax_joint.set_ylabel("Mouse counts + 1")
+
+        if marginal_type == "kde":
+            g.plot(sns.scatterplot, sns.kdeplot, alpha=.7, linewidth=.5)
+        elif marginal_type == "histogram":
+            g.plot(sns.scatterplot, sns.histplot, alpha=.7, linewidth=.5)
+        
+        leg = g.ax_joint.legend(loc="lower left")
+
+        # ensure side histograms have same max height    
+        x_hist_patches = g.ax_marg_x.patches
+        y_hist_patches = g.ax_marg_y.patches
+
+        max_height = 0
+        if x_hist_patches:
+            max_height = max(max_height, max(p.get_height() for p in x_hist_patches))
+        if y_hist_patches:
+            max_height = max(max_height, max(p.get_width() for p in y_hist_patches))  # note: width for y-hist
+
+        max_height *= 1.05
+        g.ax_marg_x.set_ylim(0, max_height)
+        g.ax_marg_y.set_xlim(0, max_height)
+
+
     if out_path:
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
     if not show:
         plt.close()
+
 
 def print_top_empty_genes(adata, top_n=10, out_path=None):
     if 'empty_counts' not in adata.var.columns:
