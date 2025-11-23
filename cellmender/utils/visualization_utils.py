@@ -961,7 +961,7 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
         #  Final clean legend
         # =============================
         handles, labels = g.ax_joint.get_legend_handles_labels()
-        g.ax_joint.legend(handles, labels, loc="lower left", title="group")
+        g.ax_joint.legend(handles, labels, loc="lower left", title=processed_name)
         
         # =============================
         # Axes scaling + equal limits
@@ -1033,7 +1033,7 @@ def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed
         elif marginal_type == "histogram":
             g.plot(sns.scatterplot, sns.histplot, alpha=.7, linewidth=.5)
         
-        leg = g.ax_joint.legend(loc="lower left")
+        leg = g.ax_joint.legend(loc="lower left", title=processed_name)
 
         # ensure side histograms have same max height    
         x_hist_patches = g.ax_marg_x.patches
