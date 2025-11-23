@@ -56,7 +56,8 @@ analysis = [
     "matplotlib",
     "celltypist",
     "mpl-scatter-density",
-    "astropy"
+    "astropy",
+    "sklearn"
 ]
 
 [project.urls]

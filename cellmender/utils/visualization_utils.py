@@ -13,6 +13,7 @@ from matplotlib.scale import SymmetricalLogScale
 from matplotlib.colors import LogNorm
 import seaborn as sns
 import scanpy as sc
+from sklearn.metrics.pairwise import cosine_similarity
 import logging
 from scipy import io, sparse
 from datetime import datetime
@@ -456,7 +457,6 @@ def plot_per_cell_correlation(
         correlations = compute_sparse_pearson(X1, X2, mode=plot_type)
     elif metric == "cosine":
         x_label = f"{plot_type.capitalize()} Cosine Similarity"
-        from sklearn.metrics.pairwise import cosine_similarity
         if plot_type == "gene":
             X1c = X1.tocsc()
             X2c = X2.tocsc()
