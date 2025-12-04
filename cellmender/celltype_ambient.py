@@ -807,21 +807,24 @@ def denoise_count_matrix(
     adata_out : str, default "adata_straightened.h5ad"
         Path to write the denoised AnnData object (must end with `.h5ad`).
 
-    max_iter : int, default 40
+    max_iter : int, default 150
         Maximum number of EM iterations.
 
-    eps_gamma: float, default 0.02
-        Initital cell-type softening to allow continuous cell-type estimation
+    cell_ambient_clip : Tuple, default (0.01, 0.9)
+        Constraint on the value of the initial alpha_n (percent ambient contamination) for each cell.
+    
+    beta : float, default 0.1
+        Initial beta (percent bulk contamination) value for each cell.
 
-    eps : float, default 1e-15
+    eps : float, default 1e-12
         Numerical stability constant to prevent division by zero or log(0).
 
     log_eps : float, default 1e-300
         Numerical stability constant to prevent division by zero or log(0).
         Lower than eps for log values
 
-    dirichlet_lambda: float, default 0.01
-        Pseudocount
+    dirichlet_lambda: float, default 1e-6
+        Pseudocount. Somtimes used for clipping
 
     integer_out : bool, default False
         If True, rounds denoised counts to nearest integer before saving.
@@ -847,9 +850,6 @@ def denoise_count_matrix(
 
     expected_cells : int | None, default None
         Expected number of real cells, used when estimating thresholds.
-        
-    cell_ambient_fraction : float, default 0.01
-        Default ambient fraction assigned to each cell when missing.
 
     empty_droplet_celltype_name : str, default "Empty Droplet"
         Name used in `celltype` to denote empty droplets.
