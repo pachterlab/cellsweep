@@ -9,11 +9,13 @@ import scipy.sparse as sp
 from pydantic import validate_call, Field, ConfigDict
 import numba
 from numba import njit, prange
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Tuple
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types  # , plot_cellmender_likelihood_over_epochs
 import matplotlib.pyplot as plt
 from ipywidgets import IntSlider, VBox, Output
 from IPython.display import display
+from sklearn.isotonic import IsotonicRegression
+from scipy.interpolate import UnivariateSpline
 import seaborn as sns
 
 
@@ -103,6 +105,40 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     adata.uns["celltype_profile_genes"] = np.array(adata.var_names)  # G-length array
 
     return adata
+
+def init_alpha(adata, a, eps, dirichlet_lambda, alpha_clip):
+
+    T = np.asarray(adata.X.sum(axis=1)).squeeze()
+    o = adata.X / (T[:, None] + dirichlet_lambda)           # N x G normalized
+    s = np.asarray((o * a[:, None]).sum(axis=1))      # ambient score per droplet
+
+    # 3. predictor x = log(T+1)
+    x = np.asarray(np.log(T + 1.0))
+
+    # 4. Fit monotone decreasing smoother r(x):
+    #    do isotonic regression on (x, s) with decreasing=True
+    iso = IsotonicRegression(increasing=False, out_of_bounds='clip')
+    s_iso = iso.fit_transform(x, s)      # piecewise-constant monotone fit
+
+    # 5. Optional: smooth the isotonic fit with a small spline to remove steps
+    #    fit spline on sorted x
+    order = np.argsort(x)
+    xs = x[order]; ys = s_iso[order]
+    spl = UnivariateSpline(xs, ys, s=1.0)   # s controls smoothing; tune as needed
+    r_x = lambda t: spl(np.log(t+1.0))
+
+    # 6. anchors for linear rescaling to [0,1]
+    #    s_max = median s among small T (e.g., bottom 5%); s_min = median s among top 5%
+    low_mask = T <= np.percentile(T, 5)
+    high_mask = T >= np.percentile(T, 95)
+    s_max = max(np.median(s[low_mask]), dirichlet_lambda)
+    s_min = min(np.median(s[high_mask]), s_max - dirichlet_lambda)
+
+    # 7. compute alpha_n (clamped)
+    alpha = (r_x(T) - s_min) / (s_max - s_min + eps)
+    alpha = np.clip(alpha, alpha_clip[0], alpha_clip[1])
+    
+    return alpha
 
 def cdf_vals(arr, n_pts=200):
     """Return (xs, ys) for empirical CDF plotting (sorted unique + linear interpolation)."""
@@ -515,7 +551,7 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 
         alpha = A_n / np.maximum(A_n + Ccell_n, eps)
         # Valid range enforcement
-        alpha[real_mask] = np.clip(alpha[real_mask], 1e-6, 0.95)
+        alpha[real_mask] = np.clip(alpha[real_mask], eps, 1-eps)
         if freeze_empty:
             alpha[~real_mask] = 1.0
 
@@ -529,12 +565,17 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
             a = a_numer / max(a_numer.sum(), eps)
 
         if freeze_empty:
-            alpha_median = np.median(alpha[real_mask])
+            alpha_eff = alpha[real_mask]
         else:
-            alpha_median = np.median(alpha)
+            alpha_eff = alpha
+
+        alpha_median = np.median(alpha_eff)
+        alpha_mean = np.mean(alpha_eff)
+        alpha_max = np.max(alpha_eff)
+        alpha_min = np.min(alpha_eff)
 
         if verbose:
-            logger.info(f"EM Iter {it:3d}: ll={ll:.3f} mean_alpha={alpha_median:.6f} beta={beta:.6f}")
+            logger.info(f"EM Iter {it:3d}: ll={ll:.3f} min_alpha={alpha_min:.4f} mean_alpha={alpha_mean:.4f} median_alpha={alpha_median:.4f} max_alpha={alpha_max:.4f} beta={beta:.6f}")
 
         if it > 1 and abs((ll - prev_ll) / max(abs(prev_ll), 1.0)) < tol:
             if verbose:
@@ -711,21 +752,21 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
 def denoise_count_matrix(
     adata: str | ad.AnnData,
     adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = "adata_straightened.h5ad",
-    max_iter: Annotated[int, Field(gt=0)] = 40,
-    eps_gamma: Annotated[int, Field(ge=0)] = 0.02,
-    beta: Annotated[float, Field(ge=0, le=1)] = 0.03,
-    eps: Annotated[float, Field(gt=0)] = 1e-15,
+    max_iter: Annotated[int, Field(gt=0)] = 150,
+    eps_gamma: Annotated[int, Field(ge=0)] = 0,
+    cell_ambient_clip: Tuple[Annotated[float, Field(ge=0, le=1)], Annotated[float, Field(ge=0, le=1)]] = (0.01, 0.9),
+    beta: Annotated[float, Field(ge=0, le=1)] = 0.1,
+    eps: Annotated[float, Field(gt=0)] = 1e-12,
     log_eps: Annotated[float, Field(gt=0)] = 1e-300,
-    dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 0.1,
+    dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 1e-6,
     integer_out: bool = False,
     threads: Optional[Annotated[int, Field(gt=0)]] = 1,
     fixed_celltype: bool = False,
     freeze_empty: bool = True,
-    freeze_ambient_profile: bool = False,
+    freeze_ambient_profile: bool = True,
     empty_droplet_method: str = "threshold",
     umi_cutoff: Optional[Annotated[int, Field(ge=0)]] = None,
     expected_cells: Optional[Annotated[int, Field(ge=0)]] = None,
-    cell_ambient_fraction: Annotated[float, Field(ge=0, le=1)] = 0.01,
     empty_droplet_celltype_name: str = "Empty Droplet",
     tol: Optional[Annotated[float, Field(ge=0)]] = 1e-6,
     random_state: Optional[Annotated[int, Field(ge=0)]] = 42,
@@ -921,8 +962,8 @@ def denoise_count_matrix(
     # initial alpha
     if "cell_ambient_fraction" not in adata.obs.columns:
         logger.info("adata.obs does not have 'cell_ambient_fraction'. Setting to `cell_ambient_fraction` argument.")
-        adata.obs.loc[real_mask, "cell_ambient_fraction"] = cell_ambient_fraction
-        adata.obs.loc[~real_mask, "cell_ambient_fraction"] = 1.0
+        adata.obs["cell_ambient_fraction"] = init_alpha(adata, a, eps, dirichlet_lambda, cell_ambient_clip)
+        adata.obs.loc[~real_mask, "cell_ambient_fraction"] = 1.
     alpha = np.asarray(adata.obs["cell_ambient_fraction"].copy(), dtype=float).ravel()
     alpha = np.clip(alpha, eps, 1.0 - eps)
 
@@ -934,6 +975,7 @@ def denoise_count_matrix(
     beta = float(beta)
     m_raw = np.array(C.sum(axis=0)).ravel().astype(float)
     m_global = (m_raw + dirichlet_lambda) / (m_raw.sum() + G * dirichlet_lambda)
+
 
     alpha = alpha.astype(np.float64)
     a = a.astype(np.float64)
