@@ -18,42 +18,6 @@ from sklearn.isotonic import IsotonicRegression
 from scipy.interpolate import UnivariateSpline
 import seaborn as sns
 
-
-#* take the mean expression of each gene across all empty droplets, and normalize to sum to 1.
-def infer_gene_ambient_fraction(adata, empty_droplet_method="threshold", dirichlet_lambda=0.1, umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
-    """
-    input: adata with adata.obs: is_empty (optional)
-    output: adata with adata.obs: is_empty, and adata.var: ambient_fraction
-      - is_empty: boolean indicating whether each cell is an empty droplet or not. If not present, it will be inferred using infer_empty_droplets().
-      - ambient_fraction: fraction of ambient RNA comprised by each gene, computed as the mean expression of that gene across all empty droplets divided by the mean expression across all cells. This is added to adata.var as a new column named "ambient_fraction".
-    """
-    if not logger:
-        logger = setup_logger(verbose=verbose, quiet=quiet)
-
-    # adata = adata.copy()
-    # Ensure we have is_empty
-    if "is_empty" not in adata.obs:
-        logger.info("Inferring empty droplets since 'is_empty' not found in adata.obs.")
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
-
-    is_empty = adata.obs["is_empty"].values
-
-    X = adata.X
-    if sp.issparse(X):
-        X = X.tocsr()
-
-    X_empty = X[is_empty,:]
-    G = X.shape[1]
-
-    a_raw = np.array(X_empty.sum(axis=0)).ravel().astype(float)
-    ambient_fraction = (a_raw + dirichlet_lambda) / (a_raw.sum() + G * dirichlet_lambda)
-
-
-    adata.var["ambient_fraction"] = ambient_fraction
-
-    logger.info("Added 'ambient_fraction' to adata.var.")
-    return adata
-
 #* Take the mean expression of each gene across all cells of a given cell type, and normalize to sum to 1.
 def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
     """
@@ -68,19 +32,19 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
 
     if celltype_key not in adata.obs:
         raise KeyError(f"{celltype_key!r} not found in adata.obs")
-    
-    # adata = adata.copy()
 
     if "is_empty" not in adata.obs.columns:
         logger.info("Inferring empty droplets since 'is_empty' not found in adata.obs.")
         adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
+
+    is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
 
     # Extract matrix and group info
     X = adata.X
     if sp.issparse(X):
         X = X.tocsr()  # efficient row access
 
-    celltypes = adata.obs[celltype_key].astype("category")
+    celltypes = adata.obs.loc[~is_empty, celltype_key].astype("category")
     unique_cts = celltypes.cat.categories
 
     # Preallocate array
@@ -88,7 +52,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
 
     # Compute mean expression per cell type
     for i, ct in enumerate(unique_cts):
-        mask = (celltypes == ct).values
+        mask = (adata.obs[celltype_key] == ct).values
         n_cells = mask.sum()
         if n_cells == 0:
             continue
@@ -105,40 +69,6 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     adata.uns["celltype_profile_genes"] = np.array(adata.var_names)  # G-length array
 
     return adata
-
-def init_alpha(adata, a, eps, dirichlet_lambda, alpha_clip):
-
-    T = np.asarray(adata.X.sum(axis=1)).squeeze()
-    o = adata.X / (T[:, None] + dirichlet_lambda)           # N x G normalized
-    s = np.asarray((o * a[:, None]).sum(axis=1))      # ambient score per droplet
-
-    # 3. predictor x = log(T+1)
-    x = np.asarray(np.log(T + 1.0))
-
-    # 4. Fit monotone decreasing smoother r(x):
-    #    do isotonic regression on (x, s) with decreasing=True
-    iso = IsotonicRegression(increasing=False, out_of_bounds='clip')
-    s_iso = iso.fit_transform(x, s)      # piecewise-constant monotone fit
-
-    # 5. Optional: smooth the isotonic fit with a small spline to remove steps
-    #    fit spline on sorted x
-    order = np.argsort(x)
-    xs = x[order]; ys = s_iso[order]
-    spl = UnivariateSpline(xs, ys, s=1.0)   # s controls smoothing; tune as needed
-    r_x = lambda t: spl(np.log(t+1.0))
-
-    # 6. anchors for linear rescaling to [0,1]
-    #    s_max = median s among small T (e.g., bottom 5%); s_min = median s among top 5%
-    low_mask = T <= np.percentile(T, 5)
-    high_mask = T >= np.percentile(T, 95)
-    s_max = max(np.median(s[low_mask]), dirichlet_lambda)
-    s_min = min(np.median(s[high_mask]), s_max - dirichlet_lambda)
-
-    # 7. compute alpha_n (clamped)
-    alpha = (r_x(T) - s_min) / (s_max - s_min + eps)
-    alpha = np.clip(alpha, alpha_clip[0], alpha_clip[1])
-    
-    return alpha
 
 def cdf_vals(arr, n_pts=200):
     """Return (xs, ys) for empirical CDF plotting (sorted unique + linear interpolation)."""
@@ -453,7 +383,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
 
     return ambient_vals, bulk_vals, cell_vals, numer_gamma, A_n, ll_row, M_row
 
-def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G, 
               max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
               eps, dirichlet_lambda, 
               log_eps, verbose, logger, freeze_ambient_profile, debug):
@@ -560,10 +490,14 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         beta = M_total / np.maximum(total_counts, eps)
 
         if not freeze_ambient_profile:
-            # update ambient profile
-            a_numer += dirichlet_lambda
-            a = a_numer / max(a_numer.sum(), eps)
-
+            for i in range(3):
+                denom = np.maximum(a, eps)
+                R = (u[:, None] * p) / denom[None, :]
+                u = (R * a_numer[None, :]).sum(axis=1) + dirichlet_lambda
+                total = np.maximum(u.sum(), eps)
+                u = u / total
+                a = u @ p    # shape (G,)
+                
         if freeze_empty:
             alpha_eff = alpha[real_mask]
         else:
@@ -607,7 +541,7 @@ def sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
             "a_tracker": a_tracker, 
             "p_tracker": p_tracker}
 
-def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
+def dense_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G,
              max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
              eps, dirichlet_lambda,
              log_eps, verbose, logger, freeze_ambient_profile, debug):
@@ -712,9 +646,12 @@ def dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G,
         beta = float(M_total/np.maximum(total_counts,eps))
 
         if not freeze_ambient_profile:
-            # update ambient profile a
-            a = (a_numer + dirichlet_lambda)
-            a = a / max(a.sum(), eps)
+            for i in range(3):
+                R = (u[:,None] * p) / a[None,:]   # shape K x G
+                u = (R * a_numer[None,:]).sum(axis=1) + dirichlet_lambda
+                u /= u.sum()
+                a = u @ p
+
 
         if verbose and logger is not None:
             logger.info(f"EM Iter {it:3d}: ll={ll:.3f} beta={beta:.6f}")
@@ -754,7 +691,7 @@ def denoise_count_matrix(
     adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = "adata_straightened.h5ad",
     max_iter: Annotated[int, Field(gt=0)] = 150,
     eps_gamma: Annotated[int, Field(ge=0)] = 0,
-    cell_ambient_clip: Tuple[Annotated[float, Field(ge=0, le=1)], Annotated[float, Field(ge=0, le=1)]] = (0.01, 0.9),
+    init_alpha: Annotated[float, Field(ge=0, le=1)] = 0.9,
     beta: Annotated[float, Field(ge=0, le=1)] = 0.1,
     eps: Annotated[float, Field(gt=0)] = 1e-12,
     log_eps: Annotated[float, Field(gt=0)] = 1e-300,
@@ -810,8 +747,8 @@ def denoise_count_matrix(
     max_iter : int, default 150
         Maximum number of EM iterations.
 
-    cell_ambient_clip : Tuple, default (0.01, 0.9)
-        Constraint on the value of the initial alpha_n (percent ambient contamination) for each cell.
+    init_alpha : float, default 0.9
+       Initial value of alpha_n for each cell.
     
     beta : float, default 0.1
         Initial beta (percent bulk contamination) value for each cell.
@@ -904,25 +841,16 @@ def denoise_count_matrix(
         adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff,
                                      expected_cells=expected_cells, verbose=verbose, quiet=quiet, logger=logger)
 
-    if "ambient_fraction" not in adata.var.columns:
-        logger.info("Inferring gene ambient fractions.")
-        adata = infer_gene_ambient_fraction(adata, empty_droplet_method=empty_droplet_method,
-                                            dirichlet_lambda=dirichlet_lambda,
-                                            verbose=verbose, quiet=quiet, logger=logger)
-
     if "celltype_profile" not in adata.uns or "celltype_names" not in adata.uns:
         logger.info("Inferring celltype profiles.")
         adata = infer_celltype_profile(adata, celltype_key="celltype",
                                        empty_droplet_method=empty_droplet_method,
                                        verbose=verbose, quiet=quiet, logger=logger)
-
+            
     adata.layers["raw"] = adata.X.copy()
     C = adata.X
     N, G = C.shape
     K = adata.uns["celltype_profile"].shape[0]
-
-    # ambient profile from var
-    a = np.asarray(adata.var["ambient_fraction"], dtype=float).ravel()
 
     # empty mask
     is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
@@ -930,8 +858,12 @@ def denoise_count_matrix(
     Nr = real_mask.sum()
 
     # count parameters
-    number_of_parameters = Nr + 1 + (Nr * K) + (K * G)  # alpha_i (Nr), beta (1), gamma_type (Nr * K), p_k (K * G)
-    logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (alpha_i: {Nr:,}, beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
+    if freeze_ambient_profile:
+        number_of_parameters = 1 + (K * G)  # beta (1), gamma_type (Nr * K), p_k (K * G)
+        logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
+    else:
+        number_of_parameters = K + 1 + (Nr * K) + (K * G)  # u, beta (1), gamma_type (Nr * K), p_k (K * G)
+        logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (u: {K:,}, beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
 
     # celltype mapping
     z_true = adata.obs["celltype"].copy()
@@ -959,10 +891,33 @@ def denoise_count_matrix(
     if freeze_empty:
         gamma[~real_mask, :] = 0.0
 
+    if "ambient" not in adata.var: 
+        if freeze_ambient_profile:
+            logger.info("Inferring the gene ambient profile from empty droplets.")
+            # Ensure we have is_empty
+            if "is_empty" not in adata.obs:
+                logger.info("Inferring empty droplets since 'is_empty' not found in adata.obs.")
+                
+                adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
+                is_empty = adata.obs["is_empty"].values
+
+            C_empty = C[is_empty,:]
+
+            a_raw = np.array(C_empty.sum(axis=0)).ravel().astype(float)
+            a = (a_raw + dirichlet_lambda) / (a_raw.sum() + G * dirichlet_lambda)
+        else:
+            logger.info("Inferring the gene ambient profile from cell-types")
+            u = gamma.sum(axis=0) / gamma.sum()
+            a = u @ p
+        adata.var["ambient"] = a
+    else:
+        a = np.asarray(adata.var["ambient"])
+        u = gamma.sum(axis=0) / gamma.sum()
+        
     # initial alpha
     if "cell_ambient_fraction" not in adata.obs.columns:
         logger.info("adata.obs does not have 'cell_ambient_fraction'. Setting to `cell_ambient_fraction` argument.")
-        adata.obs["cell_ambient_fraction"] = init_alpha(adata, a, eps, dirichlet_lambda, cell_ambient_clip)
+        adata.obs["cell_ambient_fraction"] = init_alpha
         adata.obs.loc[~real_mask, "cell_ambient_fraction"] = 1.
     alpha = np.asarray(adata.obs["cell_ambient_fraction"].copy(), dtype=float).ravel()
     alpha = np.clip(alpha, eps, 1.0 - eps)
@@ -986,14 +941,14 @@ def denoise_count_matrix(
         if not sp.isspmatrix_csr(C):
             C = sp.csr_matrix(C)
         logger.info(f"Performing Sparse EM with {numba.get_num_threads()} Numba thread(s)")
-        em_dict = sparse_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+        em_dict = sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G, 
                                 max_iter, tol, freeze_empty, fixed_celltype, real_mask,                                                                                                         
                                 eps, dirichlet_lambda, 
                                 log_eps, verbose, logger, freeze_ambient_profile, debug)
     else:
         np.asarray(C)
         logger.info("Performing Dense EM")
-        em_dict = dense_em(C, alpha, beta, a, m_global, gamma, p, K, N, G, 
+        em_dict = dense_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G, 
                                 max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
                                 eps, dirichlet_lambda, 
                                 log_eps, verbose, logger, freeze_ambient_profile)
@@ -1026,7 +981,7 @@ def denoise_count_matrix(
     assert C_denoised.shape == (N, G), "Denoised matrix has incorrect shape."
     adata.obs["alpha_hat"] = alpha
     z_hat = np.full(N, -1, dtype=int)
-    z_hat[real_mask] = np.argmax(gamma[real_mask], axis=1)
+    z_hat[real_mask] = np.argmax(gamma[real_mask], axis=1) + 1
     adata.obs["z_hat"] = z_hat
     adata.uns["p_hat"] = p
     adata.uns["beta_hat"] = beta
