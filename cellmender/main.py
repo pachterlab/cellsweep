@@ -69,24 +69,42 @@ def main():  # noqa: C901
         "--init_alpha",
         type=float,
         default=0.9,
-        help="Initial value of alpha_n for each cell.",
+        help="Initial value of alpha_n for each cell. Works better when close to 1.",
     )
     parser_denoise_count_matrix.add_argument(
         "--beta",
         type=float,
         default=0.03,
-        help="Weight of KL divergence term in loss function.",
+        help="Initial beta (percent bulk contamination) value for each cell. Works better when set to a higher number than expected (expected is around 0.05).",
     )
     parser_denoise_count_matrix.add_argument(
         "--eps",
         type=float,
         default=1e-9,
-        help="Small value to avoid division by zero errors.",
+        help="Numerical stability constant to prevent division by zero or log(0).",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--log_eps",
+        type=float,
+        default=1e-300,
+        help="Numerical stability constant to prevent division by zero or log(0). Lower than eps for log values.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--dirichlet_lambda",
+        type=float,
+        default=1e-6,
+        help="Pseudocount. Sometimes used for clipping.",
     )
     parser_denoise_count_matrix.add_argument(
         "--integer_out",
         action="store_true",
-        help="Round denoised counts to nearest integer.",
+        help="If True, rounds denoised counts to nearest integer before saving.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "-t", "--threads",
+        type=int,
+        default=1,
+        help="number of numba threads",
     )
     parser_denoise_count_matrix.add_argument(
         "--fixed_celltype",
@@ -94,41 +112,95 @@ def main():  # noqa: C901
         help="Use fixed cell type annotations from adata.obs['cell_type'] if available.",
     )
     parser_denoise_count_matrix.add_argument(
+        "--freeze_empty",
+        action="store_true",
+        default=True,
+        help=(
+            "If True, does not attempt to reestimate empty droplets. "
+            "(default: True)"
+        ),
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--freeze_ambient_profile",
+        action="store_true",
+        default=True,
+        help=(
+            "If True, does not update the ambient profile (a) based on alpha. "
+            "(default: True)"
+        ),
+    )
+    parser_denoise_count_matrix.add_argument(
         "--empty_droplet_method",
         type=str,
         default="threshold",
-        choices=["threshold", "expected_cells"],
-        help="Method to identify empty droplets. 'threshold' uses umi_cutoff, 'expected_cells' uses expected_cells.",
+        help=(
+            "Strategy to infer empty droplets if `is_empty` is not present. "
+            "Options include: 'threshold', 'quantile', or model-based approaches. "
+            "(default: 'threshold')"
+        ),
     )
     parser_denoise_count_matrix.add_argument(
         "--umi_cutoff",
         type=int,
         default=None,
-        help="UMI count threshold to identify empty droplets when using 'threshold' method. Required if 'is_empty' column is not present in adata.obs and 'expected_cells' not provided.",
+        help=(
+            "Optional absolute UMI count threshold for classifying droplets as empty. "
+            "(default: None)"
+        ),
     )
     parser_denoise_count_matrix.add_argument(
         "--expected_cells",
         type=int,
         default=None,
-        help="Expected number of cells to identify empty droplets when using 'expected_cells' method. Required if 'is_empty' column is not present in adata.obs and 'umi_cutoff' not provided.",
+        help=(
+            "Expected number of real cells, used when estimating thresholds. "
+            "(default: None)"
+        ),
     )
     parser_denoise_count_matrix.add_argument(
-        "--cell_ambient_fraction",
+        "--empty_droplet_celltype_name",
+        type=str,
+        default="Empty Droplet",
+        help=(
+            "Name used in `celltype` to denote empty droplets. "
+            "(default: 'Empty Droplet')"
+        ),
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--tol",
         type=float,
-        default=0.01,
-        help="Estimated ambient RNA fraction in cell-containing droplets.",
+        default=1e-6,
+        help=(
+            "Relative change in likelihood below which training stops. "
+            "(default: 1e-6)"
+        ),
     )
     parser_denoise_count_matrix.add_argument(
-        "-v", "--verbose",
-        action="count",
+        "--random_state",
+        type=int,
+        default=42,
+        help="Random seed. (default: 42)",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--verbose",
+        type=int,
         default=0,
-        help="Increase output verbosity (default logging.WARNING, -v logging.INFO, -vv for logging.DEBUG)"
+        help=(
+            "Verbosity level: 2 debug, 1 info, 0 warning, -1 error, -2 critical. "
+            "(default: 0)"
+        ),
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--quiet",
+        action="store_true",
+        default=False,
+        help="Suppresses most log output when True. (default: False)",
     )
     parser_denoise_count_matrix.add_argument(
         "--log_file",
         type=str,
         default=None,
-        help="Path to log file to save output messages.",
+        help="Optional path to save EM iteration logs. (default: None)",
     )
 
     args, unknown_args = parent_parser.parse_known_args()
@@ -170,15 +242,24 @@ def main():  # noqa: C901
             adata=args.adata,
             adata_out=args.adata_out,
             max_iter=args.max_iter,
+            init_alpha=args.init_alpha,
             beta=args.beta,
             eps=args.eps,
+            log_eps=args.log_eps,
+            dirichlet_lambda=args.dirichlet_lambda,
             integer_out=args.integer_out,
+            threads=args.threads,
             fixed_celltype=args.fixed_celltype,
+            freeze_empty=args.freeze_empty,
+            freeze_ambient_profile=args.freeze_ambient_profile,
             empty_droplet_method=args.empty_droplet_method,
             umi_cutoff=args.umi_cutoff,
             expected_cells=args.expected_cells,
-            cell_ambient_fraction=args.cell_ambient_fraction,
+            empty_droplet_celltype_name=args.empty_droplet_celltype_name,
+            tol=args.tol,
+            random_state=args.random_state,
             verbose=args.verbose,
+            quiet=args.quiet,
             log_file=args.log_file,
         )
         
