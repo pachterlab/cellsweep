@@ -1,0 +1,55 @@
+description: Custom dataset template
+url: null
+
+# data file URLs and names
+adata_raw_url: null
+adata_raw_file_name: null
+raw_tar_url: null
+raw_tar_file_name: null
+raw_tar_file_dir_suffix: null
+filtered_tar_url: null
+filtered_tar_file_name: null
+filtered_tar_file_dir_suffix: null
+sequencing_technology: null
+
+# analysis parameters
+model_pkl: null
+cellmender_max_iter: null
+cellmender_beta: null
+cellmender_init_alpha: null
+cellbender_epochs: null
+cellbender_fpr: null
+cellbender_zdim: null
+cellbender_expected_cells: null
+cellbender_total_droplets: null
+scar_epochs: null
+expected_cells: null
+cs_empty_threshold: null
+min_genes: null
+min_cells: null
+umi_top_percentile_to_remove: null
+fraction_doublet: null
+unique_genes_top_percentile_to_remove: null
+mt_gene_percentile_to_remove: null
+max_mt_percentage: null
+n_top_genes: null
+n_pcs: null
+n_neighbors: null
+leiden_resolution: null
+marker_genes: null
+
+# output file names
+adata_path_cellmender_name: custom_output_cellmender.h5ad
+adata_path_cellbender_name: custom_output_cellbender.h5
+soupx_out_prefix_name: custom_output_soupx
+decontx_out_prefix_name: custom_output_decontx
+adata_path_scar_name: custom_output_scar.h5ad
+
+# output file URLs from manuscript
+cellmender_matrix_url: null
+cellbender_matrix_url: null
+cellbender_matrix_filtered_url: null
+cellbender_ckpt_url: null
+soupx_matrix_url: null
+decontx_matrix_url: null
+scar_matrix_url: null

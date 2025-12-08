@@ -1,1 +1,64 @@
-xxxxx
+description: 8k PBMCs from a healthy donor
+url: https://www.10xgenomics.com/datasets/8-k-pbm-cs-from-a-healthy-donor-2-standard-2-1-0
+
+# data file URLs and names
+adata_raw_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/pbmc8k/pbmc8k_raw_gene_bc_matrices_h5.h5
+adata_raw_file_name: pbmc8k_raw_gene_bc_matrices_h5.h5
+raw_tar_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/pbmc8k/pbmc8k_raw_gene_bc_matrices.tar.gz
+raw_tar_file_name: pbmc8k_raw_gene_bc_matrices.tar.gz
+raw_tar_file_dir_suffix: raw_gene_bc_matrices/GRCh38
+filtered_tar_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/pbmc8k/pbmc8k_filtered_gene_bc_matrices.tar.gz
+filtered_tar_file_name: pbmc8k_filtered_gene_bc_matrices.tar.gz
+filtered_tar_file_dir_suffix: filtered_gene_bc_matrices/GRCh38
+sequencing_technology: 10XV2
+
+# analysis parameters
+model_pkl: Immune_All_High.pkl  # path to celltypist model pkl file
+cellmender_max_iter: 500
+cellmender_beta: 0.1
+cellmender_init_alpha: 0.9
+cellbender_epochs: 150
+cellbender_fpr: 0.01
+cellbender_zdim: 64
+cellbender_expected_cells: null
+cellbender_total_droplets: null
+scar_epochs: 200
+expected_cells: 8381
+cs_empty_threshold: 10
+min_genes: 0
+min_cells: 0
+umi_top_percentile_to_remove: 5
+fraction_doublet: 0
+unique_genes_top_percentile_to_remove: 5
+mt_gene_percentile_to_remove: 10
+max_mt_percentage: null
+n_top_genes: 2000
+n_pcs: 25
+n_neighbors: 20
+leiden_resolution: 1.0
+marker_genes: {
+    "Monocytes/neutrophils": ["S100A8", "S100A9", "S100A12", "FCGR3A"],
+    "Monocytes/pDCs": ["LYZ", "CST3", "FCN1", "LILRA4"],
+    "T": ["IL32", "TRAC", "CCR7", "FOXP3", "CD8A", "CD8B", "NKG7", "GNLY", "TRGC1", "SLC4A10"],
+    "B": ["IGHD", "CD79A", "FCER2", "TNFRSF13B"],
+    "NK": ["KLRF1", "SPON2"],
+    "Progenitor": ["PPBP"],
+    "Baso./neutro./progenitor": ["SDPR", "CLU"],
+    "(Broad expression)": ["PTPRC"]
+}
+
+# output file names
+adata_path_cellmender_name: pbmc8k_output_cellmender.h5ad
+adata_path_cellbender_name: pbmc8k_output_cellbender.h5
+soupx_out_prefix_name: pbmc8k_output_soupx
+decontx_out_prefix_name: pbmc8k_output_decontx
+adata_path_scar_name: pbmc8k_output_scar.h5ad
+
+# output file URLs from manuscript
+cellmender_matrix_url: https://caltech.box.com/shared/static/dltpt6ixhvzg0rb6h1058aamrcmi7oy7.h5ad
+cellbender_matrix_url: https://caltech.box.com/shared/static/trxd26eqmr33cg3ot0l3jins9s193ob6.h5
+cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/bnilabzuvdvtm1knpsfgy89php938qft.h5
+cellbender_ckpt_url: https://caltech.box.com/shared/static/hj41un9dz0pk5j10t8dyfj2mbllzrp6s.gz
+soupx_matrix_url: https://caltech.box.com/shared/static/7lhpw8bgwf3b3gyl7wgqe15h3yhxamld.gz
+decontx_matrix_url: https://caltech.box.com/shared/static/zzfs06lp634g2rhuuph200rvga08atzh.gz
+scar_matrix_url: https://caltech.box.com/shared/static/jhg1yd0kaao0atsyzs1yfne25dkqwz4f.h5ad

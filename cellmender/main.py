@@ -62,8 +62,14 @@ def main():  # noqa: C901
     parser_denoise_count_matrix.add_argument(
         "--max_iter",
         type=int,
-        default=40,
-        help="Maximum number of training iterations.",
+        default=150,
+        help="Maximum number of EM iterations.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--init_alpha",
+        type=float,
+        default=0.9,
+        help="Initial value of alpha_n for each cell.",
     )
     parser_denoise_count_matrix.add_argument(
         "--beta",

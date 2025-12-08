@@ -798,7 +798,7 @@ def denoise_count_matrix(
         Random seed
 
     verbose : int, default 0
-        Verbosity level (-2: silent, 0: normal, 2: debug).
+        Verbosity level (2 debug, 1 info, 0 warning, -1 error, -2 critical).
 
     quiet : bool, default False
         Suppresses most log output when True.
@@ -860,10 +860,10 @@ def denoise_count_matrix(
     # count parameters
     if freeze_ambient_profile:
         number_of_parameters = 1 + (K * G)  # beta (1), gamma_type (Nr * K), p_k (K * G)
-        logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
+        logger.debug(f"Number of parameters in the cellmender model: {number_of_parameters:,} beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
     else:
         number_of_parameters = K + 1 + (Nr * K) + (K * G)  # u, beta (1), gamma_type (Nr * K), p_k (K * G)
-        logger.info(f"Number of parameters in the cellmender model: {number_of_parameters:,} (u: {K:,}, beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
+        logger.debug(f"Number of parameters in the cellmender model: {number_of_parameters:,} (u: {K:,}, beta: {1:,}, gamma_type: {Nr*K:,}, p_k: {K*G:,})")
 
     # celltype mapping
     z_true = adata.obs["celltype"].copy()

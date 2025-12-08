@@ -1,0 +1,55 @@
+description: Human-mouse mixture
+url: https://support.10xgenomics.com/single-cell-gene-expression/datasets/2.1.0/hgmm_12k
+
+# data file URLs and names
+adata_raw_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/hgmm_12k/hgmm_12k_raw_gene_bc_matrices_h5.h5
+adata_raw_file_name: hgmm_12k_raw_gene_bc_matrices_h5.h5
+raw_tar_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/hgmm_12k/hgmm_12k_raw_gene_bc_matrices.tar.gz
+raw_tar_file_name: hgmm_12k_raw_gene_bc_matrices.tar.gz
+raw_tar_file_dir_suffix: raw_gene_bc_matrices/hg19
+filtered_tar_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/hgmm_12k/hgmm_12k_filtered_gene_bc_matrices.tar.gz
+filtered_tar_file_name: hgmm_12k_filtered_gene_bc_matrices.tar.gz
+filtered_tar_file_dir_suffix: filtered_gene_bc_matrices/hg19
+sequencing_technology: 10XV2
+
+# analysis parameters
+model_pkl: null  # path to celltypist model pkl file
+cellmender_max_iter: 500
+cellmender_beta: 0.1
+cellmender_init_alpha: 0.9
+cellbender_epochs: 150
+cellbender_fpr: 0.01
+cellbender_zdim: 64
+cellbender_expected_cells: null
+cellbender_total_droplets: null
+scar_epochs: 200
+expected_cells: 12820
+cs_empty_threshold: 10
+min_genes: 0
+min_cells: 0
+umi_top_percentile_to_remove: 0
+fraction_doublet: 0.15
+unique_genes_top_percentile_to_remove: 0
+mt_gene_percentile_to_remove: 0
+max_mt_percentage: null
+n_top_genes: 2000
+n_pcs: 25
+n_neighbors: 20
+leiden_resolution: 1.0
+marker_genes: null
+
+# output file names
+adata_path_cellmender_name: hgmm_12k_output_cellmender.h5ad
+adata_path_cellbender_name: hgmm_12k_output_cellbender.h5
+soupx_out_prefix_name: hgmm_12k_output_soupx
+decontx_out_prefix_name: hgmm_12k_output_decontx
+adata_path_scar_name: hgmm_12k_output_scar.h5ad
+
+# output file URLs from manuscript
+cellmender_matrix_url: https://caltech.box.com/shared/static/asrt7vgt7lnhazcjujkil1ak1v9y6qo5.h5ad
+cellbender_matrix_url: https://caltech.box.com/shared/static/p3v6ader1i27jcj5xhwfcmg1w8dkp158.h5
+cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/0dma5qrc94tbi07pic0w8c0b50jxmach.h5
+cellbender_ckpt_url: https://caltech.box.com/shared/static/esz6du1ti0wakqc1j2y1gzg445zllcw5.gz
+soupx_matrix_url: https://caltech.box.com/shared/static/mt9us648ol61hdol3mohrpg1t658quqv.gz
+decontx_matrix_url: https://caltech.box.com/shared/static/2hrjra6dcw92om90wgz4vwbkcebtt5r8.gz
+scar_matrix_url: https://caltech.box.com/shared/static/8m3zmvqajy4tpui5c2jhxjr8q6pfoqg7.h5ad

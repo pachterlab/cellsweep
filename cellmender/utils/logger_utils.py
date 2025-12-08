@@ -2,6 +2,8 @@
 
 import os
 import shutil
+import yaml
+import requests
 import subprocess
 import logging
 from datetime import datetime
@@ -64,3 +66,79 @@ def setup_logger(log_file = None, log_level = None, verbose = 0, quiet = False):
         logger.addHandler(file_handler)
 
     return logger
+
+def load_dataset_yaml(yaml_file=None):
+    """
+    Load dataset YAML from local notebooks/config/.  
+    If missing (e.g., running in Colab), download from GitHub.
+    """
+
+    dataset_name = os.path.splitext(os.path.basename(yaml_file))[0]
+
+    # URL to raw file on GitHub
+    github_dir_url = f"https://raw.githubusercontent.com/pachterlab/cellmender/main/notebooks/config"
+    github_url = f"{github_dir_url}/{dataset_name}.yaml"
+
+    # --- Case 1: Local file exists ---
+    if os.path.exists(yaml_file):
+        with open(yaml_file, "r") as f:
+            return yaml.safe_load(f)
+
+    # --- Case 2: Download from GitHub ---
+    print(f"Config not found locally. Downloading from GitHub:\n{github_url}")
+
+    r = requests.get(github_url)
+    if r.status_code != 200:
+        try:
+            yaml_entries = list_github_yaml_files()
+            yaml_entries_message = f"Available configs:\n"
+            for yaml_entry in yaml_entries:
+                yaml_entries_message += f"Name: {yaml_entry['name']}\nDescription: {yaml_entry['description']}\nURL: {yaml_entry['url']}\n\n"
+        except Exception as e:
+            yaml_entries_message = ""
+
+        raise FileNotFoundError(
+            f"Config {dataset_name}.yaml not found locally or on GitHub.\n"
+            f"HTTP {r.status_code}: {github_url}"
+            f"{yaml_entries_message}"
+        )
+
+    cfg = yaml.safe_load(r.text)
+
+    # Optional: save downloaded file locally in notebooks/config/
+    os.makedirs(os.path.dirname(yaml_file), exist_ok=True)
+    with open(yaml_file, "w") as f:
+        f.write(r.text)
+
+    print(f"Saved downloaded config to:\n{yaml_file}")
+
+    return cfg
+
+def list_github_yaml_files():
+    api_url = "https://api.github.com/repos/pachterlab/cellmender/contents/notebooks/config"
+
+    r = requests.get(api_url)
+    if r.status_code != 200:
+        raise RuntimeError(f"GitHub API error {r.status_code}: {api_url}")
+
+    files = r.json()
+
+    yaml_entries = []
+    for f in files:
+        if f["name"].lower().endswith(".yaml"):
+            yaml_url = f["download_url"]
+
+            # Fetch YAML
+            yml_text = requests.get(yaml_url).text
+            yml = yaml.safe_load(yml_text)
+
+            description = yml.get("description", "(No description provided)")
+
+            yaml_entries.append({
+                "name": f["name"],
+                "description": description,
+                "url": yaml_url,
+            })
+
+    return yaml_entries
+

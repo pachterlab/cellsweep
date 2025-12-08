@@ -549,15 +549,8 @@ def plot_per_cell_difference(adata_raw, adata_denoised, bins=None, plot_type="ce
 
     return sums  # return values if user wants to inspect/plot further
 
-def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column="celltype", wompwomp_env="wompwomp_env", wompwomp_path="wompwomp", verbose=0):
+def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displayed_column="celltype", verbose=0):
     logger = setup_logger(verbose=verbose)
-    
-    if not os.path.exists(wompwomp_path):
-        raise ValueError(f"wompwomp_path {wompwomp_path} does not exist.")
-    
-    # check if wompwomp_env exists as a path or environment
-    if not (os.path.exists(wompwomp_env) or wompwomp_env in subprocess.run("conda env list", shell=True, capture_output=True, text=True).stdout):
-        raise ValueError(f"wompwomp_env {wompwomp_env} does not exist as a path or conda environment.")
 
     new_adatas = []
     new_names = []
@@ -580,7 +573,6 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
     if len(names) != len(adatas):
         raise ValueError(f"Length of names ({len(names)}) does not match number of adatas ({len(adatas)}).")
     
-    # if not os.path.exists(merged_df_csv):
     # Step 1: Get intersection of barcodes (shared cell IDs)
     common_barcodes = set(adatas[0].obs_names)
     for ad in adatas[1:]:
@@ -596,18 +588,11 @@ def plot_alluvial(*adatas, merged_df_csv, out_path, names=None, displayed_column
         axis=1
     )
 
-    merged_df.to_csv(merged_df_csv)
-
-    names_str = " ".join(names)
-    conda_run_flag = "-p" if "/" in wompwomp_env else "-n"
-    wompwomp_exec_path = f"{wompwomp_path}/exec/biowompwomp"
-    if not os.path.exists(wompwomp_exec_path):
-        wompwomp_exec_path = f"{wompwomp_path}/exec/wompwomp"
-    wompwomp_cmd = f"conda run {conda_run_flag} {wompwomp_env} {wompwomp_exec_path} plot_alluvial --df {merged_df_csv} --graphing_columns {names_str} --coloring_algorithm left --disable_optimize_column_order -o {out_path}"
-    logger.info(f"Running wompwomp for {displayed_column}")
-    logger.debug(wompwomp_cmd)
-    subprocess.run(wompwomp_cmd, shell=True, check=True)
-
+    if merged_df_csv is not None:
+        merged_df.to_csv(merged_df_csv)
+    
+    from wompywompy import plot_alluvial
+    plot_alluvial(df=merged_df, graphing_columns=names, coloring_algorithm="left", disable_optimize_column_order=True, out_path=out_path)
 
 def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
     if adata_raw is None or adata_processed is None:
