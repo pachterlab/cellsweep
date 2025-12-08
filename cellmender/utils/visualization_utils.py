@@ -550,7 +550,7 @@ def plot_per_cell_difference(adata_raw, adata_denoised, bins=None, plot_type="ce
     return sums  # return values if user wants to inspect/plot further
 
 def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displayed_column="celltype", verbose=0):
-    logger = setup_logger(verbose=verbose)
+    verbose = True if verbose >= 1 else False
 
     new_adatas = []
     new_names = []
@@ -592,7 +592,7 @@ def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displa
         merged_df.to_csv(merged_df_csv)
     
     from wompywompy import plot_alluvial
-    plot_alluvial(df=merged_df, graphing_columns=names, coloring_algorithm="left", disable_optimize_column_order=True, out_path=out_path)
+    plot_alluvial(df=merged_df, graphing_columns=names, sorting_algorithm="neighbornet", coloring_algorithm="left", optimize_column_order=False, savefig=out_path, verbose=verbose)
 
 def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
     if adata_raw is None or adata_processed is None:
@@ -1603,3 +1603,7 @@ def detect_doublets_human_mouse(adata_raw, fraction_doublet=0.15, plot_empty=Fal
         adata_raw_original = adata_raw.copy()
 
     return adata_raw_original
+
+
+def evaluate_simulation_denoising(adata_processed, adata_raw):
+    pass

@@ -1,0 +1,66 @@
+description: Simulation 1 - small noise
+url: null
+
+# data file URLs and names
+adata_raw_url: null
+adata_raw_file_name: null
+raw_tar_url: null
+raw_tar_file_name: null
+raw_tar_file_dir_suffix: null
+filtered_tar_url: null
+filtered_tar_file_name: null
+filtered_tar_file_dir_suffix: null
+sequencing_technology: null
+
+# analysis parameters
+model_pkl: null  # path to celltypist model pkl file
+cellmender_max_iter: 500
+cellmender_beta: 0.1
+cellmender_init_alpha: 0.9
+cellbender_epochs: 150
+cellbender_fpr: 0.01
+cellbender_zdim: 64
+cellbender_expected_cells: null
+cellbender_total_droplets: null
+scar_epochs: 200
+expected_cells: 1000  # see below
+cs_empty_threshold: 10
+min_genes: 0
+min_cells: 0
+umi_top_percentile_to_remove: 0
+fraction_doublet: 0
+unique_genes_top_percentile_to_remove: 0
+mt_gene_percentile_to_remove: 0
+max_mt_percentage: null
+n_top_genes: 2000
+n_pcs: 25
+n_neighbors: 20
+leiden_resolution: 1.0
+marker_genes: null
+
+# output file names
+adata_path_cellmender_name: sim1_output_cellmender.h5ad
+adata_path_cellbender_name: sim1_output_cellbender.h5
+soupx_out_prefix_name: sim1_output_soupx
+decontx_out_prefix_name: sim1_output_decontx
+adata_path_scar_name: sim1_output_scar.h5ad
+
+# output file URLs from manuscript
+cellmender_matrix_url: null
+cellbender_matrix_url: null
+cellbender_matrix_filtered_url: null
+cellbender_ckpt_url: null
+soupx_matrix_url: null
+decontx_matrix_url: null
+scar_matrix_url: null
+
+# simulation parameters
+G: 2000
+N: 1000
+k: 25
+markers_per_type: 10
+marker_boost: 15
+type_proportions: null
+empty_prob: 0.8
+alpha: 0.03
+expected_cell_size: 1000
