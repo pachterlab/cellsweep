@@ -457,7 +457,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G,
         # update p and gamma
         if not fixed_celltype:
             for k in range(K):
-                numer = p_numer[k] + dirichlet_lambda
+                numer = p_numer[k]
                 denom = numer.sum()
                 p[k] = numer / max(denom, eps)
 
@@ -748,10 +748,10 @@ def denoise_count_matrix(
         Maximum number of EM iterations.
 
     init_alpha : float, default 0.9
-       Initial value of alpha_n for each cell.
+       Initial value of alpha_n for each cell. Works better when close to 1.
     
     beta : float, default 0.1
-        Initial beta (percent bulk contamination) value for each cell.
+        Initial beta (percent bulk contamination) value for each cell. Works better when set to a higher number than expected (expected is around 0.05).
 
     eps : float, default 1e-12
         Numerical stability constant to prevent division by zero or log(0).
@@ -887,6 +887,11 @@ def denoise_count_matrix(
     row_sums = gamma.sum(axis=1)
     gamma = gamma / np.maximum(row_sums[:, None], eps)
 
+    # initial beta + bulk m
+    beta = float(beta)
+    m_raw = np.array(C.sum(axis=0)).ravel().astype(float)
+    m_global = (m_raw + dirichlet_lambda) / (m_raw.sum() + G * dirichlet_lambda)
+
     # still keep empties zero if freeze_empty
     if freeze_empty:
         gamma[~real_mask, :] = 0.0
@@ -905,10 +910,12 @@ def denoise_count_matrix(
 
             a_raw = np.array(C_empty.sum(axis=0)).ravel().astype(float)
             a = (a_raw + dirichlet_lambda) / (a_raw.sum() + G * dirichlet_lambda)
+            u = np.zeros(K)
         else:
             logger.info("Inferring the gene ambient profile from cell-types")
             u = gamma.sum(axis=0) / gamma.sum()
             a = u @ p
+            a = a / a.sum()
         adata.var["ambient"] = a
     else:
         a = np.asarray(adata.var["ambient"])
@@ -925,12 +932,6 @@ def denoise_count_matrix(
     if freeze_empty:
         alpha[~real_mask] = 1.0
         gamma[~real_mask, :] = 0.0
-
-    # initial beta + bulk m
-    beta = float(beta)
-    m_raw = np.array(C.sum(axis=0)).ravel().astype(float)
-    m_global = (m_raw + dirichlet_lambda) / (m_raw.sum() + G * dirichlet_lambda)
-
 
     alpha = alpha.astype(np.float64)
     a = a.astype(np.float64)
