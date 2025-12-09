@@ -23,6 +23,7 @@ cellbender_zdim: 64
 cellbender_expected_cells: null
 cellbender_total_droplets: null
 scar_epochs: 200
+scar_prob: 0.995
 expected_cells: 8381
 cs_empty_threshold: 10
 min_genes: 0

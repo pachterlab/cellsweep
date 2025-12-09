@@ -1663,9 +1663,6 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     Yt_bin = (Yt > 0).astype(int).tocsr()
 
     def calculate_dataframes(Yt_bin, Yp_bin):
-        pass
-    
-    
         n_cells, n_genes = Yp_bin.shape
 
         # ---------- Compute Confusion Components ----------
@@ -1721,7 +1718,7 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     per_cell_df, global_metrics = calculate_dataframes(Yt_bin, Yp_bin)
 
     per_cell_df_raw = None
-    if (Yr_bin != Yp_bin).nnz != 0:  # working with non-raw
+    if tool != "raw":  # (Yr_bin != Yp_bin).nnz != 0:  # working with non-raw
         per_cell_df_raw, _ = calculate_dataframes(Yt_bin, Yr_bin)
 
     def plot_histogram(df, metric, df_raw=None, tool="Denoised", hist_type="kde", out_path=None, show=True):
@@ -1733,23 +1730,23 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
             plt.ylabel("Number of cells")
         elif hist_type == "kde":
             if np.var(df[metric]) > 0:
-                sns.kdeplot(df[metric], fill=False, color="steelblue", bw_adjust=1, label=tool)
+                sns.kdeplot(df[metric], fill=False, color="steelblue", bw_adjust=1, label=tool, linewidth=2)
             else:
                 # Plot a vertical line showing the constant value
                 v = df[metric][0]
-                plt.axvline(v, color="steelblue", label=tool)
+                plt.axvline(v, color="steelblue", label=tool, linewidth=2)
             if df_raw is not None:
                 if np.var(df_raw[metric]) > 0:
-                    sns.kdeplot(df_raw[metric], fill=False, color="orange", bw_adjust=1, label="Raw")
+                    sns.kdeplot(df_raw[metric], fill=False, color="orange", bw_adjust=1, label="Raw", linewidth=2)
                 else:
                     # Plot a vertical line showing the constant value
                     v = df_raw[metric][0]
-                    plt.axvline(v, color="orange", label="Raw")
+                    plt.axvline(v, color="orange", label="Raw", linewidth=2)
             plt.ylabel("Cell Density")
         else:
             raise ValueError('hist_type must be "bar" or "kde"')
         plt.xlabel(metric)
-        plt.xlim(0, 1)
+        plt.xlim(0, 1.02)
         plt.title(f"{tool.capitalize()} {metric} Distribution Across Cells")
         plt.legend()
         plt.tight_layout()
@@ -1760,13 +1757,13 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
         else:
             plt.show()
 
-    print(f"Global sensitivity: {global_metrics['sensitivity']:.4f}")
+    print(f"{tool} Global sensitivity: {global_metrics['sensitivity']:.4f}")
     plot_histogram(per_cell_df, "sensitivity", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_sensitivity.png" if out_base else None, show=show)
     
-    print(f"Global specificity: {global_metrics['specificity']:.4f}")
+    print(f"{tool} Global specificity: {global_metrics['specificity']:.4f}")
     plot_histogram(per_cell_df, "specificity", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_specificity.png" if out_base else None, show=show)
     
-    print(f"Global PPV: {global_metrics['ppv']:.4f}")
+    print(f"{tool} Global PPV: {global_metrics['ppv']:.4f}")
     plot_histogram(per_cell_df, "PPV", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_PPV.png" if out_base else None, show=show)
 
     return per_cell_df, global_metrics

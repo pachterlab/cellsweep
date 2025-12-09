@@ -146,7 +146,7 @@ def load_adata(adata, logger=None, verbose=0, quiet=False):
 def write_10x_like(
     adata,
     parent_dir,
-    gzip_output=True,
+    gzip_output=False,
     genome="genome",
     is_empty_col="is_empty",
     cluster_col="leiden",
@@ -203,7 +203,7 @@ def write_10x_like(
 
         suffix = ".gz" if gzip_output else ""
         barcodes_path = os.path.join(subdir, f"barcodes.tsv{suffix}")
-        genes_path = os.path.join(subdir, f"genes.tsv{suffix}")
+        genes_path = os.path.join(subdir, "genes.tsv") if not gzip_output else os.path.join(subdir, "features.tsv.gz")
         matrix_path = os.path.join(subdir, f"matrix.mtx{suffix}")
 
         if os.path.exists(barcodes_path) and os.path.exists(genes_path) and os.path.exists(matrix_path):
@@ -226,9 +226,12 @@ def write_10x_like(
             with gzip.open(barcodes_path, "wt") as f:
                 for b in barcodes:
                     f.write(f"{b}\n")
+
             with gzip.open(genes_path, "wt") as f:
                 for g in genes:
-                    f.write(f"{g}\t{g}\n")  # gene_id and gene_name identical
+                    # Write: gene_id, gene_name, feature_type
+                    f.write(f"{g}\t{g}\tGene Expression\n")
+
             with gzip.open(matrix_path, "wb") as f:
                 io.mmwrite(f, X)
         else:
