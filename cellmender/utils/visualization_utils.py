@@ -617,7 +617,7 @@ def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displa
 
 
 
-def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
+def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", plot_raw=True, title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
     if adata_raw is None or adata_processed is None:
         print("One of the adatas is None, skipping dotplot generation.")
         return
@@ -626,14 +626,14 @@ def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, ce
     adata_raw_only_cellbender_cells = adata_raw[common_cells].copy()
     adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[[celltype_column, cluster_column]], how='left')
 
-    print(title_raw)
-    sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby=cluster_column, standard_scale=None, save="raw_tmp.png")  # title=title_raw
-    print("------------------------------")
+    if plot_raw:
+        print(title_raw)
+        sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby=cluster_column, standard_scale=None, save="raw_tmp.png")  # title=title_raw
+        print("------------------------------")
+        shutil.move("figures/dotplot_raw_tmp.png", out_path_raw)
     print(title_processed)
     sc.pl.dotplot(adata_processed, marker_genes, groupby=cluster_column, standard_scale=None, save="processed_tmp.png")  # title=title_processed
     print("------------------------------")
-
-    shutil.move("figures/dotplot_raw_tmp.png", out_path_raw)
     shutil.move("figures/dotplot_processed_tmp.png", out_path_processed)
     os.rmdir("figures")
 
