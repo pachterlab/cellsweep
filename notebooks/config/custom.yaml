@@ -23,6 +23,7 @@ cellbender_zdim: null
 cellbender_expected_cells: null
 cellbender_total_droplets: null
 scar_epochs: null
+scar_prob: null
 expected_cells: null
 cs_empty_threshold: null
 min_genes: null

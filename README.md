@@ -1,19 +1,19 @@
-# cellmender
+# cellsweep
 
 ## Install
 ### Basic use
 ```
-pip install cellmender  #!!! not yet uploaded on pypi - see below
+pip install cellsweep  #!!! not yet uploaded on pypi - see below
 ```
 
 ### To run notebooks:
 ```
-pip install cellmender[analysis]  # pip install cellmender["analysis"] for Mac users  #!!! not yet uploaded on pypi - see below
+pip install cellsweep[analysis]  # pip install cellsweep["analysis"] for Mac users  #!!! not yet uploaded on pypi - see below
 ```
 
 ### To remake figures from the paper:
 ```
-git clone https://github.com/pachterlab/cellmender.git
+git clone https://github.com/pachterlab/cellsweep.git
 cd cellmender
 conda env create -f environment.yml
 ```

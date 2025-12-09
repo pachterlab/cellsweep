@@ -10,7 +10,7 @@ raw_tar_file_dir_suffix: null
 filtered_tar_url: null
 filtered_tar_file_name: null
 filtered_tar_file_dir_suffix: null
-sequencing_technology: null
+sequencing_technology: "10XV2"
 
 # analysis parameters
 model_pkl: null  # path to celltypist model pkl file
@@ -23,6 +23,7 @@ cellbender_zdim: 64
 cellbender_expected_cells: null
 cellbender_total_droplets: null
 scar_epochs: 200
+scar_prob: 0.975
 expected_cells: 200  # see below - N * (1 - empty_prob)
 cs_empty_threshold: 10
 min_genes: 0
