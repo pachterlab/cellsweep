@@ -702,6 +702,7 @@ def denoise_count_matrix(
     freeze_empty: bool = True,
     freeze_ambient_profile: bool = True,
     empty_droplet_method: str = "threshold",
+    ambient_threshold: Optional[Annotated[float, Field(ge=0, le=1)]] = 0.0,
     umi_cutoff: Optional[Annotated[int, Field(ge=0)]] = None,
     expected_cells: Optional[Annotated[int, Field(ge=0)]] = None,
     empty_droplet_celltype_name: str = "Empty Droplet",
@@ -781,6 +782,9 @@ def denoise_count_matrix(
     empty_droplet_method : str, default "threshold"
         Strategy to infer empty droplets if `is_empty` is not present.
         Options may include "threshold", "quantile", or model-based approaches.
+    
+    ambient_threshold : float | None, default 0.0
+        Optional ambient RNA fraction threshold for classifying droplets as empty.
 
     umi_cutoff : int | None, default None
         Optional absolute UMI count threshold for classifying droplets as empty.
@@ -909,7 +913,14 @@ def denoise_count_matrix(
             C_empty = C[is_empty,:]
 
             a_raw = np.array(C_empty.sum(axis=0)).ravel().astype(float)
-            a = (a_raw + dirichlet_lambda) / (a_raw.sum() + G * dirichlet_lambda)
+            
+            # zero out a values below a threshold (inclusive threshold)
+            if ambient_threshold > 0:
+                a = a_raw[a_raw < ambient_threshold] = 0
+                a = a / a.sum()  # re-normalize
+            else:
+                a = (a_raw + dirichlet_lambda) / (a_raw.sum() + G * dirichlet_lambda)
+                
             u = np.zeros(K)
         else:
             logger.info("Inferring the gene ambient profile from cell-types")

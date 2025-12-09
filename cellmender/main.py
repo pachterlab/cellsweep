@@ -140,6 +140,14 @@ def main():  # noqa: C901
         ),
     )
     parser_denoise_count_matrix.add_argument(
+        "--ambient_threshold",
+        type=float,
+        default=0.0,
+        help=(
+            "Strategy to infer empty droplets if `is_empty` is not present. Options may include 'threshold', 'quantile', or model-based approaches."
+        ),
+    )
+    parser_denoise_count_matrix.add_argument(
         "--umi_cutoff",
         type=int,
         default=None,
@@ -253,6 +261,7 @@ def main():  # noqa: C901
             freeze_empty=args.freeze_empty,
             freeze_ambient_profile=args.freeze_ambient_profile,
             empty_droplet_method=args.empty_droplet_method,
+            ambient_threshold=args.ambient_threshold,
             umi_cutoff=args.umi_cutoff,
             expected_cells=args.expected_cells,
             empty_droplet_celltype_name=args.empty_droplet_celltype_name,
