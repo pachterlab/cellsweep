@@ -3,7 +3,7 @@ url: null
 
 # data file URLs and names
 adata_raw_url: null
-adata_raw_file_name: null
+adata_raw_file_name: "adata_raw.h5ad"
 raw_tar_url: null
 raw_tar_file_name: null
 raw_tar_file_dir_suffix: null
@@ -23,7 +23,7 @@ cellbender_zdim: 64
 cellbender_expected_cells: null
 cellbender_total_droplets: null
 scar_epochs: 200
-expected_cells: 1000  # see below
+expected_cells: 200  # see below - N * (1 - empty_prob)
 cs_empty_threshold: 10
 min_genes: 0
 min_cells: 0

@@ -549,7 +549,8 @@ def plot_per_cell_difference(adata_raw, adata_denoised, bins=None, plot_type="ce
 
     return sums  # return values if user wants to inspect/plot further
 
-def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displayed_column="celltype", verbose=0):
+def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displayed_column="celltype", verbose=0, seed=42, wompwomp_path=None, wompwomp_env=None):
+    logger = setup_logger(verbose=verbose)
     verbose = True if verbose >= 1 else False
 
     new_adatas = []
@@ -590,9 +591,31 @@ def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displa
 
     if merged_df_csv is not None:
         merged_df.to_csv(merged_df_csv)
-    
-    from wompywompy import plot_alluvial
-    plot_alluvial(df=merged_df, graphing_columns=names, sorting_algorithm="neighbornet", coloring_algorithm="left", optimize_column_order=False, savefig=out_path, verbose=verbose)
+
+    if wompwomp_env is not None and wompwomp_path is not None:
+        if not os.path.exists(wompwomp_path):
+            raise ValueError(f"wompwomp_path {wompwomp_path} does not exist.")
+        
+        # check if wompwomp_env exists as a path or environment
+        if not (os.path.exists(wompwomp_env) or wompwomp_env in subprocess.run("conda env list", shell=True, capture_output=True, text=True).stdout):
+            raise ValueError(f"wompwomp_env {wompwomp_env} does not exist as a path or conda environment.")
+        
+        logger.info("Using R wompwomp installation for alluvial plot generation.")
+        names_str = " ".join(names)
+        conda_run_flag = "-p" if "/" in wompwomp_env else "-n"
+        wompwomp_exec_path = f"{wompwomp_path}/exec/biowompwomp"
+        if not os.path.exists(wompwomp_exec_path):
+            wompwomp_exec_path = f"{wompwomp_path}/exec/wompwomp"
+        wompwomp_cmd = f"conda run {conda_run_flag} {wompwomp_env} {wompwomp_exec_path} plot_alluvial --df {merged_df_csv} --graphing_columns {names_str} --coloring_algorithm left --disable_optimize_column_order -o {out_path} --set_seed {seed}"
+        logger.info(f"Running wompwomp for {displayed_column}")
+        logger.debug(wompwomp_cmd)
+        subprocess.run(wompwomp_cmd, shell=True, check=True)
+    else:
+        logger.info("Using python wompwomp installation for alluvial plot generation.")
+        from wompywompy import plot_alluvial
+        plot_alluvial(df=merged_df, graphing_columns=names, sorting_algorithm="neighbornet", coloring_algorithm="left", optimize_column_order=False, savefig=out_path, verbose=verbose)
+
+
 
 def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
     if adata_raw is None or adata_processed is None:
@@ -1605,5 +1628,145 @@ def detect_doublets_human_mouse(adata_raw, fraction_doublet=0.15, plot_empty=Fal
     return adata_raw_original
 
 
-def evaluate_simulation_denoising(adata_processed, adata_raw):
-    pass
+def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", hist_type="kde", out_base=None, show=True):
+    """
+    Evaluate denoising by comparing processed output (adata_processed) to ground-truth real counts (adata_real).
+
+    Computes TP, FP, FN, TN for each cell, and
+    returns per-cell sensitivity, specificity, PPV, and global metrics.
+    """
+    if 'layers' not in dir(adata_real) or 'real' not in adata_real.layers:
+        raise ValueError("adata_real must contain a 'real' layer with ground-truth counts.")
+
+    adata_processed, adata_real = take_adata_cell_gene_intersection(adata_processed, adata_real)
+    adata_x_processed = adata_processed.X
+    adata_x_raw = adata_real.X
+    adata_x_real = adata_real.layers['real']
+
+    # Ensure sparse for safe arithmetic
+    if not sparse.issparse(adata_x_processed):
+        adata_x_processed = sparse.csr_matrix(adata_x_processed)
+
+    if not sparse.issparse(adata_x_raw):
+        adata_x_raw = sparse.csr_matrix(adata_x_raw)
+
+    if not sparse.issparse(adata_x_real):
+        adata_x_real = sparse.csr_matrix(adata_x_real)
+
+    Yp = adata_x_processed.tocsr()
+    Yr = adata_x_raw.tocsr()
+    Yt = adata_x_real.tocsr()
+
+    # Binary presence matrices (gene detected or not)
+    Yp_bin = (Yp > 0).astype(int).tocsr()
+    Yr_bin = (Yr > 0).astype(int).tocsr()
+    Yt_bin = (Yt > 0).astype(int).tocsr()
+
+    def calculate_dataframes(Yt_bin, Yp_bin):
+        pass
+    
+    
+        n_cells, n_genes = Yp_bin.shape
+
+        # ---------- Compute Confusion Components ----------
+        TP = (Yp_bin.multiply(Yt_bin)).sum(axis=1).A1
+        PP = Yp_bin.sum(axis=1).A1
+        FP = PP - TP
+        TT = Yt_bin.sum(axis=1).A1
+        FN = TT - TP
+        TN = n_genes - TP - FP - FN
+
+        # ------------ Per-cell metrics ------------
+        sensitivity = TP / (TP + FN)
+        specificity = TN / (TN + FP)
+        ppv = TP / (TP + FP)
+
+        sensitivity = np.nan_to_num(sensitivity)
+        specificity = np.nan_to_num(specificity)
+        ppv = np.nan_to_num(ppv)
+
+        # ------------ Global metrics ------------
+        TP_total = TP.sum()
+        FP_total = FP.sum()
+        FN_total = FN.sum()
+        TN_total = TN.sum()
+
+        sensitivity_global = TP_total / (TP_total + FN_total)
+        specificity_global = TN_total / (TN_total + FP_total)
+        ppv_global = TP_total / (TP_total + FP_total)
+
+        global_metrics = {
+            "sensitivity": sensitivity_global,
+            "specificity": specificity_global,
+            "ppv": ppv_global,
+            "TP": TP_total,
+            "FP": FP_total,
+            "FN": FN_total,
+            "TN": TN_total,
+        }
+
+        # ------------ Per-cell DataFrame ------------
+        per_cell_df = pd.DataFrame({
+            "TP": TP,
+            "FP": FP,
+            "FN": FN,
+            "TN": TN,
+            "sensitivity": sensitivity,
+            "specificity": specificity,
+            "PPV": ppv,
+        })
+
+        return per_cell_df, global_metrics
+
+    per_cell_df, global_metrics = calculate_dataframes(Yt_bin, Yp_bin)
+
+    per_cell_df_raw = None
+    if (Yr_bin != Yp_bin).nnz != 0:  # working with non-raw
+        per_cell_df_raw, _ = calculate_dataframes(Yt_bin, Yr_bin)
+
+    def plot_histogram(df, metric, df_raw=None, tool="Denoised", hist_type="kde", out_path=None, show=True):
+        if hist_type == "bar":
+            bins = np.linspace(0, 1, 51)
+            plt.hist(df[metric], bins=bins, color="steelblue", edgecolor="white", label=tool)
+            if df_raw is not None:
+                plt.hist(df_raw[metric], bins=bins, color="orange", edgecolor="white", alpha=0.7, label="Raw")
+            plt.ylabel("Number of cells")
+        elif hist_type == "kde":
+            if np.var(df[metric]) > 0:
+                sns.kdeplot(df[metric], fill=False, color="steelblue", bw_adjust=1, label=tool)
+            else:
+                # Plot a vertical line showing the constant value
+                v = df[metric][0]
+                plt.axvline(v, color="steelblue", label=tool)
+            if df_raw is not None:
+                if np.var(df_raw[metric]) > 0:
+                    sns.kdeplot(df_raw[metric], fill=False, color="orange", bw_adjust=1, label="Raw")
+                else:
+                    # Plot a vertical line showing the constant value
+                    v = df_raw[metric][0]
+                    plt.axvline(v, color="orange", label="Raw")
+            plt.ylabel("Cell Density")
+        else:
+            raise ValueError('hist_type must be "bar" or "kde"')
+        plt.xlabel(metric)
+        plt.xlim(0, 1)
+        plt.title(f"{tool.capitalize()} {metric} Distribution Across Cells")
+        plt.legend()
+        plt.tight_layout()
+        if out_path:
+            plt.savefig(out_path, bbox_inches="tight", dpi=300)
+        if not show:
+            plt.close()
+        else:
+            plt.show()
+
+    print(f"Global sensitivity: {global_metrics['sensitivity']:.4f}")
+    plot_histogram(per_cell_df, "sensitivity", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_sensitivity.png" if out_base else None, show=show)
+    
+    print(f"Global specificity: {global_metrics['specificity']:.4f}")
+    plot_histogram(per_cell_df, "specificity", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_specificity.png" if out_base else None, show=show)
+    
+    print(f"Global PPV: {global_metrics['ppv']:.4f}")
+    plot_histogram(per_cell_df, "PPV", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_PPV.png" if out_base else None, show=show)
+
+    return per_cell_df, global_metrics
