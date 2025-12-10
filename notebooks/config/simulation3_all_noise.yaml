@@ -14,9 +14,9 @@ sequencing_technology: "10XV2"
 
 # analysis parameters
 model_pkl: null  # path to celltypist model pkl file
-cellmender_max_iter: 500
-cellmender_beta: 0.1
-cellmender_init_alpha: 0.9
+cellsweep_max_iter: 500
+cellsweep_beta: 0.1
+cellsweep_init_alpha: 0.9
 cellbender_epochs: 150
 cellbender_fpr: 0.01
 cellbender_zdim: 64
@@ -40,14 +40,14 @@ leiden_resolution: 1.0
 marker_genes: null
 
 # output file names
-adata_path_cellmender_name: sim3_output_cellmender.h5ad
+adata_path_cellsweep_name: sim3_output_cellsweep.h5ad
 adata_path_cellbender_name: sim3_output_cellbender.h5
 soupx_out_prefix_name: sim3_output_soupx
 decontx_out_prefix_name: sim3_output_decontx
 adata_path_scar_name: sim3_output_scar.h5ad
 
 # output file URLs from manuscript
-cellmender_matrix_url: null
+cellsweep_matrix_url: null
 cellbender_matrix_url: null
 cellbender_matrix_filtered_url: null
 cellbender_ckpt_url: null

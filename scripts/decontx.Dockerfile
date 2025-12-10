@@ -24,4 +24,4 @@ RUN apt-get update && apt-get install -y \
 RUN R -e 'install.packages(c("BiocManager"), repos="https://cloud.r-project.org"); BiocManager::install(c("singleCellTK", "decontX"), ask=FALSE, update=FALSE, version = "3.22")'
 
 # Set working directory (same as your mounted path)
-WORKDIR /home/ruser/work/cellmender
+WORKDIR /home/ruser/work/cellsweep
