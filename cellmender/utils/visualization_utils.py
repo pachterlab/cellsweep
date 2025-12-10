@@ -180,7 +180,7 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
 
 def plot_matrix_scatterplot(
     adata1, adata2,
-    figsize=(8, 8), scale="log", point_type="matrix", density_type="scatter_with_density", alpha=0.6,
+    figsize=(8, 8), scale="log", point_type="matrix", title=None, density_type="scatter_with_density", alpha=0.6,
     cmap='viridis', x_axis='adata1', y_axis='adata2', out_path=None, show=True
 ):
     # -------------------------
@@ -280,8 +280,8 @@ def plot_matrix_scatterplot(
     all_vals = np.concatenate([x, y])
     vmin, vmax = all_vals.min(), all_vals.max()
     margin = 1.1
-    ax.set_xlim(vmin / margin, vmax * margin)
-    ax.set_ylim(vmin / margin, vmax * margin)
+    ax.set_xlim(left = 0.5, right = vmax * margin)  # left = vmin / margin
+    ax.set_ylim(bottom = 0.5, top = vmax * margin)  # bottom = vmin / margin
 
     if scale == "log":
         ax.set_xscale("log", base=2)
@@ -312,7 +312,9 @@ def plot_matrix_scatterplot(
 
     ax.set_xlabel(x_axis, fontsize=12)
     ax.set_ylabel(y_axis, fontsize=12)
-    ax.set_title(f"{y_axis} vs {x_axis} {point_type} Scatterplot", fontsize=14, fontweight='bold')
+    if title is None:
+        title = f"{y_axis} vs {x_axis} {point_type} Scatterplot"
+    ax.set_title(title, fontsize=14, fontweight='bold')
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
 
@@ -761,6 +763,18 @@ def identify_human_and_mouse_cells(adata, human_prefix="hg19_", mouse_prefix="mm
     adata.obs['genome'] = np.where(adata.obs['human_counts_total'] >= adata.obs['mouse_counts_total'], 'hg19', 'mm10')  # predict genome
     return adata
 
+def histogram_auc(values, bins=100):
+    # remove NaNs if present
+    values = np.asarray(values)
+    values = values[~np.isnan(values)]
+
+    counts, bin_edges = np.histogram(values, bins=bins)
+    bin_widths = np.diff(bin_edges)
+
+    # area under histogram
+    auc = np.sum(counts * bin_widths)
+    return auc
+
 def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell_set=None, out_path_human=None, out_path_mouse=None, show=True):
     if adata is None:
         return
@@ -806,6 +820,12 @@ def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell
     ax.set_yscale("log")
     ax.set_title(f"Cross-species Gene Counts in {processed_name} Data")
     ax.legend(title="Genome", loc="upper right")
+
+    mouse_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"], bins=100)
+    human_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"], bins=100)
+
+    print(f"{processed_name} human cell mouse gene contamination AUC:", mouse_auc)
+    print(f"{processed_name} mouse cell human gene contamination AUC:", human_auc)
 
     if out_path_mouse or out_path_human:
         # Save once, with both distributions together
@@ -1398,7 +1418,7 @@ def plot_knee_multi(
         raise ValueError("colors list must match number of adatas.")
 
     if colors is None:
-        colors = sns.color_palette("tab10", n)
+        colors = ["gray"] + sns.color_palette("tab10", n - 1)  # use gray first for raw  # colors = sns.color_palette("tab10", n)
 
     plt.figure(figsize=(8, 6))
 
@@ -1628,7 +1648,7 @@ def detect_doublets_human_mouse(adata_raw, fraction_doublet=0.15, plot_empty=Fal
     return adata_raw_original
 
 
-def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", hist_type="kde", out_base=None, show=True):
+def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", hist_type="kde", calculate_mse=True, out_base=None, show=True):
     """
     Evaluate denoising by comparing processed output (adata_processed) to ground-truth real counts (adata_real).
 
@@ -1681,6 +1701,19 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
         sensitivity = np.nan_to_num(sensitivity)
         specificity = np.nan_to_num(specificity)
         ppv = np.nan_to_num(ppv)
+        
+        if calculate_mse:
+            print("Calculating per-cell MSE - Densifies...")
+            Yp_dense = Yp.toarray() if hasattr(Yp, "toarray") else np.asarray(X)
+            Yt_dense = Yt.toarray() if hasattr(Yt, "toarray") else np.asarray(X)
+            mse = ((Yp_dense - Yt_dense) ** 2).mean(axis=1)
+            mse = np.nan_to_num(mse)
+            mse_global = ((Yp_dense - Yt_dense) ** 2).mean()
+
+            del Yp_dense
+            del Yt_dense
+        else:
+            mse = np.zeros(n_cells)
 
         # ------------ Global metrics ------------
         TP_total = TP.sum()
@@ -1696,6 +1729,7 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
             "sensitivity": sensitivity_global,
             "specificity": specificity_global,
             "ppv": ppv_global,
+            "mse": mse_global,
             "TP": TP_total,
             "FP": FP_total,
             "FN": FN_total,
@@ -1704,13 +1738,14 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
 
         # ------------ Per-cell DataFrame ------------
         per_cell_df = pd.DataFrame({
+            "sensitivity": sensitivity,
+            "specificity": specificity,
+            "PPV": ppv,
+            "MSE": mse,
             "TP": TP,
             "FP": FP,
             "FN": FN,
             "TN": TN,
-            "sensitivity": sensitivity,
-            "specificity": specificity,
-            "PPV": ppv,
         })
 
         return per_cell_df, global_metrics
@@ -1726,7 +1761,7 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
             bins = np.linspace(0, 1, 51)
             plt.hist(df[metric], bins=bins, color="steelblue", edgecolor="white", label=tool)
             if df_raw is not None:
-                plt.hist(df_raw[metric], bins=bins, color="orange", edgecolor="white", alpha=0.7, label="Raw")
+                plt.hist(df_raw[metric], bins=bins, color="gray", edgecolor="white", alpha=0.7, label="Raw")
             plt.ylabel("Number of cells")
         elif hist_type == "kde":
             if np.var(df[metric]) > 0:
@@ -1737,16 +1772,16 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
                 plt.axvline(v, color="steelblue", label=tool, linewidth=2)
             if df_raw is not None:
                 if np.var(df_raw[metric]) > 0:
-                    sns.kdeplot(df_raw[metric], fill=False, color="orange", bw_adjust=1, label="Raw", linewidth=2)
+                    sns.kdeplot(df_raw[metric], fill=False, color="gray", bw_adjust=1, label="Raw", linewidth=2)
                 else:
                     # Plot a vertical line showing the constant value
                     v = df_raw[metric][0]
-                    plt.axvline(v, color="orange", label="Raw", linewidth=2)
+                    plt.axvline(v, color="gray", label="Raw", linewidth=2)
             plt.ylabel("Cell Density")
         else:
             raise ValueError('hist_type must be "bar" or "kde"')
         plt.xlabel(metric)
-        plt.xlim(0, 1.02)
+        plt.xlim(-0.02, 1.02)
         plt.title(f"{tool.capitalize()} {metric} Distribution Across Cells")
         plt.legend()
         plt.tight_layout()
@@ -1765,5 +1800,8 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     
     print(f"{tool} Global PPV: {global_metrics['ppv']:.4f}")
     plot_histogram(per_cell_df, "PPV", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_PPV.png" if out_base else None, show=show)
+
+    print(f"{tool} Global MSE: {global_metrics['mse']:.4f}")
+    plot_histogram(per_cell_df, "MSE", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_MSE.png" if out_base else None, show=show)
 
     return per_cell_df, global_metrics
