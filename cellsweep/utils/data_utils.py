@@ -143,7 +143,7 @@ def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_ce
 
     return adata
 
-def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_column="is_empty", umi_cutoff=None, expected_cells=None, model_pkl=None, verbose=0, quiet=False, logger=None):
+def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_column="is_empty", celltype_column="celltype", umi_cutoff=None, expected_cells=None, model_pkl=None, verbose=0, quiet=False, logger=None):
     """
     Adds a 'celltype' column to adata.obs based on the specified method.
     """
@@ -186,10 +186,10 @@ def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_co
         predictions = celltypist.annotate(adata_real, model=model_pkl, majority_voting=True)
         pred_labels = predictions.predicted_labels[['majority_voting']]
         pred_labels = pred_labels.reindex(adata_real.obs_names)  # reorder to match adata_real.obs index
-        adata_real.obs['celltype'] = pred_labels['majority_voting'].values
-        adata.obs["celltype"] = adata_real.obs["celltype"].reindex(adata.obs_names)
+        adata_real.obs[celltype_column] = pred_labels['majority_voting'].values
+        adata.obs[celltype_column] = adata_real.obs[celltype_column].reindex(adata.obs_names)
         if filter_empty:
-            adata.obs["celltype"] = adata.obs["celltype"].cat.add_categories([empty_droplet_category_name]).fillna(empty_droplet_category_name)
+            adata.obs[celltype_column] = adata.obs[celltype_column].cat.add_categories([empty_droplet_category_name]).fillna(empty_droplet_category_name)
     #!!! add more methods here
     else:
         raise ValueError(f"Unknown method {method} for determining cell types.")

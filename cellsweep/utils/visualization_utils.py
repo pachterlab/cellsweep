@@ -21,8 +21,9 @@ import anndata as ad
 # from scipy.stats import pearsonr
 import torch
 import tarfile
+from cellsweep.constants import CellBender_Fig2_to_Immune_All_High_celltype_mapping, CellBender_Fig2_to_Immune_All_Low_celltype_mapping, CellTypistLow_to_ImmuneMajor, immune_markers
 from upsetplot import from_contents, UpSet
-from .data_utils import take_adata_cell_gene_intersection, infer_empty_droplets
+from .data_utils import take_adata_cell_gene_intersection, infer_empty_droplets, determine_cell_types
 from .logger_utils import setup_logger
 
 default_colors = [
@@ -178,18 +179,16 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
     else:
         plt.close()
 
-def plot_matrix_scatterplot(
-    adata1, adata2,
-    figsize=(8, 8), scale="log", point_type="matrix", title=None, density_type="scatter_with_density", alpha=0.6,
-    cmap='viridis', x_axis='adata1', y_axis='adata2', out_path=None, show=True
-):
+def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_type="matrix", title=None, density_type="scatter_with_density", alpha=0.6, cmap='viridis', x_axis='adata1', y_axis='adata2', out_path=None, show=True):
     # -------------------------
     # 1. Match cells + genes
     # -------------------------
     if adata1 is None or adata2 is None:
         print("One of the adatas is None, skipping matrix scatterplot.")
         return 
-    adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
+    
+    if isinstance(adata1, ad.AnnData) and isinstance(adata2, ad.AnnData):
+        adata1, adata2 = take_adata_cell_gene_intersection(adata1, adata2)
     
     if point_type == "matrix":
         X1 = adata1.X
@@ -223,6 +222,9 @@ def plot_matrix_scatterplot(
     elif point_type == "gene":
         x = np.array(adata1.X.sum(axis=0)).ravel()
         y = np.array(adata2.X.sum(axis=0)).ravel()
+    elif point_type == "custom":
+        x = adata1
+        y = adata2
     else:
         raise ValueError(f"Unknown point_type '{point_type}'. Use 'matrix', 'cell', or 'gene'.")
 
@@ -835,7 +837,7 @@ def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell
     if not show:
         plt.close()
 
-def plot_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", fill_histogram=True, marginal_color_number=4, bin_number=20, show_marginal_ticks=False, show_point_movement=False, max_points=None, seed=42, out_path=None, show=True):    
+def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", fill_histogram=True, marginal_color_number=4, bin_number=20, show_marginal_ticks=False, show_point_movement=False, max_points=None, seed=42, out_path=None, show=True):    
     if adata_processed is None:
         return  # nothing to plot
     
@@ -1648,6 +1650,42 @@ def detect_doublets_human_mouse(adata_raw, fraction_doublet=0.15, plot_empty=Fal
     return adata_raw_original
 
 
+def plot_raw_and_processed_histogram(processed_values, metric, raw_values=None, tool="Denoised", hist_type="kde", out_path=None, show=True):
+    if hist_type == "bar":
+        bins = np.linspace(0, 1, 51)
+        plt.hist(processed_values, bins=bins, color="steelblue", edgecolor="white", label=tool)
+        if raw_values is not None:
+            plt.hist(raw_values, bins=bins, color="gray", edgecolor="white", alpha=0.7, label="Raw")
+        plt.ylabel("Number of cells")
+    elif hist_type == "kde":
+        if np.var(processed_values) > 0:
+            sns.kdeplot(processed_values, fill=False, color="steelblue", bw_adjust=1, label=tool, linewidth=2)
+        else:
+            # Plot a vertical line showing the constant value
+            v = processed_values[0]
+            plt.axvline(v, color="steelblue", label=tool, linewidth=2)
+        if raw_values is not None:
+            if np.var(raw_values) > 0:
+                sns.kdeplot(raw_values, fill=False, color="gray", bw_adjust=1, label="Raw", linewidth=2)
+            else:
+                # Plot a vertical line showing the constant value
+                v = raw_values[0]
+                plt.axvline(v, color="gray", label="Raw", linewidth=2)
+        plt.ylabel("Cell Density")
+    else:
+        raise ValueError('hist_type must be "bar" or "kde"')
+    plt.xlabel(metric)
+    plt.xlim(-0.02, 1.02)
+    plt.title(f"{tool.capitalize()} {metric} Distribution Across Cells")
+    plt.legend()
+    plt.tight_layout()
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
 def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", hist_type="kde", calculate_mse=True, out_base=None, show=True):
     """
     Evaluate denoising by comparing processed output (adata_processed) to ground-truth real counts (adata_real).
@@ -1756,52 +1794,113 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     if tool != "raw":  # (Yr_bin != Yp_bin).nnz != 0:  # working with non-raw
         per_cell_df_raw, _ = calculate_dataframes(Yt_bin, Yr_bin)
 
-    def plot_histogram(df, metric, df_raw=None, tool="Denoised", hist_type="kde", out_path=None, show=True):
-        if hist_type == "bar":
-            bins = np.linspace(0, 1, 51)
-            plt.hist(df[metric], bins=bins, color="steelblue", edgecolor="white", label=tool)
-            if df_raw is not None:
-                plt.hist(df_raw[metric], bins=bins, color="gray", edgecolor="white", alpha=0.7, label="Raw")
-            plt.ylabel("Number of cells")
-        elif hist_type == "kde":
-            if np.var(df[metric]) > 0:
-                sns.kdeplot(df[metric], fill=False, color="steelblue", bw_adjust=1, label=tool, linewidth=2)
-            else:
-                # Plot a vertical line showing the constant value
-                v = df[metric][0]
-                plt.axvline(v, color="steelblue", label=tool, linewidth=2)
-            if df_raw is not None:
-                if np.var(df_raw[metric]) > 0:
-                    sns.kdeplot(df_raw[metric], fill=False, color="gray", bw_adjust=1, label="Raw", linewidth=2)
-                else:
-                    # Plot a vertical line showing the constant value
-                    v = df_raw[metric][0]
-                    plt.axvline(v, color="gray", label="Raw", linewidth=2)
-            plt.ylabel("Cell Density")
-        else:
-            raise ValueError('hist_type must be "bar" or "kde"')
-        plt.xlabel(metric)
-        plt.xlim(-0.02, 1.02)
-        plt.title(f"{tool.capitalize()} {metric} Distribution Across Cells")
-        plt.legend()
-        plt.tight_layout()
-        if out_path:
-            plt.savefig(out_path, bbox_inches="tight", dpi=300)
-        if not show:
-            plt.close()
-        else:
-            plt.show()
-
     print(f"{tool} Global sensitivity: {global_metrics['sensitivity']:.4f}")
-    plot_histogram(per_cell_df, "sensitivity", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_sensitivity.png" if out_base else None, show=show)
+    plot_raw_and_processed_histogram(per_cell_df["sensitivity"], "sensitivity", raw_values=per_cell_df_raw["sensitivity"], tool=tool, hist_type=hist_type, out_path=f"{out_base}_sensitivity.png" if out_base else None, show=show)
     
     print(f"{tool} Global specificity: {global_metrics['specificity']:.4f}")
-    plot_histogram(per_cell_df, "specificity", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_specificity.png" if out_base else None, show=show)
-    
+    plot_raw_and_processed_histogram(per_cell_df["specificity"], "specificity", raw_values=per_cell_df_raw["specificity"], tool=tool, hist_type=hist_type, out_path=f"{out_base}_specificity.png" if out_base else None, show=show)
+
     print(f"{tool} Global PPV: {global_metrics['ppv']:.4f}")
-    plot_histogram(per_cell_df, "PPV", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_PPV.png" if out_base else None, show=show)
+    plot_raw_and_processed_histogram(per_cell_df["PPV"], "PPV", raw_values=per_cell_df_raw["PPV"], tool=tool, hist_type=hist_type, out_path=f"{out_base}_PPV.png" if out_base else None, show=show)
 
     print(f"{tool} Global MSE: {global_metrics['mse']:.4f}")
-    plot_histogram(per_cell_df, "MSE", df_raw=per_cell_df_raw, tool=tool, hist_type=hist_type, out_path=f"{out_base}_MSE.png" if out_base else None, show=show)
+    plot_raw_and_processed_histogram(per_cell_df["MSE"], "MSE", raw_values=per_cell_df_raw["MSE"], tool=tool, hist_type=hist_type, out_path=f"{out_base}_MSE.png" if out_base else None, show=show)
 
     return per_cell_df, global_metrics
+
+
+def compute_pbmc_correlations(adata_dict, immune_markers_dict=None, CellTypistLow_to_ImmuneMajor_dict=None):
+    correlation_results = {}  # store correlations per immune category
+    correlation_average_values = {}
+
+    if immune_markers_dict is None:
+        immune_markers_dict = immune_markers
+    if CellTypistLow_to_ImmuneMajor_dict is None:
+        CellTypistLow_to_ImmuneMajor_dict = CellTypistLow_to_ImmuneMajor
+
+    for adata_name, adata_processed in adata_dict.items():
+        if adata_processed is None:
+            continue
+
+        print(f"Computing correlations for {adata_name}...")
+        correlation_results[adata_name] = {}
+        correlation_average_values[adata_name] = {}
+        
+        if "celltype_for_correlation" not in adata_processed.obs.columns:
+            adata_processed = determine_cell_types(adata_processed, method="celltypist", model_pkl="Immune_All_Low.pkl", celltype_column="celltype_low", filter_empty=False)
+            adata_processed.obs["celltype_for_correlation"] = adata_processed.obs["celltype_low"].map(CellTypistLow_to_ImmuneMajor_dict).fillna("Other")
+
+        for celltype, genes in immune_markers_dict.items():
+            # ---- Filter to cells of that cell type ----
+            adata_sub = adata_processed[adata_processed.obs["celltype_for_correlation"] == celltype].copy()
+            
+            if adata_sub.n_obs == 0:
+                print(f"  ⚠️ No cells found for {celltype}. Skipping.")
+                continue
+
+            # ---- Keep only marker genes present in the dataset ----
+            genes_present = [g for g in genes if g in adata_sub.var_names]
+
+            if len(genes_present) < 2:
+                print(f"  ⚠️ Fewer than 2 marker genes present for {celltype}. Skipping.")
+                continue
+
+            # ---- Extract the expression matrix ----
+            X = adata_sub[:, genes_present].X
+
+            # Convert sparse matrix to dense if needed
+            if not isinstance(X, np.ndarray):
+                X = X.toarray()
+
+            # ---- Compute correlation ----
+            df = pd.DataFrame(X, columns=genes_present)
+            corr = df.corr(method="pearson")
+
+            # ---- Save result ----
+            correlation_results[adata_name][celltype] = corr
+            corr_vals = corr.values
+            mask = ~np.eye(corr_vals.shape[0], dtype=bool)
+            correlation_average_values[adata_name][celltype] = corr_vals[mask].mean()
+    
+    return correlation_results, correlation_average_values
+
+def plot_pbmc_correlation_scatterplot(correlation_average_values, tool_name, out_path=None, show=True):
+    if "raw" not in correlation_average_values:
+        raise ValueError("correlation_average_values must contain 'raw' key for raw correlations.")
+    if tool_name not in correlation_average_values:
+        raise ValueError(f"correlation_average_values must contain '{tool_name}' key for processed correlations.")
+    raw_vals = correlation_average_values["raw"]
+    other_vals = correlation_average_values[tool_name]
+
+    # Ensure same celltypes exist in both
+    celltypes = set(raw_vals.keys()).intersection(other_vals.keys())
+
+    # Build paired vectors
+    x = [raw_vals[ct] for ct in celltypes]
+    y = [other_vals[ct] for ct in celltypes]
+
+    plt.figure(figsize=(7, 7))
+    plt.scatter(x, y, s=80)
+
+    # Add labels to each point
+    for ct, x_i, y_i in zip(celltypes, x, y):
+        plt.text(x_i, y_i, ct, fontsize=9, ha="right", va="bottom")
+
+    plt.xlabel("Raw correlation")
+    plt.ylabel(f"{tool_name} correlation")
+    plt.title("Marker-gene average correlations per cell type")
+
+    # Optional: add unity line
+    minv = min(x + y)
+    maxv = max(x + y)
+    plt.plot([minv, maxv], [minv, maxv], "k--", alpha=0.4)
+
+    plt.tight_layout()
+    
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+
+    if not show:
+        plt.close()
+    else:
+        plt.show()

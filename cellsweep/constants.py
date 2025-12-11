@@ -1,4 +1,4 @@
-"""cellsweep constant values."""
+"""cellmender constant values."""
 
 CellBender_Fig2_to_Immune_All_High_celltype_mapping = {
     "Monocytes/neutrophils": [
@@ -102,5 +102,135 @@ CellBender_Fig2_to_Immune_All_Low_celltype_mapping = {
 
     "pDCs": [
         "pDC", "pDC precursor"
+    ]
+}
+
+CellTypistLow_to_ImmuneMajor = {
+
+    # ---- Monocytes/neutrophils ----
+    "Classical monocytes": "Monocytes",
+    "Non-classical monocytes": "Monocytes",
+    "Monocytes": "Monocytes",
+    "Monocyte precursor": "Monocytes",
+    "Mono-mac": "Monocytes",
+    
+    "Intermediate macrophages": "Macrophages",
+    "Intestinal macrophages": "Macrophages",
+    "Macrophages": "Macrophages",
+    "Kupffer cells": "Macrophages",
+    "Kidney-resident macrophages": "Macrophages",
+    "Erythrophagocytic macrophages": "Macrophages",
+
+    "Neutrophils": "Neutrophils",
+    "Granulocytes": "Neutrophils",
+
+    # ---- Monocytes/pDCs ----
+    "pDC": "DC",
+    "pDC precursor": "DC",
+    "DC": "DC",
+    "DC1": "DC",
+    "DC2": "DC",
+    "DC3": "DC",
+    "Transitional DC": "DC",
+    "Migratory DCs": "DC",
+    "Cycling DCs": "DC",
+    "DC precursor": "DC",
+
+    # ---- CD4 T ----
+    "Tcm/Naive helper T cells": "CD4 T cells",
+    "Type 1 helper T cells": "CD4 T cells",
+    "Type 17 helper T cells": "CD4 T cells",
+    "Regulatory T cells": "CD4 T cells",
+    "Treg(diff)": "CD4 T cells",
+    "Follicular helper T cells": "CD4 T cells",
+
+    # ---- B ----
+    "B cells": "B cells",
+    "Cycling B cells": "B cells",
+    "Transitional B cells": "B cells",
+    "Age-associated B cells": "B cells",
+    "Naive B cells": "B cells",
+    "Pre-pro-B cells": "B cells",
+    "Pro-B cells": "B cells",
+    "Small pre-B cells": "B cells",
+    "Large pre-B cells": "B cells",
+    "Memory B cells": "B cells",
+    "Germinal center B cells": "B cells",
+    "Proliferative germinal center B cells": "B cells",
+
+    # ---- CD8 ----
+    "CD8a/a": "CD8 T cells",
+    "CD8a/b(entry)": "CD8 T cells",
+    "Tem/Temra cytotoxic T cells": "CD8 T cells",
+    "Tem/Trm cytotoxic T cells": "CD8 T cells",
+    "Trm cytotoxic T cells": "CD8 T cells",
+    "Tcm/Naive cytotoxic T cells": "CD8 T cells",
+    "Memory CD4+ cytotoxic T cells": "CD8 T cells",
+    "gamma-delta T cells": "CD8 T cells",
+    "CRTAM+ gamma-delta T cells": "CD8 T cells",
+    "Cycling gamma-delta T cells": "CD8 T cells",
+    "MAIT cells": "CD8 T cells",
+
+    # ---- NK ----
+    "NK cells": "NK cells",
+    "CD16+ NK cells": "NK cells",
+    "CD16- NK cells": "NK cells",
+    "Cycling NK cells": "NK cells",
+    "Transitional NK": "NK cells",
+
+    # ---- Progenitor ----
+    "HSC/MPP": "Monocytes",   # default major category for HSC/MPP if forced into one bucket
+    "CMP": "Monocytes",
+    "GMP": "Neutrophils",
+    "MEMP": "Eosinophils",
+    "ELP": "B cells",
+    "ETP": "CD4 T cells",
+    "Early lymphoid/T lymphoid": "CD4 T cells",
+    "Early MK": "Monocytes",
+    "Megakaryocyte precursor": "Monocytes",
+    "Megakaryocyte-erythroid-mast cell progenitor": "Eosinophils",
+
+    # ---- Baso/neutro/progenitor ----
+    "Promyelocytes": "Neutrophils",
+    "Myelocytes": "Neutrophils",
+    "Neutrophil-myeloid progenitor": "Neutrophils",
+}
+
+immune_markers = {
+    "Monocytes": [
+        "CD14", "LYZ", "FCGR3A", "MS4A7"
+    ],
+
+    "Macrophages": [
+        "CD68", "CD163", "C1QA", "C1QB", "C1QC"
+    ],
+
+    "DC": [
+        "CLEC9A", "XCR1", "CD1C", "FCER1A",
+        "IL3RA", "TCF4", "ITGAX", "CST3"
+    ],
+
+    "Neutrophils": [
+        "S100A8", "S100A9", "MPO", "FCGR3B", "ELANE"
+    ],
+
+    "Eosinophils": [
+        "CLC", "RNASE2", "RNASE3", "PRG2"
+    ],
+
+    "CD8 T cells": [
+        "CD8A", "CD8B", "GZMB", "CD3E"
+    ],
+
+    "CD4 T cells": [
+        "CD4", "CCR7", "IL7R", "TCF7", "CD3E"
+    ],
+
+    "NK cells": [
+        "NKG7", "GNLY", "PRF1", "KLRD1", "GZMB"
+    ],
+
+    "B cells": [
+        "MS4A1", "CD79A", "CD79B", "HLA-DRA", "CD19"
     ]
 }
