@@ -36,28 +36,19 @@ n_top_genes: 2000
 n_pcs: 25
 n_neighbors: 20
 leiden_resolution: 1.0
-marker_genes: {
-    "Monocytes/neutrophils": ["S100A8", "S100A9", "S100A12", "FCGR3A"],
-    "Monocytes/pDCs": ["LYZ", "CST3", "FCN1", "LILRA4"],
-    "T": ["IL32", "TRAC", "CCR7", "FOXP3", "CD8A", "CD8B", "NKG7", "GNLY", "TRGC1", "SLC4A10"],
-    "B": ["IGHD", "CD79A", "FCER2", "TNFRSF13B"],
-    "NK": ["KLRF1", "SPON2"],
-    "Progenitor": ["PPBP"],
-    "Baso./neutro./progenitor": ["SDPR", "CLU"],
-    "(Broad expression)": ["PTPRC"]
-}
+marker_genes: null
 
 # output file names
-adata_path_cellsweep_name: pbmc8k_output_cellsweep.h5ad
-adata_path_cellbender_name: pbmc8k_output_cellbender.h5
-soupx_out_prefix_name: pbmc8k_output_soupx
-decontx_out_prefix_name: pbmc8k_output_decontx
-adata_path_scar_name: pbmc8k_output_scar.h5ad
+adata_path_cellsweep_name: kidney_nuclei_10k_output_cellsweep.h5ad
+adata_path_cellbender_name: kidney_nuclei_10k_output_cellbender.h5
+soupx_out_prefix_name: kidney_nuclei_10k_output_soupx
+decontx_out_prefix_name: kidney_nuclei_10k_output_decontx
+adata_path_scar_name: kidney_nuclei_10k_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: https://caltech.box.com/shared/static/dltpt6ixhvzg0rb6h1058aamrcmi7oy7.h5ad
-cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/bnilabzuvdvtm1knpsfgy89php938qft.h5
-cellbender_ckpt_url: https://caltech.box.com/shared/static/hj41un9dz0pk5j10t8dyfj2mbllzrp6s.gz
-soupx_matrix_url: https://caltech.box.com/shared/static/7lhpw8bgwf3b3gyl7wgqe15h3yhxamld.gz
-decontx_matrix_url: https://caltech.box.com/shared/static/zzfs06lp634g2rhuuph200rvga08atzh.gz
-scar_matrix_url: https://caltech.box.com/shared/static/jhg1yd0kaao0atsyzs1yfne25dkqwz4f.h5ad
+cellsweep_matrix_url: null
+cellbender_matrix_filtered_url: null
+cellbender_ckpt_url: null
+soupx_matrix_url: null
+decontx_matrix_url: null
+scar_matrix_url: null

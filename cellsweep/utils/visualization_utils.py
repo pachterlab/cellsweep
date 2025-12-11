@@ -630,7 +630,7 @@ def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displa
 
 
 
-def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", plot_raw=True, title_raw=None, title_processed=None, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
+def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", plot_raw=True, title_raw=None, title_processed=None, log_raw=False, log_processed=False, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
     if adata_raw is None or adata_processed is None:
         print("One of the adatas is None, skipping dotplot generation.")
         return
@@ -639,16 +639,22 @@ def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, ce
     adata_raw_only_cellbender_cells = adata_raw[common_cells].copy()
     adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[[celltype_column, cluster_column]], how='left')
 
+    if log_raw != log_processed:
+        print("Warning: log_raw and log_processed are different; dotplots may not be comparable.")
+
     if plot_raw:
         print(title_raw)
-        sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby=cluster_column, standard_scale=None, save="raw_tmp.png")  # title=title_raw
+        sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby=cluster_column, standard_scale=None, save=("raw_tmp.png" if out_path_raw else None), log=log_raw)  # title=title_raw
         print("------------------------------")
-        shutil.move("figures/dotplot_raw_tmp.png", out_path_raw)
+        if out_path_raw:
+            shutil.move("figures/dotplot_raw_tmp.png", out_path_raw)
     print(title_processed)
-    sc.pl.dotplot(adata_processed, marker_genes, groupby=cluster_column, standard_scale=None, save="processed_tmp.png")  # title=title_processed
+    sc.pl.dotplot(adata_processed, marker_genes, groupby=cluster_column, standard_scale=None, save=("processed_tmp.png" if out_path_processed else None), log=log_processed)  # title=title_processed
     print("------------------------------")
-    shutil.move("figures/dotplot_processed_tmp.png", out_path_processed)
-    os.rmdir("figures")
+    if out_path_processed:
+        shutil.move("figures/dotplot_processed_tmp.png", out_path_processed)
+    if os.path.exists("figures"):
+        os.rmdir("figures")
 
 def count_cellsweep_parameters(log_path):
     with open(log_path, "r") as f:
@@ -1916,3 +1922,70 @@ def plot_pbmc_correlation_scatterplot(correlation_average_values, tool_name, out
         plt.close()
     else:
         plt.show()
+
+def calculate_single_dot(adata, cluster_number, gene_name, dataset_label="adata", cluster_column="leiden_cellsweep"):
+    cluster_size = adata.obs[cluster_column].value_counts().get(cluster_number, 0)
+    print(f"Number of cells in {dataset_label} leiden cluster {cluster_number}: {cluster_size}")
+
+    expr_vals = adata[adata.obs[cluster_column] == cluster_number, gene_name].X
+    average_expression = expr_vals.mean()
+    print(f"Average expression of {gene_name} in {dataset_label} leiden cluster {cluster_number}: {average_expression}")
+
+    expr_vals = np.array(expr_vals).ravel()
+    return expr_vals
+
+def plot_multiple_kdes(expr_list, labels=None, colors=None, gene_name=None, log=False, title=None, bw_adjust=1.0):
+    if labels is None:
+        labels = [f"set_{i+1}" for i in range(len(expr_list))]
+    if colors is None:
+        colors = sns.color_palette("tab10", n_colors=len(expr_list))
+    
+    cleaned = []
+    for arr in expr_list:
+
+        # If arr is a sparse matrix
+        if sparse.issparse(arr):
+            arr = arr.toarray()
+
+        # If arr is an array of objects containing sparse matrices, unpack it
+        if isinstance(arr, np.ndarray) and arr.dtype == object:
+            # flatten object array and extract inner objects
+            flat = []
+            for item in arr:
+                if sparse.issparse(item):
+                    flat.append(item.toarray())
+                else:
+                    flat.append(item)
+            arr = np.concatenate(flat)
+
+        # Now ensure numeric ndarray
+        arr = np.asarray(arr).ravel()
+
+        cleaned.append(arr)
+
+    plt.figure(figsize=(6, 4))
+
+    for i, arr in enumerate(cleaned):
+        lbl = labels[i]
+        col = colors[i]
+
+        # Skip zero-variance arrays
+        if arr.size == 0 or np.all(arr == arr[0]):
+            print(f"Skipping KDE for {lbl}: zero-variance or empty array.")
+            continue
+
+        sns.kdeplot(arr, bw_adjust=bw_adjust, fill=False, label=lbl, color=col)
+
+    plt.xlabel(f"{gene_name} expression" if gene_name else "Expression")
+    plt.ylabel("Density")
+    if log:
+        plt.yscale("log")
+
+    if title:
+        plt.title(title)
+
+    if labels:
+        plt.legend()
+
+    plt.tight_layout()
+    plt.show()
