@@ -3,6 +3,7 @@
 import os
 import numpy as np
 from scipy import io, sparse
+import pandas as pd
 from .logger_utils import setup_logger
 
 def take_adata_cell_gene_intersection(adata1, adata2):
@@ -230,7 +231,7 @@ def create_base_adata(n_cells=5000, n_genes=1000, seed=42):
     np.random.seed(seed)
 
     # Create a random sparse count matrix
-    X = sp.random(
+    X = sparse.random(
         n_cells, n_genes,
         density=0.05,
         format="csr",

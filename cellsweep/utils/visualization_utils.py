@@ -21,7 +21,7 @@ import anndata as ad
 # from scipy.stats import pearsonr
 import torch
 import tarfile
-from cellsweep.constants import CellBender_Fig2_to_Immune_All_High_celltype_mapping, CellBender_Fig2_to_Immune_All_Low_celltype_mapping, CellTypistLow_to_ImmuneMajor, immune_markers
+from cellsweep.constants import CellBender_Fig2_to_Immune_All_High_celltype_mapping, CellBender_Fig2_to_Immune_All_Low_celltype_mapping, CellTypistHigh_to_ImmuneMajor, CellTypistLow_to_ImmuneMajor, immune_markers
 from upsetplot import from_contents, UpSet
 from .data_utils import take_adata_cell_gene_intersection, infer_empty_droplets, determine_cell_types
 from .logger_utils import setup_logger
@@ -53,6 +53,11 @@ def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None,
     }
     """
     upset_data_dict = {k: v for k, v in upset_data_dict.items() if v is not None}  # iterate through dict, and if a value is None, skip that entry
+    if len(upset_data_dict) == 0:
+        raise ValueError("No data provided for UpSet plot.")
+    elif len(upset_data_dict) == 1:
+        print("Only one set provided for UpSet plot; skipping plot.")
+        return
     upset_data = from_contents(upset_data_dict)
     ax_dict = UpSet(upset_data, show_counts=True).plot()
     if title:
@@ -554,6 +559,10 @@ def plot_per_cell_difference(adata_raw, adata_denoised, bins=None, plot_type="ce
     return sums  # return values if user wants to inspect/plot further
 
 def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displayed_column="celltype", verbose=0, seed=42, wompwomp_path=None, wompwomp_env=None):
+    if len(adatas) < 2:
+        print("At least two adatas are required for alluvial plot generation; skipping.")
+        return
+
     logger = setup_logger(verbose=verbose)
     verbose = True if verbose >= 1 else False
 
@@ -1742,8 +1751,8 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
         
         if calculate_mse:
             print("Calculating per-cell MSE - Densifies...")
-            Yp_dense = Yp.toarray() if hasattr(Yp, "toarray") else np.asarray(X)
-            Yt_dense = Yt.toarray() if hasattr(Yt, "toarray") else np.asarray(X)
+            Yp_dense = Yp.toarray() if hasattr(Yp, "toarray") else np.asarray(Yp)
+            Yt_dense = Yt.toarray() if hasattr(Yt, "toarray") else np.asarray(Yt)
             mse = ((Yp_dense - Yt_dense) ** 2).mean(axis=1)
             mse = np.nan_to_num(mse)
             mse_global = ((Yp_dense - Yt_dense) ** 2).mean()
@@ -1809,14 +1818,14 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     return per_cell_df, global_metrics
 
 
-def compute_pbmc_correlations(adata_dict, immune_markers_dict=None, CellTypistLow_to_ImmuneMajor_dict=None):
+def compute_pbmc_correlations(adata_dict, immune_markers_dict=None, CellTypist_to_ImmuneMajor_dict=None):
     correlation_results = {}  # store correlations per immune category
     correlation_average_values = {}
 
     if immune_markers_dict is None:
         immune_markers_dict = immune_markers
-    if CellTypistLow_to_ImmuneMajor_dict is None:
-        CellTypistLow_to_ImmuneMajor_dict = CellTypistLow_to_ImmuneMajor
+    if CellTypist_to_ImmuneMajor_dict is None:
+        CellTypist_to_ImmuneMajor_dict = CellTypistHigh_to_ImmuneMajor
 
     for adata_name, adata_processed in adata_dict.items():
         if adata_processed is None:
@@ -1827,8 +1836,8 @@ def compute_pbmc_correlations(adata_dict, immune_markers_dict=None, CellTypistLo
         correlation_average_values[adata_name] = {}
         
         if "celltype_for_correlation" not in adata_processed.obs.columns:
-            adata_processed = determine_cell_types(adata_processed, method="celltypist", model_pkl="Immune_All_Low.pkl", celltype_column="celltype_low", filter_empty=False)
-            adata_processed.obs["celltype_for_correlation"] = adata_processed.obs["celltype_low"].map(CellTypistLow_to_ImmuneMajor_dict).fillna("Other")
+            adata_processed = determine_cell_types(adata_processed, method="celltypist", model_pkl="Immune_All_High.pkl", celltype_column="celltype_low", filter_empty=False)
+            adata_processed.obs["celltype_for_correlation"] = adata_processed.obs["celltype_low"].map(CellTypist_to_ImmuneMajor_dict).fillna("Other")
 
         for celltype, genes in immune_markers_dict.items():
             # ---- Filter to cells of that cell type ----

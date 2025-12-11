@@ -7,8 +7,8 @@ from .logger_utils import *
 try:
     from .visualization_utils import *
 except ImportError as e:
-    pass  # visualization_utils may depend on optional packages not installed
     # print(f"Failed to import visualization_utils: {e}")
+    pass  # visualization_utils may depend on optional packages not installed
     # import warnings
     #     warnings.warn(
     #         "Optional module `visualization_utils` not imported. "
