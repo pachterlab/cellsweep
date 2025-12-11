@@ -274,7 +274,25 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_t
     elif density_type == "scatter_with_kde":
         print("Calculating scatterplot...")
         xy = np.vstack([x, y])
-        z = gaussian_kde(xy)(xy)
+        
+        # check variance to avoid singular matrix error
+        var_x = np.var(x)
+        var_y = np.var(y)
+
+        if var_x == 0 and var_y == 0:
+            raise ValueError("Both x and y are constant; cannot compute KDE.")
+
+        if var_x == 0 or var_y == 0:  # Fallback: 1D KDE on the non-constant dim
+            if var_x == 0:
+                xy_nonconst = xy[1:2, :]  # keep y
+            else:
+                xy_nonconst = xy[0:1, :]  # keep x
+
+            kde = gaussian_kde(xy_nonconst)
+            z = kde(xy_nonconst).ravel()
+        else:
+            z = gaussian_kde(xy)(xy)
+
         # Sort by density (lowest first → densest points plotted last)
         order = z.argsort()
         x, y, z = x[order], y[order], z[order]
@@ -287,8 +305,8 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_t
     all_vals = np.concatenate([x, y])
     vmin, vmax = all_vals.min(), all_vals.max()
     margin = 1.1
-    ax.set_xlim(left = 0.5, right = vmax * margin)  # left = vmin / margin
-    ax.set_ylim(bottom = 0.5, top = vmax * margin)  # bottom = vmin / margin
+    ax.set_xlim(left = 0.475, right = vmax * margin)  # left = vmin / margin
+    ax.set_ylim(bottom = 0.475, top = vmax * margin)  # bottom = vmin / margin
 
     if scale == "log":
         ax.set_xscale("log", base=2)
@@ -1665,7 +1683,16 @@ def detect_doublets_human_mouse(adata_raw, fraction_doublet=0.15, plot_empty=Fal
     return adata_raw_original
 
 
-def plot_raw_and_processed_histogram(processed_values, metric, raw_values=None, tool="Denoised", hist_type="kde", xlim=(-0.02, 1.02), log=False, out_path=None, show=True):
+def plot_raw_and_processed_histogram(processed_values, metric, raw_values=None, tool="Denoised", hist_type="kde", xlim=(-0.02, 1.02), log=False, logx=False, out_path=None, show=True):
+    if len(processed_values) == 0:
+        raise ValueError("processed_values is empty.")
+    
+    if logx:
+        # add small constant to avoid log(0)
+        processed_values = np.array(processed_values) + 1e-10
+        if raw_values is not None:
+            raw_values = np.array(raw_values) + 1e-10
+
     if hist_type == "bar":
         bins = np.linspace(0, 1, 51)
         plt.hist(processed_values, bins=bins, color="steelblue", edgecolor="white", label=tool)
@@ -1692,6 +1719,8 @@ def plot_raw_and_processed_histogram(processed_values, metric, raw_values=None, 
     plt.xlabel(metric)
     if log:
         plt.yscale("log")
+    if logx:
+        plt.xscale("log")
     if xlim is not None:
         plt.xlim(xlim)
     plt.title(f"{tool.capitalize()} {metric} Distribution Across Cells")
@@ -1843,6 +1872,11 @@ def compute_pbmc_correlations(adata_dict, immune_markers_dict=None, CellTypist_t
         print(f"Computing correlations for {adata_name}...")
         correlation_results[adata_name] = {}
         correlation_average_values[adata_name] = {}
+
+        if adata_name == "raw":
+            # keep only cells where adata_processed.obs["is_empty"] == False
+            if "is_empty" in adata_processed.obs.columns:
+                adata_processed = adata_processed[~adata_processed.obs["is_empty"]].copy()
         
         if "celltype_for_correlation" not in adata_processed.obs.columns:
             adata_processed = determine_cell_types(adata_processed, method="celltypist", model_pkl="Immune_All_High.pkl", celltype_column="celltype_low", filter_empty=False)
@@ -1878,7 +1912,7 @@ def compute_pbmc_correlations(adata_dict, immune_markers_dict=None, CellTypist_t
             correlation_results[adata_name][celltype] = corr
             corr_vals = corr.values
             mask = ~np.eye(corr_vals.shape[0], dtype=bool)
-            correlation_average_values[adata_name][celltype] = corr_vals[mask].mean()
+            correlation_average_values[adata_name][celltype] = np.nanmean(corr_vals[mask])
     
     return correlation_results, correlation_average_values
 
@@ -1906,11 +1940,11 @@ def plot_pbmc_correlation_scatterplot(correlation_average_values, tool_name, out
 
     plt.xlabel("Raw correlation")
     plt.ylabel(f"{tool_name} correlation")
-    plt.title("Marker-gene average correlations per cell type")
+    plt.title(f"{tool_name} vs. raw marker-gene average correlations per cell type")
 
     # Optional: add unity line
-    minv = min(x + y)
-    maxv = max(x + y)
+    minv = -1  # min(x + y)
+    maxv = 1  # max(x + y)
     plt.plot([minv, maxv], [minv, maxv], "k--", alpha=0.4)
 
     plt.tight_layout()

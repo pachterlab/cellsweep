@@ -1,4 +1,4 @@
-description: Simulation 1 - all noise
+description: Simulation 4 - small noise, ambient only
 url: null
 
 # data file URLs and names
@@ -39,11 +39,11 @@ leiden_resolution: 1.0
 marker_genes: null
 
 # output file names
-adata_path_cellsweep_name: sim3_output_cellsweep.h5ad
-adata_path_cellbender_name: sim3_output_cellbender.h5
-soupx_out_prefix_name: sim3_output_soupx
-decontx_out_prefix_name: sim3_output_decontx
-adata_path_scar_name: sim3_output_scar.h5ad
+adata_path_cellsweep_name: sim4_output_cellsweep.h5ad
+adata_path_cellbender_name: sim4_output_cellbender.h5
+soupx_out_prefix_name: sim4_output_soupx
+decontx_out_prefix_name: sim4_output_decontx
+adata_path_scar_name: sim4_output_scar.h5ad
 
 # output file URLs from manuscript
 cellsweep_matrix_url: null
@@ -61,6 +61,6 @@ markers_per_type: 10
 marker_boost: 15
 type_proportions: null
 empty_prob: 0.8
-alpha: 1
+alpha: 0.03
 beta: 0
 expected_cell_size: 1000

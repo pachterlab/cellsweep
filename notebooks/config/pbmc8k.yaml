@@ -24,7 +24,7 @@ cellbender_expected_cells: null
 cellbender_total_droplets: null
 scar_epochs: 200
 scar_prob: 0.995
-expected_cells: 33148
+expected_cells: 8381
 min_genes: 0
 min_cells: 0
 umi_top_percentile_to_remove: 5

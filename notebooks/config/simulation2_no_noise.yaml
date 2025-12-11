@@ -62,4 +62,5 @@ marker_boost: 15
 type_proportions: null
 empty_prob: 0.8
 alpha: 0
+beta: 0
 expected_cell_size: 1000

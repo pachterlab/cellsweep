@@ -117,17 +117,13 @@ CellTypistHigh_to_ImmuneMajor = {
     "pDC": "DC",
     "pDC precursor": "DC",
     "MNP": "Neutrophils",
+    "B cells": "B cells",
+    "B-cell lineage": "B cells",
+    "Plasma cells": "B cells",
     "T cells": "CD4 T cells",
     "Double-negative thymocytes": "CD4 T cells",
     "Double-positive thymocytes": "CD4 T cells",
     "ETP": "CD4 T cells",
-    "ILC": "ILC",
-    "ILC precursor": "ILC",
-    "HSC/MPP": "HSC/MPP",
-    "Early MK": "Early MK",
-    "Megakaryocyte precursor": "Megakaryocyte precursor",
-    "Promyelocytes": "Promyelocytes",
-    "Myelocytes": "Myelocytes",
 }
 
 CellTypistLow_to_ImmuneMajor = {
@@ -231,8 +227,7 @@ immune_markers = {
     ],
 
     "DC": [
-        "CLEC9A", "XCR1", "CD1C", "FCER1A",
-        "IL3RA", "TCF4", "ITGAX", "CST3"
+        "CLEC9A", "XCR1", "CD1C", "FCER1A", "IL3RA", "TCF4", "ITGAX", "CST3"
     ],
 
     "Neutrophils": [
