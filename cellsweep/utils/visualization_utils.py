@@ -1659,7 +1659,7 @@ def detect_doublets_human_mouse(adata_raw, fraction_doublet=0.15, plot_empty=Fal
     return adata_raw_original
 
 
-def plot_raw_and_processed_histogram(processed_values, metric, raw_values=None, tool="Denoised", hist_type="kde", out_path=None, show=True):
+def plot_raw_and_processed_histogram(processed_values, metric, raw_values=None, tool="Denoised", hist_type="kde", xlim=(-0.02, 1.02), log=False, out_path=None, show=True):
     if hist_type == "bar":
         bins = np.linspace(0, 1, 51)
         plt.hist(processed_values, bins=bins, color="steelblue", edgecolor="white", label=tool)
@@ -1684,7 +1684,10 @@ def plot_raw_and_processed_histogram(processed_values, metric, raw_values=None, 
     else:
         raise ValueError('hist_type must be "bar" or "kde"')
     plt.xlabel(metric)
-    plt.xlim(-0.02, 1.02)
+    if log:
+        plt.yscale("log")
+    if xlim is not None:
+        plt.xlim(xlim)
     plt.title(f"{tool.capitalize()} {metric} Distribution Across Cells")
     plt.legend()
     plt.tight_layout()

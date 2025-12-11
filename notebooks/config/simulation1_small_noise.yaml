@@ -5,15 +5,15 @@ url: null
 adata_raw_url: null
 adata_raw_file_name: "adata_raw.h5ad"
 raw_tar_url: null
-raw_tar_file_name: null
 raw_tar_file_dir_suffix: null
 filtered_tar_url: null
-filtered_tar_file_name: null
 filtered_tar_file_dir_suffix: null
 sequencing_technology: "10XV2"
 
 # analysis parameters
-model_pkl: null  # path to celltypist model pkl file
+model_pkl: null  # path, filename, or url for celltypist model pkl file
+celltypist_convert: False
+celltypist_map_file: null
 cellsweep_max_iter: 500
 cellsweep_beta: 0.1
 cellsweep_init_alpha: 0.9
@@ -25,7 +25,6 @@ cellbender_total_droplets: null
 scar_epochs: 200
 scar_prob: 0.975
 expected_cells: 200  # see below - N * (1 - empty_prob)
-cs_empty_threshold: 10
 min_genes: 0
 min_cells: 0
 umi_top_percentile_to_remove: 0

@@ -3,17 +3,17 @@ url: https://www.10xgenomics.com/datasets/8-k-pbm-cs-from-a-healthy-donor-2-stan
 
 # data file URLs and names
 adata_raw_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/pbmc8k/pbmc8k_raw_gene_bc_matrices_h5.h5
-adata_raw_file_name: pbmc8k_raw_gene_bc_matrices_h5.h5
+adata_raw_file_name: null  # automatically takes file name from adata_raw_url if provided
 raw_tar_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/pbmc8k/pbmc8k_raw_gene_bc_matrices.tar.gz
-raw_tar_file_name: pbmc8k_raw_gene_bc_matrices.tar.gz
-raw_tar_file_dir_suffix: raw_gene_bc_matrices/GRCh38
+raw_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
 filtered_tar_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/pbmc8k/pbmc8k_filtered_gene_bc_matrices.tar.gz
-filtered_tar_file_name: pbmc8k_filtered_gene_bc_matrices.tar.gz
-filtered_tar_file_dir_suffix: filtered_gene_bc_matrices/GRCh38
+filtered_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
 sequencing_technology: 10XV2
 
 # analysis parameters
-model_pkl: Immune_All_High.pkl  # path to celltypist model pkl file
+model_pkl: Immune_All_High.pkl  # path, filename, or url for celltypist model pkl file
+celltypist_convert: False
+celltypist_map_file: null
 cellsweep_max_iter: 500
 cellsweep_beta: 0.1
 cellsweep_init_alpha: 0.9
@@ -24,8 +24,7 @@ cellbender_expected_cells: null
 cellbender_total_droplets: null
 scar_epochs: 200
 scar_prob: 0.995
-expected_cells: 8381
-cs_empty_threshold: 10
+expected_cells: 33148
 min_genes: 0
 min_cells: 0
 umi_top_percentile_to_remove: 5

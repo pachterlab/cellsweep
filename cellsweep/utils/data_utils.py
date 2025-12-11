@@ -2,7 +2,9 @@
 
 import os
 import numpy as np
+import urllib.request
 from scipy import io, sparse
+import anndata as ad
 import pandas as pd
 from .logger_utils import setup_logger
 
@@ -144,7 +146,7 @@ def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_ce
 
     return adata
 
-def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_column="is_empty", celltype_column="celltype", umi_cutoff=None, expected_cells=None, model_pkl=None, verbose=0, quiet=False, logger=None):
+def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_column="is_empty", celltype_column="celltype", umi_cutoff=None, expected_cells=None, model_pkl=None, celltypist_convert=False, celltypist_map_file=None, verbose=0, quiet=False, logger=None):
     """
     Adds a 'celltype' column to adata.obs based on the specified method.
     """
@@ -176,7 +178,20 @@ def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_co
         import celltypist
         if model_pkl is None:
             raise ValueError("model_pkl must be provided when method is 'celltypist'.")
-        celltypist.models.download_models(force_update = False)
+        if not model_pkl in set(celltypist.models.models_description()["model"]):
+            model_pkl_url = model_pkl
+            model_pkl_dir = celltypist.models.data_path  # default directory for celltypist models
+            model_pkl_name = model_pkl_url.split("/")[-1]
+            model_pkl = os.path.join(model_pkl_dir, model_pkl_name)
+            if not os.path.exists(model_pkl):
+                os.makedirs(model_pkl_dir, exist_ok=True)
+                urllib.request.urlretrieve(model_pkl_url, model_pkl)
+            # model_pkl = celltypist.models.Model.load(model_pkl)
+        
+        if celltypist_convert:
+            model_pkl = celltypist.models.Model.load(model_pkl)
+            model_pkl.convert(celltypist_map_file=celltypist_map_file)  # celltypist_map_file=None corresponds to human-to-mouse mapping
+        
         if "counts" not in adata_real.layers:  # normalization
             logger.info(f"'counts' layer not found in adata_real. Creating 'counts' layer from adata_real.X and normalizing total counts to 1e4.")
             adata_real.layers["counts"] = adata_real.X.copy()
@@ -242,3 +257,35 @@ def create_base_adata(n_cells=5000, n_genes=1000, seed=42):
     var = pd.DataFrame(index=[f"gene_{j}" for j in range(n_genes)])
 
     return ad.AnnData(X=X, obs=obs, var=var)
+
+def find_single_branch_leaf_dir(base_dir):
+    """
+    Recursively descend into base_dir. At each level:
+      - If there is more than one subdirectory → raise ValueError.
+      - If there is exactly one → descend into it.
+      - If there are no subdirectories → this is the leaf directory containing files.
+
+    Returns:
+        str: the path to the directory that contains files.
+    """
+    current = base_dir
+
+    while True:
+        entries = os.listdir(current)
+        subdirs  = [d for d in entries if os.path.isdir(os.path.join(current, d))]
+        files    = [f for f in entries if os.path.isfile(os.path.join(current, f))]
+
+        # If files exist here, this is the leaf-level directory
+        if files:
+            return current
+
+        # No files, but more than one subdirectory → ambiguous structure
+        if len(subdirs) > 1:
+            raise ValueError(f"Multiple directory branches found in {current}: {subdirs}")
+
+        # No subdirectories → it’s empty or malformed
+        if len(subdirs) == 0:
+            raise ValueError(f"No files and no subdirectories in {current}; cannot descend further.")
+
+        # Exactly one directory → descend
+        current = os.path.join(current, subdirs[0])
