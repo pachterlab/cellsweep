@@ -1,5 +1,5 @@
-description: 8k PBMCs from a healthy donor
-url: https://www.10xgenomics.com/datasets/8-k-pbm-cs-from-a-healthy-donor-2-standard-2-1-0
+description: 55k CD8+ T cells from a healthy donor
+url: https://www.10xgenomics.com/datasets/cd-8-plus-t-cells-of-healthy-donor-1-1-standard-3-0-2
 
 # data file URLs and names
 adata_raw_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/pbmc8k/pbmc8k_raw_gene_bc_matrices_h5.h5

@@ -48,7 +48,6 @@ adata_path_scar_name: hgmm_12k_output_scar.h5ad
 
 # output file URLs from manuscript
 cellsweep_matrix_url: https://caltech.box.com/shared/static/asrt7vgt7lnhazcjujkil1ak1v9y6qo5.h5ad
-cellbender_matrix_url: https://caltech.box.com/shared/static/p3v6ader1i27jcj5xhwfcmg1w8dkp158.h5
 cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/0dma5qrc94tbi07pic0w8c0b50jxmach.h5
 cellbender_ckpt_url: https://caltech.box.com/shared/static/esz6du1ti0wakqc1j2y1gzg445zllcw5.gz
 soupx_matrix_url: https://caltech.box.com/shared/static/mt9us648ol61hdol3mohrpg1t658quqv.gz

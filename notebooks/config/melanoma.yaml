@@ -1,5 +1,5 @@
-description: 8k PBMCs from a healthy donor
-url: https://www.10xgenomics.com/datasets/8-k-pbm-cs-from-a-healthy-donor-2-standard-2-1-0
+description: 10k human DTC melanoma cells
+url: https://www.10xgenomics.com/datasets/10k-human-dtc-melanoma-GEM-X-5p
 
 # data file URLs and names
 adata_raw_url: https://cf.10xgenomics.com/samples/cell-exp/2.1.0/pbmc8k/pbmc8k_raw_gene_bc_matrices_h5.h5

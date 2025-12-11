@@ -105,6 +105,31 @@ CellBender_Fig2_to_Immune_All_Low_celltype_mapping = {
     ]
 }
 
+
+CellTypistHigh_to_ImmuneMajor = {
+    "Monocytes": "Monocytes",
+    "Mono-mac": "Monocytes",
+    "Monocyte precursor": "Macrophages",
+    "Macrophages": "Macrophages",
+    "Granulocytes": "Neutrophils",
+    "DC": "DC",
+    "DC precursor": "DC",
+    "pDC": "DC",
+    "pDC precursor": "DC",
+    "MNP": "Neutrophils",
+    "T cells": "CD4 T cells",
+    "Double-negative thymocytes": "CD4 T cells",
+    "Double-positive thymocytes": "CD4 T cells",
+    "ETP": "CD4 T cells",
+    "ILC": "ILC",
+    "ILC precursor": "ILC",
+    "HSC/MPP": "HSC/MPP",
+    "Early MK": "Early MK",
+    "Megakaryocyte precursor": "Megakaryocyte precursor",
+    "Promyelocytes": "Promyelocytes",
+    "Myelocytes": "Myelocytes",
+}
+
 CellTypistLow_to_ImmuneMajor = {
 
     # ---- Monocytes/neutrophils ----

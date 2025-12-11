@@ -48,7 +48,6 @@ adata_path_scar_name: sim1_output_scar.h5ad
 
 # output file URLs from manuscript
 cellsweep_matrix_url: null
-cellbender_matrix_url: null
 cellbender_matrix_filtered_url: null
 cellbender_ckpt_url: null
 soupx_matrix_url: null
