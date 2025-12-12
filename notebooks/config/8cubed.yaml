@@ -2,7 +2,8 @@ description: 8 cubed
 url: null
 
 # data file URLs and names
-adata_dir: /mnt/data1/8_cube
+adata_raw_parent_dir: /mnt/data1
+adata_filtered_dir: /mnt/data1/8cube
 
 
 # analysis parameters

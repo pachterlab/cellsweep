@@ -420,7 +420,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G,
         p_numer = np.zeros((K, G), dtype=np.float64)
         # for each k, add cell_vals[:,k] at positions indices
         for k in range(K):
-            np.add.at(p_numer[k], indices, cell_vals[:, k])
+            np.add.at(p_numer[k], indices, cell_vals[:, k])   #? could speed up later
 
         # ============================
         #     M STEP
