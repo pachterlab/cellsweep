@@ -273,25 +273,7 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_t
 
     elif density_type == "scatter_with_kde":
         print("Calculating scatterplot...")
-        xy = np.vstack([x, y])
-        
-        # check variance to avoid singular matrix error
-        var_x = np.var(x)
-        var_y = np.var(y)
-
-        if var_x == 0 and var_y == 0:
-            raise ValueError("Both x and y are constant; cannot compute KDE.")
-
-        if var_x == 0 or var_y == 0:  # Fallback: 1D KDE on the non-constant dim
-            if var_x == 0:
-                xy_nonconst = xy[1:2, :]  # keep y
-            else:
-                xy_nonconst = xy[0:1, :]  # keep x
-
-            kde = gaussian_kde(xy_nonconst)
-            z = kde(xy_nonconst).ravel()
-        else:
-            z = gaussian_kde(xy)(xy)
+        z = check_for_singularity_and_return_z(x, y)
 
         # Sort by density (lowest first → densest points plotted last)
         order = z.argsort()
@@ -1163,6 +1145,32 @@ def plot_empty_gene_counts(adata, out_path=None, show=True):
     if not show:
         plt.close() 
 
+# --- density via KDE ---
+def check_for_singularity_and_return_z(x, y):
+    xy = np.vstack([x, y])
+    # check variance to avoid singular matrix error
+    var_x = np.var(x)
+    var_y = np.var(y)
+
+    if var_x == 0 and var_y == 0:
+        raise ValueError("Both x and y are constant; cannot compute KDE.")
+
+    cov = np.cov(np.vstack([x, y]))
+    cond = np.linalg.cond(cov)
+
+    if var_x == 0 or var_y == 0 or cond > 1e12:  # Fallback: 1D KDE on the non-constant dim
+        if var_x == 0:
+            xy_nonconst = xy[1:2, :]  # keep y
+        else:  # var_y == 0 OR x ≈ y 
+            xy_nonconst = xy[0:1, :]  # keep x
+
+        kde = gaussian_kde(xy_nonconst)
+        z = kde(xy_nonconst).ravel()
+    else:
+        z = gaussian_kde(xy)(xy)
+    
+    return z
+
 def plot_ambient_hat_vs_empty_fraction(adata_raw, adata_cellsweep, log=False, remove_zeroes=False, lower_quantile_removed=None, upper_quantile_removed=None, out_path=None, show=True):
     """
     Plots ambient_hat from cellsweep vs empty fraction from raw data.
@@ -1206,9 +1214,7 @@ def plot_ambient_hat_vs_empty_fraction(adata_raw, adata_cellsweep, log=False, re
     mx = max(x.max(), y.max())
     plt.plot([mn, mx], [mn, mx], 'k--', alpha=0.3, lw=1)
 
-    # --- density via KDE ---
-    xy = np.vstack([x, y])
-    z = gaussian_kde(xy)(xy)
+    z = check_for_singularity_and_return_z(x, y)
 
     sc = plt.scatter(x, y, s=8, c=z, alpha=0.5, cmap="viridis")
     cb = plt.colorbar(sc)
