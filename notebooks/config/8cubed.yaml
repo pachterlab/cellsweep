@@ -3,7 +3,7 @@ url: null
 
 # data file URLs and names
 adata_raw_url: null
-adata_raw_file_name: null  # automatically takes file name from adata_raw_url if provided
+adata_raw_file_name: /mnt/data1/8_cube  # automatically takes file name from adata_raw_url if provided
 raw_tar_url: null
 raw_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
 filtered_tar_url: null

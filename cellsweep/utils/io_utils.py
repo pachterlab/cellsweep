@@ -290,6 +290,13 @@ def load_and_merge_anndatas(directory, join="outer", label="batch"):
         Column name in .obs storing the source filename for each batch.
         Use None to disable.
     """
+    try:
+        from tqdm import tqdm
+        tq = tqdm
+    except ImportError:
+        # no tqdm → identity function
+        tq = lambda x, *args, **kwargs: x
+
     # List .h5ad files
     files = sorted(
         [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith(".h5ad")]
@@ -303,7 +310,8 @@ def load_and_merge_anndatas(directory, join="outer", label="batch"):
         print("  -", f)
 
     # Load them
-    adatas = [ad.read_h5ad(f) for f in files]
+    # adatas = [ad.read_h5ad(f) for f in files]
+    adatas = [ad.read_h5ad(f) for f in tq(files, desc="Loading AnnData files")]
 
     # Add batch labels (optional)
     if label is not None:
