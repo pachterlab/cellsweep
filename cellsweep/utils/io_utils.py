@@ -68,7 +68,7 @@ def concat_on_barcodes(adatas):
     return combined
 
 # anndata object, h5 path, h5ad path, a 10x matrix directory (containing matrix.mtx, genes.tsv, barcodes.tsv), or an R matrix prefix ({prefix}.mtx, {prefix}_genes.csv, {prefix}_barcodes.csv)
-def load_adata(adata, multiple_anndatas=False, logger=None, verbose=0, quiet=False):
+def load_adata(adata, multiple_anndatas=False, merge_multiple_adatas=False, logger=None, verbose=0, quiet=False):
     if logger is None:
         logger = setup_logger(verbose=verbose, quiet=quiet)
     if isinstance(adata, str):
@@ -104,7 +104,7 @@ def load_adata(adata, multiple_anndatas=False, logger=None, verbose=0, quiet=Fal
             adata = read_r_matrix_into_anndata(adata)
         elif os.path.isdir(adata):
             if multiple_anndatas:
-                adata = load_and_merge_anndatas(adata)
+                adata = load_and_merge_anndatas(adata, merge=merge_multiple_adatas)
             else:
                 import scanpy as sc
                 logger.info(f"Searching recursively for 10x-style dataset under {adata!r}")
@@ -276,7 +276,7 @@ def write_10x_like(
 
 
 
-def load_and_merge_anndatas(directory, join="outer", label="batch"):
+def load_and_merge_anndatas(directory, join="outer", label=None, merge=False):
     """
     Load all .h5ad files in a directory and merge into a single AnnData.
     
@@ -319,6 +319,7 @@ def load_and_merge_anndatas(directory, join="outer", label="batch"):
             a.obs[label] = os.path.basename(fname)
 
     # Merge
-    merged = ad.concat(adatas, join=join, label=label, fill_value=0)
-
-    return merged
+    if merge:
+         return ad.concat(adatas, join=join, label=label, fill_value=0)
+    else:
+        return adatas

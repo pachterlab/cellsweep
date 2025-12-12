@@ -69,7 +69,7 @@ def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None,
         plt.close()
     return ax_dict
 
-def knee_plot(adata, expected_cells=None, color_column=None, out_path=None, show=True):
+def knee_plot(adata, expected_cells=None, color_column=None, title="Knee Plot", out_path=None, show=True):
     # Compute total counts per barcode
     knee = np.sort(np.ravel(adata.X.sum(axis=1)))[::-1]
     barcodes = np.arange(1, len(knee) + 1)
@@ -112,7 +112,7 @@ def knee_plot(adata, expected_cells=None, color_column=None, out_path=None, show
     ax.set_ylim(1, knee.max())
 
     # Labels and styling
-    ax.set_title("Knee Plot", fontsize=18)
+    ax.set_title(title, fontsize=18)
     ax.set_xlabel("Barcodes", fontsize=18)
     ax.set_ylabel("UMI counts per barcode", fontsize=18)
     ax.grid(True, which="both", color="lightgray")
