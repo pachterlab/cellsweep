@@ -1,0 +1,54 @@
+description: 5k Mouse PBMCs
+url: https://www.10xgenomics.com/datasets/5k_Mouse_PBMCs_5p_gem-x
+
+# data file URLs and names
+adata_raw_url: https://cf.10xgenomics.com/samples/cell-vdj/9.0.0/5k_Mouse_PBMCs_5p_gem-x_Multiplex/5k_Mouse_PBMCs_5p_gem-x_Multiplex_count_raw_feature_bc_matrix.h5
+adata_raw_file_name: null  # automatically takes file name from adata_raw_url if provided
+raw_tar_url: https://cf.10xgenomics.com/samples/cell-vdj/9.0.0/5k_Mouse_PBMCs_5p_gem-x_Multiplex/5k_Mouse_PBMCs_5p_gem-x_Multiplex_count_raw_feature_bc_matrix.tar.gz
+raw_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
+filtered_tar_url: https://cf.10xgenomics.com/samples/cell-vdj/9.0.0/5k_Mouse_PBMCs_5p_gem-x_5k_Mouse_PBMCs_5p_gem-x/5k_Mouse_PBMCs_5p_gem-x_5k_Mouse_PBMCs_5p_gem-x_count_sample_filtered_feature_bc_matrix.tar.gz
+filtered_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
+sequencing_technology: 10XV3
+
+# analysis parameters
+model_pkl: Immune_All_High.pkl  # path, filename, or url for celltypist model pkl file
+celltypist_convert: True
+celltypist_map_file: null
+cellsweep_max_iter: 500
+cellsweep_beta: 0.1
+cellsweep_init_alpha: 0.9
+cellbender_epochs: 150
+cellbender_fpr: 0.01
+cellbender_zdim: 64
+cellbender_expected_cells: null
+cellbender_total_droplets: null
+scar_epochs: 200
+scar_prob: 0.995
+expected_cells: 4725
+min_genes: 0
+min_cells: 0
+umi_top_percentile_to_remove: 5
+fraction_doublet: 0
+unique_genes_top_percentile_to_remove: 5
+mt_gene_percentile_to_remove: 10
+max_mt_percentage: null
+n_top_genes: 2000
+n_pcs: 25
+n_neighbors: 20
+leiden_resolution: 1.0
+marker_genes: null
+
+# output file names
+adata_path_cellsweep_name: pbmc_mouse_5k_output_cellsweep.h5ad
+adata_path_cellbender_name: pbmc_mouse_5k_output_cellbender.h5
+soupx_out_prefix_name: pbmc_mouse_5k_output_soupx
+decontx_out_prefix_name: pbmc_mouse_5k_output_decontx
+adata_path_scar_name: pbmc_mouse_5k_output_scar.h5ad
+
+# output file URLs from manuscript
+cellsweep_matrix_url: null
+cellbender_matrix_filtered_url: null
+cellbender_ckpt_url: null
+soupx_matrix_url: null
+decontx_matrix_url: null
+scar_matrix_url: null

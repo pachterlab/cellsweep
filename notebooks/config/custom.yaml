@@ -3,20 +3,20 @@ url: null
 
 # data file URLs and names
 adata_raw_url: null
-adata_raw_file_name: null
+adata_raw_file_name: null  # automatically takes file name from adata_raw_url if provided
 raw_tar_url: null
-raw_tar_file_name: null
-raw_tar_file_dir_suffix: null
+raw_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
 filtered_tar_url: null
-filtered_tar_file_name: null
-filtered_tar_file_dir_suffix: null
+filtered_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
 sequencing_technology: null
 
 # analysis parameters
 model_pkl: null
-cellmender_max_iter: null
-cellmender_beta: null
-cellmender_init_alpha: null
+celltypist_convert: null
+celltypist_map_file: null
+cellsweep_max_iter: null
+cellsweep_beta: null
+cellsweep_init_alpha: null
 cellbender_epochs: null
 cellbender_fpr: null
 cellbender_zdim: null
@@ -25,7 +25,6 @@ cellbender_total_droplets: null
 scar_epochs: null
 scar_prob: null
 expected_cells: null
-cs_empty_threshold: null
 min_genes: null
 min_cells: null
 umi_top_percentile_to_remove: null
@@ -40,15 +39,14 @@ leiden_resolution: null
 marker_genes: null
 
 # output file names
-adata_path_cellmender_name: custom_output_cellmender.h5ad
+adata_path_cellsweep_name: custom_output_cellsweep.h5ad
 adata_path_cellbender_name: custom_output_cellbender.h5
 soupx_out_prefix_name: custom_output_soupx
 decontx_out_prefix_name: custom_output_decontx
 adata_path_scar_name: custom_output_scar.h5ad
 
 # output file URLs from manuscript
-cellmender_matrix_url: null
-cellbender_matrix_url: null
+cellsweep_matrix_url: null
 cellbender_matrix_filtered_url: null
 cellbender_ckpt_url: null
 soupx_matrix_url: null

@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 import anndata as ad
 import scipy.sparse as sp
-from cellmender import denoise_count_matrix
-from cellmender.celltype_ambient import infer_gene_ambient_fraction, infer_celltype_profile
+from cellsweep import denoise_count_matrix
+from cellsweep.celltype_ambient import infer_gene_ambient_fraction, infer_celltype_profile
 
 # -----------------------
 # Fixtures
@@ -54,8 +54,8 @@ def test_denoise_count_matrix_runs(tmp_path, small_adata, monkeypatch):
     """Smoke test: ensure function runs and produces valid output."""
 
     # Mock expensive dependencies
-    monkeypatch.setattr("cellmender.denoise.infer_empty_droplets", lambda *a, **kw: small_adata)
-    monkeypatch.setattr("cellmender.denoise.load_adata", lambda a, logger=None: small_adata)
+    monkeypatch.setattr("cellsweep.denoise.infer_empty_droplets", lambda *a, **kw: small_adata)
+    monkeypatch.setattr("cellsweep.denoise.load_adata", lambda a, logger=None: small_adata)
 
     out_path = tmp_path / "denoised.h5ad"
 

@@ -25,4 +25,4 @@ RUN apt-get update && apt-get install -y \
 RUN R -e 'install.packages("SoupX", repos="https://cloud.r-project.org")'
 
 # Set working directory (same as your mounted path)
-WORKDIR /home/ruser/work/cellmender
+WORKDIR /home/ruser/work/cellsweep

@@ -3,7 +3,7 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "cellmender"
+name = "cellsweep"
 version = "0.1.0"
 description = "Denoising scRNA-seq in a smart and efficient way."
 readme = {file = "README.md", content-type = "text/markdown"}
@@ -58,17 +58,20 @@ analysis = [
     "mpl-scatter-density",
     "astropy",
     "wompywompy @ git+https://github.com/pachterlab/wompywompy.git",
-    "sklearn"
+    "scikit-learn",
+    "ipywidgets",
+    "torch",
+    "scikit-misc"
 ]
 
 [project.urls]
-"Homepage" = "https://github.com/pachterlab/cellmender"
+"Homepage" = "https://github.com/pachterlab/cellsweep"
 
 [tool.setuptools.packages.find]
-include = ["cellmender*"]
+include = ["cellsweep*"]
 
 [tool.setuptools.package-data]
-cellmender = ["*.txt", "*.md", "*.csv"]  # Ensure additional files like data or docs are included
+cellsweep = ["*.txt", "*.md", "*.csv"]  # Ensure additional files like data or docs are included
 
 [project.scripts]
-cellmender = "cellmender.main:main"  # This replaces the console_scripts entry
+cellsweep = "cellsweep.main:main"  # This replaces the console_scripts entry

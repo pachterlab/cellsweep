@@ -1,0 +1,33 @@
+description: 8 cubed
+url: null
+
+# data file URLs and names
+adata_dir: /mnt/data1/8_cube
+
+# analysis parameters
+model_pkl: null  # path, filename, or url for celltypist model pkl file
+celltypist_convert: False
+celltypist_map_file: null
+cellsweep_max_iter: 500
+cellsweep_beta: 0.1
+cellsweep_init_alpha: 0.9
+cellbender_epochs: 150
+cellbender_fpr: 0.01
+cellbender_zdim: 64
+cellbender_expected_cells: null
+cellbender_total_droplets: null
+scar_epochs: 200
+scar_prob: 0.995
+expected_cells: null
+min_genes: 0
+min_cells: 0
+umi_top_percentile_to_remove: 0
+fraction_doublet: 0
+unique_genes_top_percentile_to_remove: 0
+mt_gene_percentile_to_remove: 0
+max_mt_percentage: null
+n_top_genes: 2000
+n_pcs: 25
+n_neighbors: 20
+leiden_resolution: 1.0
+marker_genes: null

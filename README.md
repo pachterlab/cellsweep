@@ -14,8 +14,8 @@ pip install cellsweep[analysis]  # pip install cellsweep["analysis"] for Mac use
 ### To remake figures from the paper:
 ```
 git clone https://github.com/pachterlab/cellsweep.git
-cd cellmender
-conda env create -f environment.yml
+cd cellsweep
+conda env create -f environment.yml  #!!! until on pypi, in environmeny.yml replace cellsweep[analysis]==0.1.0 with .[analysis]
 ```
 
 To install [scAR](https://github.com/Novartis/scar):
