@@ -68,7 +68,7 @@ def concat_on_barcodes(adatas):
     return combined
 
 # anndata object, h5 path, h5ad path, a 10x matrix directory (containing matrix.mtx, genes.tsv, barcodes.tsv), or an R matrix prefix ({prefix}.mtx, {prefix}_genes.csv, {prefix}_barcodes.csv)
-def load_adata(adata, logger=None, verbose=0, quiet=False):
+def load_adata(adata, multiple_anndatas=False, logger=None, verbose=0, quiet=False):
     if logger is None:
         logger = setup_logger(verbose=verbose, quiet=quiet)
     if isinstance(adata, str):
@@ -103,36 +103,39 @@ def load_adata(adata, logger=None, verbose=0, quiet=False):
             logger.info(f"Loading adata from matrix files with prefix {adata!r}")
             adata = read_r_matrix_into_anndata(adata)
         elif os.path.isdir(adata):
-            import scanpy as sc
-            logger.info(f"Searching recursively for 10x-style dataset under {adata!r}")
+            if multiple_anndatas:
+                adata = load_and_merge_anndatas(adata)
+            else:
+                import scanpy as sc
+                logger.info(f"Searching recursively for 10x-style dataset under {adata!r}")
 
-            found_dirs = []
-            for root, dirs, files in os.walk(adata):
-                files_lower = [f.lower() for f in files]
-                has_matrix = any(f in files_lower for f in ("matrix.mtx", "matrix.mtx.gz"))
-                has_barcodes = any(f in files_lower for f in ("barcodes.tsv", "barcodes.tsv.gz"))
-                has_genes = any(f in files_lower for f in ("genes.tsv", "genes.tsv.gz", "features.tsv", "features.tsv.gz"))
-                if has_matrix and has_barcodes and has_genes:
-                    found_dirs.append(root)
+                found_dirs = []
+                for root, dirs, files in os.walk(adata):
+                    files_lower = [f.lower() for f in files]
+                    has_matrix = any(f in files_lower for f in ("matrix.mtx", "matrix.mtx.gz"))
+                    has_barcodes = any(f in files_lower for f in ("barcodes.tsv", "barcodes.tsv.gz"))
+                    has_genes = any(f in files_lower for f in ("genes.tsv", "genes.tsv.gz", "features.tsv", "features.tsv.gz"))
+                    if has_matrix and has_barcodes and has_genes:
+                        found_dirs.append(root)
 
-            if len(found_dirs) == 0:
-                raise FileNotFoundError(f"No valid 10x dataset found under {adata!r}. Expected matrix.mtx, barcodes.tsv, and genes.tsv or features.tsv.")
-            elif len(found_dirs) > 1:
-                raise RuntimeError(
-                    f"Multiple 10x-style datasets found under {adata!r}:\n" +
-                    "\n".join(found_dirs) +
-                    "\nPlease specify one directory explicitly."
+                if len(found_dirs) == 0:
+                    raise FileNotFoundError(f"No valid 10x dataset found under {adata!r}. Expected matrix.mtx, barcodes.tsv, and genes.tsv or features.tsv.")
+                elif len(found_dirs) > 1:
+                    raise RuntimeError(
+                        f"Multiple 10x-style datasets found under {adata!r}:\n" +
+                        "\n".join(found_dirs) +
+                        "\nPlease specify one directory explicitly."
+                    )
+
+                tenx_dir = found_dirs[0]
+                logger.info(f"Found 10x dataset in {tenx_dir!r}")
+                
+                use_gene_symbols = os.path.exists(os.path.join(tenx_dir, "genes.tsv"))
+                adata = sc.read_10x_mtx(
+                    tenx_dir,
+                    var_names="gene_symbols" if use_gene_symbols else "gene_ids",
+                    make_unique=True
                 )
-
-            tenx_dir = found_dirs[0]
-            logger.info(f"Found 10x dataset in {tenx_dir!r}")
-            
-            use_gene_symbols = os.path.exists(os.path.join(tenx_dir, "genes.tsv"))
-            adata = sc.read_10x_mtx(
-                tenx_dir,
-                var_names="gene_symbols" if use_gene_symbols else "gene_ids",
-                make_unique=True
-            )
         else:
             raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file, an .h5 file, a matrix-containing directory, or an AnnData object.")
     elif isinstance(adata, ad.AnnData):
@@ -270,3 +273,44 @@ def write_10x_like(
     # decontx inputs: paths["raw"], paths["filtered"], paths["technology"], decontx_out_prefix
 
     return paths
+
+
+
+def load_and_merge_anndatas(directory, join="outer", label="batch"):
+    """
+    Load all .h5ad files in a directory and merge into a single AnnData.
+    
+    Parameters
+    ----------
+    directory : str
+        Path containing .h5ad files.
+    join : str
+        How to merge gene/cell sets. Usually "outer" or "inner".
+    label : str or None
+        Column name in .obs storing the source filename for each batch.
+        Use None to disable.
+    """
+    # List .h5ad files
+    files = sorted(
+        [os.path.join(directory, f) for f in os.listdir(directory) if f.endswith(".h5ad")]
+    )
+
+    if not files:
+        raise ValueError(f"No .h5ad files found in: {directory}")
+
+    print(f"Found {len(files)} files:")
+    for f in files:
+        print("  -", f)
+
+    # Load them
+    adatas = [ad.read_h5ad(f) for f in files]
+
+    # Add batch labels (optional)
+    if label is not None:
+        for a, fname in zip(adatas, files):
+            a.obs[label] = os.path.basename(fname)
+
+    # Merge
+    merged = ad.concat(adatas, join=join, label=label, fill_value=0)
+
+    return merged

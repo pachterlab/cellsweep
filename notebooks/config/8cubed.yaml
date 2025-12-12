@@ -1,14 +1,14 @@
-description: Simulation 4 - small noise, ambient only
+description: 8 cubed
 url: null
 
 # data file URLs and names
 adata_raw_url: null
-adata_raw_file_name: "adata_raw.h5ad"
+adata_raw_file_name: null  # automatically takes file name from adata_raw_url if provided
 raw_tar_url: null
-raw_tar_file_dir_suffix: null
+raw_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
 filtered_tar_url: null
-filtered_tar_file_dir_suffix: null
-sequencing_technology: "10XV2"
+filtered_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
+sequencing_technology: null
 
 # analysis parameters
 model_pkl: null  # path, filename, or url for celltypist model pkl file
@@ -23,8 +23,8 @@ cellbender_zdim: 64
 cellbender_expected_cells: null
 cellbender_total_droplets: null
 scar_epochs: 200
-scar_prob: 0.975
-expected_cells: 200  # see below - N * (1 - empty_prob)
+scar_prob: 0.995
+expected_cells: null
 min_genes: 0
 min_cells: 0
 umi_top_percentile_to_remove: 0
@@ -39,11 +39,11 @@ leiden_resolution: 1.0
 marker_genes: null
 
 # output file names
-adata_path_cellsweep_name: sim4_output_cellsweep.h5ad
-adata_path_cellbender_name: sim4_output_cellbender.h5
-soupx_out_prefix_name: sim4_output_soupx
-decontx_out_prefix_name: sim4_output_decontx
-adata_path_scar_name: sim4_output_scar.h5ad
+adata_path_cellsweep_name: 8cubed_output_cellsweep.h5ad
+adata_path_cellbender_name: 8cubed_output_cellbender.h5
+soupx_out_prefix_name: 8cubed_output_soupx
+decontx_out_prefix_name: 8cubed_output_decontx
+adata_path_scar_name: 8cubed_output_scar.h5ad
 
 # output file URLs from manuscript
 cellsweep_matrix_url: null
@@ -53,14 +53,5 @@ soupx_matrix_url: null
 decontx_matrix_url: null
 scar_matrix_url: null
 
-# simulation parameters
-G: 2000
-N: 1000
-k: 25
-markers_per_type: 10
-marker_boost: 15
-type_proportions: null
-empty_prob: 0.8
-alpha: 0.03
-beta: 0
-expected_cell_size: 1000
+# 8 cubed specific parameters
+adata_dir: /mnt/data1/8_cube

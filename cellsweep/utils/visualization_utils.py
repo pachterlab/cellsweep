@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import re
+import requests
 import matplotlib
 import numpy as np
 from scipy.stats import gaussian_kde
@@ -792,7 +793,7 @@ def histogram_auc(values, bins=100):
     auc = np.sum(counts * bin_widths)
     return auc
 
-def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell_set=None, out_path_human=None, out_path_mouse=None, show=True):
+def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell_set=None, out_path=None, show=True):
     if adata is None:
         return
 
@@ -844,15 +845,15 @@ def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell
     print(f"{processed_name} human cell mouse gene contamination AUC:", mouse_auc)
     print(f"{processed_name} mouse cell human gene contamination AUC:", human_auc)
 
-    if out_path_mouse or out_path_human:
-        # Save once, with both distributions together
-        save_path = out_path_mouse or out_path_human
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+    if out_path:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
 
     if not show:
         plt.close()
+    else:
+        plt.show()
 
-def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", fill_histogram=True, marginal_color_number=4, bin_number=20, show_marginal_ticks=False, show_point_movement=False, max_points=None, seed=42, out_path=None, show=True):    
+def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name="processed", marginal_type="histogram", x_name="human", y_name="mouse", x_axis="human_counts_total", y_axis="mouse_counts_total", fill_histogram=True, marginal_color_number=4, bin_number=20, show_marginal_ticks=False, show_point_movement=False, max_points=None, seed=42, out_path=None, show=True):    
     if adata_processed is None:
         return  # nothing to plot
     
@@ -867,16 +868,25 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
         adata_raw = adata_raw[sampled_indices].copy()
         adata_processed = adata_processed[sampled_indices].copy()
     
-    if "human_counts_total" not in adata_raw.obs.columns or "mouse_counts_total" not in adata_raw.obs.columns:
-        adata_raw = identify_human_and_mouse_cells(adata_raw)
-    if "human_counts_total" not in adata_processed.obs.columns or "mouse_counts_total" not in adata_processed.obs.columns:
-        adata_processed = identify_human_and_mouse_cells(adata_processed)
-    
-    human_raw = adata_raw.obs["human_counts_total"].values + 1
-    mouse_raw = adata_raw.obs["mouse_counts_total"].values + 1
+    if ((x_axis in {"human_counts_total", "mouse_counts_total"}) != (y_axis in {"human_counts_total", "mouse_counts_total"})):
+        raise ValueError("x_axis and y_axis must both be either 'human_counts_total' and 'mouse_counts_total', or neither.")
 
-    human_processed = adata_processed.obs["human_counts_total"].values + 1
-    mouse_processed = adata_processed.obs["mouse_counts_total"].values + 1
+    if x_axis not in adata_raw.obs.columns or y_axis not in adata_raw.obs.columns:
+        if x_axis in {"human_counts_total", "mouse_counts_total"} and y_axis in {"human_counts_total", "mouse_counts_total"}:
+            adata_raw = identify_human_and_mouse_cells(adata_raw)
+        else:
+            raise ValueError(f"Both adata_raw and adata_processed must have '{x_axis}' and '{y_axis}' columns in .obs.")
+    if x_axis not in adata_processed.obs.columns or y_axis not in adata_processed.obs.columns:
+        if x_axis in {"human_counts_total", "mouse_counts_total"} and y_axis in {"human_counts_total", "mouse_counts_total"}:
+            adata_processed = identify_human_and_mouse_cells(adata_processed)
+        else:
+            raise ValueError(f"Both adata_raw and adata_processed must have '{x_axis}' and '{y_axis}' columns in .obs.")
+
+    human_raw = adata_raw.obs[x_axis].values + 1
+    mouse_raw = adata_raw.obs[y_axis].values + 1
+
+    human_processed = adata_processed.obs[x_axis].values + 1
+    mouse_processed = adata_processed.obs[y_axis].values + 1
 
     if marginal_color_number == 2:
         df = pd.DataFrame({
@@ -886,7 +896,7 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
         })
         palette = {
             "raw": "#a6c8ff",         # light blue
-            processed_name: "#0047b3",   # dark blue
+            "processed": "#0047b3",   # dark blue
         }
     elif marginal_color_number == 4:
         if "genome" not in adata_raw.obs.columns or "genome" not in adata_processed.obs.columns:
@@ -904,14 +914,42 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
         })
 
         palette = {
-            "human_raw": "#a6c8ff",         # light blue
-            "human_processed": "#0047b3",   # dark blue
-            "mouse_raw": "#ffd1a6",         # light orange
-            "mouse_processed": "#cc5500",   # dark orange
+            f"{x_name}_raw": "#a6c8ff",         # light blue
+            f"{x_name}_processed": "#0047b3",   # dark blue
+            f"{y_name}_raw": "#ffd1a6",         # light orange
+            f"{y_name}_processed": "#cc5500",   # dark orange
         }
 
     else:
         raise ValueError("marginal_color_number must be either 2 or 4")
+    
+    def choose_legend_location(x, y, thresh = 0.001):
+        """
+        Automatically choose a good legend location based on where points cluster.
+        """
+
+        # Hard-code regions
+        lower_left_mask = (x < 100) & (y < 100)
+        center_left_mask = (x < 100) & (100 <= y) & (y < 1000)
+        lower_center_mask = (y < 100) & (100 <= x) & (x < 1000)
+
+        # Fractions
+        frac_lower_left   = np.mean(lower_left_mask)
+        frac_center_left  = np.mean(center_left_mask)
+        frac_lower_center = np.mean(lower_center_mask)
+
+        # Decision tree
+        if frac_lower_left < thresh:
+            return "lower left"
+        elif frac_center_left < thresh:
+            return "center left"
+        elif frac_lower_center < thresh:
+            return "lower center"
+        else:
+            # Worst case: fallback
+            return "lower left"
+    
+    legend_loc = choose_legend_location(df["x"].values, df["y"].values)
 
     # --- Create JointGrid ---
     g = sns.JointGrid(
@@ -1006,7 +1044,7 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
         #  Final clean legend
         # =============================
         handles, labels = g.ax_joint.get_legend_handles_labels()
-        g.ax_joint.legend(handles, labels, loc="lower left", title=processed_name)
+        g.ax_joint.legend(handles, labels, loc=legend_loc, title=processed_name)
         
         # =============================
         # Axes scaling + equal limits
@@ -1078,7 +1116,7 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
         elif marginal_type == "histogram":
             g.plot(sns.scatterplot, sns.histplot, alpha=.7, linewidth=.5)
         
-        leg = g.ax_joint.legend(loc="lower left", title=processed_name)
+        leg = g.ax_joint.legend(loc=legend_loc, title=processed_name)
 
         # ensure side histograms have same max height    
         x_hist_patches = g.ax_marg_x.patches
@@ -2029,3 +2067,62 @@ def plot_multiple_kdes(expr_list, labels=None, colors=None, gene_name=None, log=
 
     plt.tight_layout()
     plt.show()
+
+
+
+def make_8cubed_plots(adata_dict, eight_cubed_markers_path, out_dir=None):
+    wells = ["CortexHippocampus", "Heart", "Liver", "HypothalamusPituitary", "Gonads", "Adrenal", "Kidney", "Gastrocnemius"]
+
+    if not os.path.exists(eight_cubed_markers_path):
+        eight_cubed_markers_url = "https://docs.google.com/spreadsheets/d/1RJHnxeobFfXAQdrUGAn4SWxQZzs0KaheuLJgNc6AjCg/export?format=csv&gid=0"
+        r = requests.get(eight_cubed_markers_url)
+        with open(eight_cubed_markers_path, "wb") as f:
+            f.write(r.content)
+
+    eight_cubed_markers_df = pd.read_csv(eight_cubed_markers_path, usecols=["ai", "Tissue"])
+    tissue_to_ai_dict = eight_cubed_markers_df.groupby("Tissue")["ai"].apply(list).to_dict()
+
+    adata_raw_original = adata_dict["raw"].copy()
+
+    # loop through adjacent pairs
+    for adata_name, adata_processed in adata_dict.items():
+        if adata_name == "raw" or adata_processed is None:
+            continue
+        
+        for i in range(len(wells)):
+            # determine left and right tissues
+            left_wells_tissue = wells[i]
+            right_wells_tissue = wells[(i + 1) % len(wells)]  # wrap around to first well
+
+            # filter anndatas to only keep current tissues
+            wells = {left_wells_tissue, right_wells_tissue}
+            adata_processed = adata_processed[adata_processed.obs["Tissue"].isin(wells)].copy()
+            adata_raw_tmp = adata_raw_original[adata_processed.obs_names].copy()  # only keep cells in adata_raw_tmp that are also in adata_processed
+
+            # determine common plate between the two tissues
+            left_wells_tissue_plates = adata_processed.obs[adata_processed.obs["Tissue"] == left_wells_tissue, "plate"].unique().tolist()
+            right_wells_tissue_plates = adata_processed.obs[adata_processed.obs["Tissue"] == right_wells_tissue, "plate"].unique().tolist()
+            common_plate = set(left_wells_tissue_plates).intersection(set(right_wells_tissue_plates))
+            if len(common_plate) == 0:
+                print(f"Skipping {left_wells_tissue} vs {right_wells_tissue} joint scatterplot due to no common plate.")
+                continue
+            elif len(common_plate) > 1:
+                print(f"Warning: multiple common plates found for {left_wells_tissue} vs {right_wells_tissue}. Using one of them.")
+            common_plate = list(common_plate)[0]
+
+            # filter anndatas to only keep cells from the common plate
+            adata_processed = adata_processed[adata_processed.obs["plate"] == common_plate].copy()
+            adata_raw_tmp = adata_raw_original[adata_processed.obs_names].copy()  # only keep cells in adata_raw_tmp that are also in adata_processed
+
+            # do the gene counting
+            genes_in_adata = [g for g in tissue_to_ai_dict[left_wells_tissue] if g in adata_processed.var_names]
+            adata_processed.obs[f"{left_wells_tissue}_counts_total"] = (np.array(adata_processed[:, genes_in_adata].X.sum(axis=1)).ravel())
+            adata_raw_tmp.obs[f"{left_wells_tissue}_counts_total"] = (np.array(adata_raw_tmp[:, genes_in_adata].X.sum(axis=1)).ravel())
+
+            genes_in_adata = [g for g in tissue_to_ai_dict[right_wells_tissue] if g in adata_processed.var_names]
+            adata_processed.obs[f"{right_wells_tissue}_counts_total"] = (np.array(adata_processed[:, genes_in_adata].X.sum(axis=1)).ravel())
+            adata_raw_tmp.obs[f"{right_wells_tissue}_counts_total"] = (np.array(adata_raw_tmp[:, genes_in_adata].X.sum(axis=1)).ravel())
+
+            # make the plot
+            # plot_cross_species_histogram(adata_processed, processed_name=adata_name, out_path=os.path.join(out_dir, f"{left_wells_tissue}_{right_wells_tissue}_histograms.png"))
+            plot_cross_species_joint_scatterplot(adata_raw_tmp, adata_processed, processed_name=adata_name, x_name=left_wells_tissue, y_name=right_wells_tissue, x_axis=f"{left_wells_tissue}_counts_total", y_axis=f"{right_wells_tissue}_counts_total", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"{left_wells_tissue}_{right_wells_tissue}_joint_scatterplot.png"), show=True)
