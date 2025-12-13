@@ -278,9 +278,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
     """
     nthreads = get_num_threads()
     p_numer_tls = np.zeros((nthreads, K, G), dtype=np.float64)
-
-    if not freeze_ambient_profile:
-        a_numer_tls = np.zeros((nthreads, G), dtype=np.float64)
+    a_numer_tls = np.zeros((nthreads, G), dtype=np.float64)
 
     nnz_total = data.shape[0]
     ambient_vals = np.zeros(nnz_total, dtype=np.float64)
@@ -322,6 +320,9 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 # treat only ambient+bulk
                 w_p_sum = 0.0
                 p_tot = wa + wm + w_p_sum
+
+                # fraction scale: vals / p_tot
+                scale = val / np.maximum(p_tot, eps)
 
                 # expected ambient and bulk at this entry
                 cA = scale * wa
@@ -396,8 +397,6 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
     if not done:
         ambient_vals = None
         bulk_vals = None
-    if freeze_ambient_profile:
-        a_numer_tls = None
 
     return ambient_vals, bulk_vals, p_numer_tls, a_numer_tls, numer_gamma, A_n, ll_row, M_row
 
@@ -453,7 +452,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G,
         ambient_vals, bulk_vals, p_numer_tls, a_numer_tls, numer_gamma, A_n, ll_row, M_row = e_step_numba(
             indptr=indptr, indices=indices, data=data, alpha=alpha, beta=beta, a=a, m_global=m_global,
             gamma=gamma, p=p, K=K, N=N, G=G, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask,
-            done=done
+            freeze_ambient_profile=freeze_ambient_profile, done=done
         )
 
         # Reduce per-row scalars
