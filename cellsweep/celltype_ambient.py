@@ -8,7 +8,7 @@ import anndata as ad
 import scipy.sparse as sp
 from pydantic import validate_call, Field, ConfigDict
 import numba
-from numba import njit, prange
+from numba import njit, prange, get_num_threads, get_thread_id
 from typing import Annotated, Optional, Tuple
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types  # , plot_cellsweep_likelihood_over_epochs
 import matplotlib.pyplot as plt
@@ -271,10 +271,13 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
 # ---------- Numba-parallel E-step kernel ----------
 @njit(parallel=True, nogil=True)
 def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
-                 gamma, p, K, N, eps, log_eps, freeze_empty_mask):
+                 gamma, p, K, N, G, eps, log_eps, freeze_empty_mask):
     """
     Parallel E-step over rows. Returns per-entry arrays and per-row summaries.
     """
+    nthreads = get_num_threads()
+    p_numer_tls = np.zeros((nthreads, K, G), dtype=np.float64)
+
     nnz_total = data.shape[0]
     ambient_vals = np.zeros(nnz_total, dtype=np.float64)
     bulk_vals = np.zeros(nnz_total, dtype=np.float64)
@@ -288,6 +291,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
     # We will fill entries sequentially but rows are parallelized
     # Build an array mapping entry index to its position: compute per-row offsets
     for n in prange(N):
+        tid = get_thread_id()
         rs = indptr[n]
         re = indptr[n + 1]
         if re <= rs:
@@ -338,12 +342,9 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 # (we stored wpk in cell_vals[jj,k])
                 for k in range(K):
                     cell_vals[jj, k] = cell_vals[jj, k] * scale
+                    p_numer_tls[tid, k, g] += cell_vals[jj, k]
                     numer_gamma[n, k] += cell_vals[jj, k]  # accumulate per-row k-sums
                 # sum of cell counts for this entry implicitly added to row_expected if needed
-            else:
-                # ensure cell_vals row is zero
-                for k in range(K):
-                    cell_vals[jj, k] = 0.0
 
             # accumulate per-row totals
             local_A += cA
@@ -355,7 +356,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
         M_row[n] = local_M
         ll_row[n] = local_ll
 
-    return ambient_vals, bulk_vals, cell_vals, numer_gamma, A_n, ll_row, M_row
+    return ambient_vals, bulk_vals, p_numer_tls, numer_gamma, A_n, ll_row, M_row
 
 def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G, 
               max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
@@ -401,9 +402,9 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G,
         # ============================
         #     E STEP (numba parallel)
         # ============================
-        ambient_vals, bulk_vals, cell_vals, numer_gamma, A_n, ll_row, M_row = e_step_numba(
+        ambient_vals, bulk_vals, p_numer_tls, numer_gamma, A_n, ll_row, M_row = e_step_numba(
             indptr=indptr, indices=indices, data=data, alpha=alpha, beta=beta, a=a, m_global=m_global,
-            gamma=gamma, p=p, K=K, N=N, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask
+            gamma=gamma, p=p, K=K, N=N, G=G, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask
         )
 
         # Reduce per-row scalars
@@ -416,11 +417,9 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G,
             # indices correspond to gene indices per entry
             np.add.at(a_numer, indices, ambient_vals)
 
-        # Build p_numer: shape (K, G) by summing cell_vals rows into gene slots
-        p_numer = np.zeros((K, G), dtype=np.float64)
-        # for each k, add cell_vals[:,k] at positions indices
-        for k in range(K):
-            np.add.at(p_numer[k], indices, cell_vals[:, k])   #? could speed up later
+        # Build p_numer: shape (K, G) 
+        p_numer = p_numer_tls.sum(axis=0)
+
 
         # ============================
         #     M STEP
