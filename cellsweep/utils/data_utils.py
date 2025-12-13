@@ -190,7 +190,7 @@ def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_co
         
         if celltypist_convert:
             model_pkl = celltypist.models.Model.load(model_pkl)
-            model_pkl.convert(celltypist_map_file=celltypist_map_file)  # celltypist_map_file=None corresponds to human-to-mouse mapping
+            model_pkl.convert(map_file=celltypist_map_file)  # celltypist_map_file=None corresponds to human-to-mouse mapping
         
         if "counts" not in adata_real.layers:  # normalization
             logger.info(f"'counts' layer not found in adata_real. Creating 'counts' layer from adata_real.X and normalizing total counts to 1e4.")
@@ -289,3 +289,18 @@ def find_single_branch_leaf_dir(base_dir):
 
         # Exactly one directory → descend
         current = os.path.join(current, subdirs[0])
+
+
+def matrices_equal(A, B):
+    # Case 1: both sparse
+    if sparse.issparse(A) and sparse.issparse(B):
+        return (A != B).nnz == 0
+
+    # Case 2: one sparse, one dense → convert sparse to dense
+    if sparse.issparse(A):
+        A = A.toarray()
+    if sparse.issparse(B):
+        B = B.toarray()
+
+    # Case 3: dense arrays
+    return np.array_equal(A, B)
