@@ -218,39 +218,13 @@ CellTypistLow_to_ImmuneMajor = {
 }
 
 immune_markers = {
-    "Monocytes": [
-        "CD14", "LYZ", "FCGR3A", "MS4A7"
-    ],
-
-    "Macrophages": [
-        "CD68", "CD163", "C1QA", "C1QB", "C1QC"
-    ],
-
-    "DC": [
-        "CLEC9A", "XCR1", "CD1C", "FCER1A", "IL3RA", "TCF4", "ITGAX", "CST3"
-    ],
-
-    "Neutrophils": [
-        "S100A8", "S100A9", "MPO", "FCGR3B", "ELANE"
-    ],
-
-    "Eosinophils": [
-        "CLC", "RNASE2", "RNASE3", "PRG2"
-    ],
-
-    "CD8 T cells": [
-        "CD8A", "CD8B", "GZMB", "CD3E"
-    ],
-
-    "CD4 T cells": [
-        "CD4", "CCR7", "IL7R", "TCF7", "CD3E"
-    ],
-
-    "NK cells": [
-        "NKG7", "GNLY", "PRF1", "KLRD1", "GZMB"
-    ],
-
-    "B cells": [
-        "MS4A1", "CD79A", "CD79B", "HLA-DRA", "CD19"
-    ]
+    "Monocytes": ["CD14", "LYZ", "FCGR3A", "MS4A7"],
+    "Macrophages": ["CD68", "CD163", "C1QA", "C1QB", "C1QC"],
+    "DC": ["CLEC9A", "XCR1", "CD1C", "FCER1A", "IL3RA", "TCF4", "ITGAX", "CST3"],
+    "Neutrophils": ["S100A8", "S100A9", "MPO", "FCGR3B", "ELANE"],
+    "Eosinophils": ["CLC", "RNASE2", "RNASE3", "PRG2"],
+    "CD8 T cells": ["CD8A", "CD8B", "GZMB", "CD3E"],
+    "CD4 T cells": ["CD4", "CCR7", "IL7R", "TCF7", "CD3E"],
+    "NK cells": ["NKG7", "GNLY", "PRF1", "KLRD1", "GZMB"],
+    "B cells": ["MS4A1", "CD79A", "CD79B", "HLA-DRA", "CD19"]
 }

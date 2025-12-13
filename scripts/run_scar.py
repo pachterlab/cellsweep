@@ -14,8 +14,8 @@ parser.add_argument('-e', '--epochs', type=int, default=200, help='Number of tra
 parser.add_argument('--min_counts', type=int, default=None, help='Minimum counts per gene to retain')
 parser.add_argument('--max_counts', type=int, default=None, help='Maximum counts per gene to retain')
 parser.add_argument('--min_genes', type=int, default=None, help='Minimum number of genes per cell to retain')
-parser.add_argument('--sparsity', type=float, default=1.0, help='Sparsity parameter for scAR model')
-parser.add_argument('--prob', type=float, default=0.995, help='Prob. Lower for small empty droplet number')
+parser.add_argument('-s', '--sparsity', type=float, default=1.0, help='Sparsity parameter for scAR model')
+parser.add_argument('-p', '--prob', type=float, default=0.995, help='Prob. Lower for small empty droplet number')
 args = parser.parse_args()
 
 print("Loading data...")

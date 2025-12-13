@@ -631,14 +631,14 @@ def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displa
 
 
 
-def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, celltype_column="celltype", cluster_column="leiden", plot_raw=True, title_raw=None, title_processed=None, log_raw=False, log_processed=False, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
+def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, cluster_column="leiden", plot_raw=True, title_raw=None, title_processed=None, log_raw=False, log_processed=False, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
     if adata_raw is None or adata_processed is None:
         print("One of the adatas is None, skipping dotplot generation.")
         return
 
     common_cells = adata_raw.obs_names.intersection(adata_processed.obs_names)
     adata_raw_only_cellbender_cells = adata_raw[common_cells].copy()
-    adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[[celltype_column, cluster_column]], how='left')
+    adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[[cluster_column]], how='left')
 
     if log_raw != log_processed:
         print("Warning: log_raw and log_processed are different; dotplots may not be comparable.")
@@ -2085,8 +2085,9 @@ def plot_multiple_kdes(expr_list, labels=None, colors=None, gene_name=None, log=
 
 
 
-def make_8cubed_plots(adata_dict, eight_cubed_markers_path, out_dir=None):
-    total_wells = ["CortexHippocampus", "Heart", "Liver", "HypothalamusPituitary", "Gonads", "Adrenal", "Kidney", "Gastrocnemius"]
+def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, out_dir=None):
+    # plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]
+    # total_tissues = ["CortexHippocampus", "Heart", "Liver", "HypothalamusPituitary", "Gonads", "Adrenal", "Kidney", "Gastrocnemius"]
 
     if not os.path.exists(eight_cubed_markers_path):
         eight_cubed_markers_url = "https://docs.google.com/spreadsheets/d/1RJHnxeobFfXAQdrUGAn4SWxQZzs0KaheuLJgNc6AjCg/export?format=csv&gid=0"
@@ -2095,49 +2096,45 @@ def make_8cubed_plots(adata_dict, eight_cubed_markers_path, out_dir=None):
             f.write(r.content)
 
     eight_cubed_markers_df = pd.read_csv(eight_cubed_markers_path, usecols=["ai", "Tissue"])
-    tissue_to_ai_dict = eight_cubed_markers_df.groupby("Tissue")["ai"].apply(list).to_dict()
+    tissue_to_marker_gene_dict = eight_cubed_markers_df.groupby("Tissue")["ai"].apply(list).to_dict()
+    
+    # replace GonadsMale and GonadsFemale with combined Gonads
+    tissue_to_marker_gene_dict["Gonads"] = tissue_to_marker_gene_dict.get("GonadsMale", []) + tissue_to_marker_gene_dict.get("GonadsFemale", [])
+    tissue_to_marker_gene_dict.pop("GonadsMale", None)
+    tissue_to_marker_gene_dict.pop("GonadsFemale", None)
 
-    adata_raw_original = adata_dict["raw"].copy()
+    adata_raw_dict = dict_of_adata_dicts.get("raw", {})
+    if len(adata_raw_dict) == 0:
+        raise ValueError("dict_of_adata_dicts must contain a 'raw' key with adata dictionaries.")
 
     # loop through adjacent pairs
-    for adata_name, adata_processed in adata_dict.items():
-        if adata_name == "raw" or adata_processed is None:
-            continue
-        
-        for i in range(len(total_wells)):
-            # determine left and right tissues
-            left_wells_tissue = total_wells[i]
-            right_wells_tissue = total_wells[(i + 1) % len(total_wells)]  # wrap around to first well
-
-            # filter anndatas to only keep current tissues
-            wells = {left_wells_tissue, right_wells_tissue}
-            adata_processed = adata_processed[adata_processed.obs["Tissue"].isin(wells)].copy()
-            adata_raw_tmp = adata_raw_original[adata_processed.obs_names].copy()  # only keep cells in adata_raw_tmp that are also in adata_processed
-
-            # determine common plate between the two tissues
-            left_wells_tissue_plates = adata_processed.obs.loc[adata_processed.obs["Tissue"] == left_wells_tissue, "plate"].unique().tolist()
-            right_wells_tissue_plates = adata_processed.obs.loc[adata_processed.obs["Tissue"] == right_wells_tissue, "plate"].unique().tolist()
-            common_plate = set(left_wells_tissue_plates).intersection(set(right_wells_tissue_plates))
-            if len(common_plate) == 0:
-                print(f"Skipping {left_wells_tissue} vs {right_wells_tissue} joint scatterplot due to no common plate.")
+    for tool, adata_dict in dict_of_adata_dicts.items():
+        for plate, adata_processed in adata_dict.items():
+            if tool == "raw":
                 continue
-            elif len(common_plate) > 1:
-                print(f"Warning: multiple common plates found for {left_wells_tissue} vs {right_wells_tissue}. Using one of them.")
-            common_plate = list(common_plate)[0]
 
-            # filter anndatas to only keep cells from the common plate
-            adata_processed = adata_processed[adata_processed.obs["plate"] == common_plate].copy()
-            adata_raw_tmp = adata_raw_original[adata_processed.obs_names].copy()  # only keep cells in adata_raw_tmp that are also in adata_processed
+            adata_raw = adata_raw_dict.get(plate, None)
+            if adata_raw is None:
+                print(f"Warning: No raw adata found for plate {plate}. Skipping.")
+                continue
+
+            adata_raw = adata_raw[adata_processed.obs_names].copy()  # only keep cells in adata_raw that are also in adata_processed
 
             # do the gene counting
-            genes_in_adata = [g for g in tissue_to_ai_dict[left_wells_tissue] if g in adata_processed.var_names]
-            adata_processed.obs[f"{left_wells_tissue}_counts_total"] = (np.array(adata_processed[:, genes_in_adata].X.sum(axis=1)).ravel())
-            adata_raw_tmp.obs[f"{left_wells_tissue}_counts_total"] = (np.array(adata_raw_tmp[:, genes_in_adata].X.sum(axis=1)).ravel())
+            tissues = adata_processed.obs["Tissue"].unique().tolist()
+            if len(tissues) != 2:
+                print(f"Warning: Plate {plate} does not have exactly 2 tissues in adata_processed. Found tissues: {tissues}. Skipping.")
+                continue
 
-            genes_in_adata = [g for g in tissue_to_ai_dict[right_wells_tissue] if g in adata_processed.var_names]
-            adata_processed.obs[f"{right_wells_tissue}_counts_total"] = (np.array(adata_processed[:, genes_in_adata].X.sum(axis=1)).ravel())
-            adata_raw_tmp.obs[f"{right_wells_tissue}_counts_total"] = (np.array(adata_raw_tmp[:, genes_in_adata].X.sum(axis=1)).ravel())
+            for tissue in tissues:
+                if tissue not in tissue_to_marker_gene_dict:
+                    print(f"Warning: Tissue {tissue} not found in marker gene dictionary. Skipping plate {plate}.")
+                    continue
+
+                genes_in_adata = [g for g in tissue_to_marker_gene_dict[tissue] if g in adata_processed.var_names]
+                adata_processed.obs[f"{tissue}_counts_total"] = (np.array(adata_processed[:, genes_in_adata].X.sum(axis=1)).ravel())
+                adata_raw.obs[f"{tissue}_counts_total"] = (np.array(adata_raw[:, genes_in_adata].X.sum(axis=1)).ravel())
 
             # make the plot
-            # plot_cross_species_histogram(adata_processed, processed_name=adata_name, out_path=os.path.join(out_dir, f"{left_wells_tissue}_{right_wells_tissue}_histograms.png"))
-            plot_cross_species_joint_scatterplot(adata_raw_tmp, adata_processed, processed_name=adata_name, x_name=left_wells_tissue, y_name=right_wells_tissue, x_axis=f"{left_wells_tissue}_counts_total", y_axis=f"{right_wells_tissue}_counts_total", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"{left_wells_tissue}_{right_wells_tissue}_joint_scatterplot.png"), show=True)
+            # plot_cross_species_histogram(adata_processed, processed_name=adata_name, out_path=os.path.join(out_dir, f"{tissues[0]}_{tissues[1]}_histograms.png"))
+            plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"{tissues[0]}_{tissues[1]}_joint_scatterplot.png"), show=True)

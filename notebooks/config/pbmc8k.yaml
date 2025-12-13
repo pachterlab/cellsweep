@@ -37,6 +37,17 @@ n_pcs: 25
 n_neighbors: 20
 leiden_resolution: 1.0
 marker_genes: {
+    "Monocytes": ["CD14", "LYZ", "FCGR3A", "MS4A7"],
+    "Macrophages": ["CD68", "CD163", "C1QA", "C1QB", "C1QC"],
+    "DC": ["CLEC9A", "XCR1", "CD1C", "FCER1A", "IL3RA", "TCF4", "ITGAX", "CST3"],
+    "Neutrophils": ["S100A8", "S100A9", "MPO", "FCGR3B", "ELANE"],
+    "Eosinophils": ["CLC", "RNASE2", "RNASE3", "PRG2"],
+    "CD8 T cells": ["CD8A", "CD8B", "GZMB", "CD3E"],
+    "CD4 T cells": ["CD4", "CCR7", "IL7R", "TCF7", "CD3E"],
+    "NK cells": ["NKG7", "GNLY", "PRF1", "KLRD1", "GZMB"],
+    "B cells": ["MS4A1", "CD79A", "CD79B", "HLA-DRA", "CD19"]
+}
+marker_genes_cellbender_fig2: {
     "Monocytes/neutrophils": ["S100A8", "S100A9", "S100A12", "FCGR3A"],
     "Monocytes/pDCs": ["LYZ", "CST3", "FCN1", "LILRA4"],
     "T": ["IL32", "TRAC", "CCR7", "FOXP3", "CD8A", "CD8B", "NKG7", "GNLY", "TRGC1", "SLC4A10"],
@@ -46,6 +57,8 @@ marker_genes: {
     "Baso./neutro./progenitor": ["SDPR", "CLU"],
     "(Broad expression)": ["PTPRC"]
 }
+
+
 
 # output file names
 adata_path_cellsweep_name: pbmc8k_output_cellsweep.h5ad
