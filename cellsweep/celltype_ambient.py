@@ -271,17 +271,19 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
 # ---------- Numba-parallel E-step kernel ----------
 @njit(parallel=True, nogil=True)
 def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
-                 gamma, p, K, N, G, eps, log_eps, freeze_empty_mask):
+                 gamma, p, K, N, G, eps, log_eps, freeze_empty_mask,
+                 freeze_ambient_profile, done):
     """
     Parallel E-step over rows. Returns per-entry arrays and per-row summaries.
     """
     nthreads = get_num_threads()
     p_numer_tls = np.zeros((nthreads, K, G), dtype=np.float64)
+    a_numer_tls = np.zeros((nthreads, G), dtype=np.float64)
 
     nnz_total = data.shape[0]
     ambient_vals = np.zeros(nnz_total, dtype=np.float64)
     bulk_vals = np.zeros(nnz_total, dtype=np.float64)
-    cell_vals = np.zeros((nnz_total, K), dtype=np.float64)
+    # cell_vals = np.zeros((nnz_total, K), dtype=np.float64)
 
     numer_gamma = np.zeros((N, K), dtype=np.float64)
     A_n = np.zeros(N, dtype=np.float64)
@@ -305,63 +307,109 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
         # index into global flattened arrays
         # we will write to positions [rs:re) which correspond to the CSR data indices
         # this is safe because each row writes to a unique slice
-        for jj in range(rs, re):
-            g = indices[jj]        # gene index
-            val = data[jj]
 
-            # compute mixture weights for this nonzero
-            wa = (1.0 - beta) * alpha[n] * a[g]
-            wm = beta * m_global[g]
+        if freeze_empty_mask[n]:
+            for jj in range(rs, re):
+                g = indices[jj]        # gene index
+                val = data[jj]
 
-            # if freeze_empty and this row is empty, treat only ambient+bulk
-            w_p_sum = 0.0
-            if not freeze_empty_mask[n]:
+                # compute mixture weights for this nonzero
+                wa = (1.0 - beta) * alpha[n] * a[g]
+                wm = beta * m_global[g]
+
+                # treat only ambient+bulk
+                w_p_sum = 0.0
+                p_tot = wa + wm + w_p_sum
+
+                # fraction scale: vals / p_tot
+                scale = val / np.maximum(p_tot, eps)
+
+                # expected ambient and bulk at this entry
+                cA = scale * wa
+                cM = scale * wm
+
+                if done:
+                    # fraction scale: vals / p_tot
+                    scale = val / np.maximum(p_tot, eps)
+                    ambient_vals[jj] = cA
+                    bulk_vals[jj] = cM
+
+                # accumulate per-row totals
+                local_A += cA
+                if not freeze_ambient_profile:
+                    a_numer_tls[tid, g] += cA
+                local_M += cM
+                local_ll += val * np.log(np.maximum(p_tot, log_eps))
+        else:
+            b = (1.0 - beta) * (1.0 - alpha[n])
+            local_gamma = np.zeros(K)
+            
+            for jj in range(rs, re):
+                g = indices[jj]        # gene index
+                val = data[jj]
+
+                # compute mixture weights for this nonzero
+                wa = (1.0 - beta) * alpha[n] * a[g]
+                wm = beta * m_global[g]
+
+                w_p_sum = 0.0
                 # compute sum over k of b * gamma[n,k] * p[k,g]
-                b = (1.0 - beta) * (1.0 - alpha[n])
                 for k in range(K):
                     wpk = b * gamma[n, k] * p[k, g]
-                    # accumulate into cell_vals
-                    cell_vals[jj, k] = wpk
+                    # # accumulate into cell_vals
+                    # cell_vals[jj, k] = wpk
                     w_p_sum += wpk
 
-            p_tot = wa + wm + w_p_sum
+                p_tot = wa + wm + w_p_sum
 
-            # fraction scale: vals / p_tot
-            scale = val / np.maximum(p_tot, eps)
+                # fraction scale: vals / p_tot
+                scale = val / np.maximum(p_tot, eps)
 
-            # expected ambient and bulk at this entry
-            cA = scale * wa
-            cM = scale * wm
+                # expected ambient and bulk at this entry
+                cA = scale * wa
+                cM = scale * wm
 
-            ambient_vals[jj] = cA
-            bulk_vals[jj] = cM
+                if done:
+                    ambient_vals[jj] = cA
+                    bulk_vals[jj] = cM
 
-            # convert stored w_p_k to expected counts for each k
-            if not freeze_empty_mask[n]:
-                # multiply previously stored wpk by scale to get counts
-                # (we stored wpk in cell_vals[jj,k])
+                # pre-calculate values for M-step
                 for k in range(K):
-                    cell_vals[jj, k] = cell_vals[jj, k] * scale
-                    p_numer_tls[tid, k, g] += cell_vals[jj, k]
-                    numer_gamma[n, k] += cell_vals[jj, k]  # accumulate per-row k-sums
+                    val_k = scale * b * gamma[n,k] * p[k,g]
+                    p_numer_tls[tid, k, g] += val_k
+                    local_gamma[k] += val_k
                 # sum of cell counts for this entry implicitly added to row_expected if needed
 
-            # accumulate per-row totals
-            local_A += cA
-            local_M += cM
-            local_ll += val * np.log(np.maximum(p_tot, log_eps))
+                # accumulate per-row totals
+                local_A += cA
+                if not freeze_ambient_profile:
+                    a_numer_tls[tid, g] += cA
+                local_M += cM
+                local_ll += val * np.log(np.maximum(p_tot, log_eps))
 
-        # write back per-row numbers
-        A_n[n] = local_A
-        M_row[n] = local_M
-        ll_row[n] = local_ll
 
-    return ambient_vals, bulk_vals, p_numer_tls, numer_gamma, A_n, ll_row, M_row
+            # write back per-row numbers
+            A_n[n] = local_A
+            M_row[n] = local_M
+            ll_row[n] = local_ll
+            numer_gamma[n] = local_gamma
+    
+    if not done:
+        ambient_vals = None
+        bulk_vals = None
+
+    return ambient_vals, bulk_vals, p_numer_tls, a_numer_tls, numer_gamma, A_n, ll_row, M_row
 
 def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G, 
               max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
-              eps, dirichlet_lambda, 
-              log_eps, verbose, logger, freeze_ambient_profile, debug):
+              eps, dirichlet_lambda, log_eps, verbose, logger, 
+              freeze_ambient_profile, debug):
+    
+    """
+    Helper for denoise_count_matrix. Performs sparse compatible EM on model
+    """
+    
+    converged = False
     
     if debug:
         a_tracker = []
@@ -373,9 +421,6 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G,
         a_tracker = None
         p_tracker = None
     
-    """
-    Helper for denoise_count_matrix. Performs sparse compatible EM on model
-    """
     indptr = C.indptr.copy()
     indices = C.indices.copy()
     data = C.data.copy() 
@@ -399,27 +444,27 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G,
 
     # EM loop
     for it in range(1, max_iter + 1):
+        done = (it == max_iter or converged)
+
         # ============================
         #     E STEP (numba parallel)
         # ============================
-        ambient_vals, bulk_vals, p_numer_tls, numer_gamma, A_n, ll_row, M_row = e_step_numba(
+        ambient_vals, bulk_vals, p_numer_tls, a_numer_tls, numer_gamma, A_n, ll_row, M_row = e_step_numba(
             indptr=indptr, indices=indices, data=data, alpha=alpha, beta=beta, a=a, m_global=m_global,
-            gamma=gamma, p=p, K=K, N=N, G=G, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask
+            gamma=gamma, p=p, K=K, N=N, G=G, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask,
+            freeze_ambient_profile=freeze_ambient_profile, done=done
         )
 
         # Reduce per-row scalars
         ll = float(np.sum(ll_row))
         M_total = float(np.sum(M_row))
 
+        # Build a_numer
         if not freeze_ambient_profile:
-            # Build a_numer by summing ambient_vals into gene slots (fast, C-backed)
-            a_numer = np.zeros(G, dtype=np.float64)
-            # indices correspond to gene indices per entry
-            np.add.at(a_numer, indices, ambient_vals)
+            a_numer = a_numer_tls.sum(axis=0)
 
         # Build p_numer: shape (K, G) 
         p_numer = p_numer_tls.sum(axis=0)
-
 
         # ============================
         #     M STEP
@@ -427,10 +472,8 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G,
 
         # update p 
         if not fixed_celltype:
-            for k in range(K):
-                numer = p_numer[k]
-                denom = numer.sum() + dirichlet_lambda
-                p[k] = numer / max(denom, eps)
+            denoms = p_numer.sum(axis=1) + dirichlet_lambda
+            p = p_numer / np.maximum(denoms[:, None], eps)
 
         # update alpha
         Ccell_n = numer_gamma.sum(axis=1)
@@ -465,17 +508,21 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma, p, K, N, G,
 
             logger.info(f"EM Iter {it:3d}: ll={ll:.3f} min_alpha={alpha_min:.4f} mean_alpha={alpha_mean:.4f} median_alpha={alpha_median:.4f} max_alpha={alpha_max:.4f} beta={beta:.6f}")
 
+            if converged:
+                logger.info("Converged.")
+
         # Relative change in likelihood stopping condition
         if it > 1 and abs((ll - prev_ll) / max(abs(prev_ll), 1.0)) < tol:
-            if verbose:
-                logger.info("Converged.")
-            break
+            converged = True
 
         if debug:
-            a_tracker.append(a)
-            p_tracker.append(p)
+            a_tracker.append(a.copy())
+            p_tracker.append(p.copy())
 
         prev_ll = ll
+
+        if done:
+            break
 
     # Construct CSR expected matrices from per-entry arrays
     C_expected_ambient = sp.csr_matrix((ambient_vals, (row_of_entry, indices)), shape=(N, G))
@@ -693,7 +740,7 @@ def denoise_count_matrix(
     # count parameters
     if freeze_ambient_profile:
         number_of_parameters = 1 + (K * G)  # alpha (Nr), beta (1), p_k (K * G)
-        logger.debug(f"Number of parameters in the cellmender model: {number_of_parameters:,} alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
+        logger.debug(f"Number of parameters in the cellmender model: {number_of_parameters:,} (alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
     else:
         number_of_parameters = K + 1 + (Nr * K) + (K * G)  # u, alpha (Nr), beta (1), gamma_type (Nr * K), p_k (K * G)
         logger.debug(f"Number of parameters in the cellmender model: {number_of_parameters:,} (u: {K:,}, alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
