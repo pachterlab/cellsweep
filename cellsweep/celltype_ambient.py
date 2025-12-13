@@ -341,7 +341,8 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 # multiply previously stored wpk by scale to get counts
                 # (we stored wpk in cell_vals[jj,k])
                 for k in range(K):
-                    p_numer_tls[tid, k, g] += cell_vals[jj, k] * scale
+                    cell_vals[jj, k] = cell_vals[jj, k] * scale
+                    p_numer_tls[tid, k, g] += cell_vals[jj, k]
                     numer_gamma[n, k] += cell_vals[jj, k]  # accumulate per-row k-sums
                 # sum of cell counts for this entry implicitly added to row_expected if needed
 
