@@ -67,26 +67,17 @@ expected_cells = {
     'igvf_011': 721541
 }
 
-# adata_cellsweep_dict = {}
-# for plate, adata_raw in adata_raw_dict.items():
+
 for plate in plates:   #? memory management
+    adata_path_cellsweep = os.path.join(data_dir, plate, "cellsweep.h5ad")
+    if os.path.exists(adata_path_cellsweep) and not overwrite:
+        print(f"  Cellsweep output for plate {plate} already exists at {adata_path_cellsweep}, skipping...")
+        continue
     print(f"Processing Cellsweep for plate {plate}...")
     adata_raw = ad.read_h5ad(os.path.join(data_dir, plate, "raw_counts.h5ad"))   #? memory management
-    adata_path_cellsweep = os.path.join(data_dir, plate, "cellsweep.h5ad")
     cellsweep_log_path = os.path.join(data_dir, plate, "cellsweep.log")
-    if not os.path.exists(adata_path_cellsweep) or overwrite:
-        adata_cellsweep = denoise_count_matrix(adata_raw, adata_out=adata_path_cellsweep, beta=cellsweep_beta, freeze_ambient_profile=True, init_alpha=cellsweep_init_alpha, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells[plate], threads=threads, verbose=verbose, log_file=cellsweep_log_path)
     
-    # else:
-    #     adata_cellsweep = ad.read_h5ad(adata_path_cellsweep)
-    # adata_cellsweep = adata_cellsweep[~adata_cellsweep.obs["is_empty"]].copy()
-    # adata_cellsweep.var_names_make_unique()
-    # adata_cellsweep_dict[plate] = adata_cellsweep
+    adata_cellsweep = denoise_count_matrix(adata_raw, adata_out=adata_path_cellsweep, beta=cellsweep_beta, freeze_ambient_profile=True, init_alpha=cellsweep_init_alpha, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells[plate], threads=threads, verbose=verbose, log_file=cellsweep_log_path)
+
     del adata_raw   #? memory management
     del adata_cellsweep   #? memory management
-
-# for plate, adata in adata_cellsweep_dict.items():
-#     adata_path = os.path.join(data_dir, plate, "cellsweep.h5ad")
-#     if not os.path.exists(adata_path):
-#         os.makedirs(os.path.dirname(adata_path), exist_ok=True)
-#         adata.write_h5ad(adata_path)
