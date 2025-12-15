@@ -13,6 +13,19 @@ import scanpy as sc
 from cellsweep import denoise_count_matrix
 import cellsweep.utils as cs_utils
 
+import resource
+import sys
+
+# Set max RAM usage in bytes
+max_ram_gb = 300  # 300 GB
+MAX_RAM = max_ram_gb * 1024**3
+
+soft, hard = resource.getrlimit(resource.RLIMIT_AS)
+resource.setrlimit(resource.RLIMIT_AS, (MAX_RAM, MAX_RAM))
+
+
+
+
 cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 adata_raw_parent_dir = "/mnt/data1"
@@ -67,17 +80,21 @@ expected_cells = {
     'igvf_011': 721541
 }
 
+try:
+    for plate in plates:
+        adata_path_cellsweep = os.path.join(data_dir, plate, "cellsweep.h5ad")
+        if os.path.exists(adata_path_cellsweep) and not overwrite:
+            print(f"  Cellsweep output for plate {plate} already exists at {adata_path_cellsweep}, skipping...")
+            continue
+        print(f"Processing Cellsweep for plate {plate}...")
+        adata_raw = ad.read_h5ad(os.path.join(data_dir, plate, "raw_counts.h5ad"))
+        cellsweep_log_path = os.path.join(data_dir, plate, "cellsweep.log")
+        
+        adata_cellsweep = denoise_count_matrix(adata_raw, adata_out=adata_path_cellsweep, beta=cellsweep_beta, freeze_ambient_profile=True, init_alpha=cellsweep_init_alpha, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells[plate], threads=threads, verbose=verbose, log_file=cellsweep_log_path)
 
-for plate in plates:   #? memory management
-    adata_path_cellsweep = os.path.join(data_dir, plate, "cellsweep.h5ad")
-    if os.path.exists(adata_path_cellsweep) and not overwrite:
-        print(f"  Cellsweep output for plate {plate} already exists at {adata_path_cellsweep}, skipping...")
-        continue
-    print(f"Processing Cellsweep for plate {plate}...")
-    adata_raw = ad.read_h5ad(os.path.join(data_dir, plate, "raw_counts.h5ad"))   #? memory management
-    cellsweep_log_path = os.path.join(data_dir, plate, "cellsweep.log")
-    
-    adata_cellsweep = denoise_count_matrix(adata_raw, adata_out=adata_path_cellsweep, beta=cellsweep_beta, freeze_ambient_profile=True, init_alpha=cellsweep_init_alpha, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells[plate], threads=threads, verbose=verbose, log_file=cellsweep_log_path)
+        del adata_raw   #? memory management
+        del adata_cellsweep   #? memory management
+except MemoryError:
+    print("❌ Memory limit exceeded — exiting")  # might just print 'Segmentation fault (core dumped)' rather than this
+    sys.exit(1)
 
-    del adata_raw   #? memory management
-    del adata_cellsweep   #? memory management
