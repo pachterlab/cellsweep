@@ -272,8 +272,8 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
 # ---------- Numba-parallel E-step kernel ----------
 @njit(parallel=True, nogil=True)
 def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
-                 gamma_idx, p, K, N, G, eps, log_eps, freeze_empty_mask,
-                 freeze_ambient_profile, p_numer_tls, a_numer_tls, done):
+                 gamma_idx, p, K, N, eps, log_eps, freeze_empty_mask,
+                 freeze_ambient_profile, fixed_celltype, p_numer_tls, a_numer_tls, done):
     """
     Parallel E-step over rows. Returns per-entry arrays and per-row summaries.
     """
@@ -385,6 +385,27 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
             M_row[n] = local_M
             ll_row[n] = local_ll
             numer_gamma[n] = local_gamma
+
+            # ---------- HARD REASSIGNMENT (CEM) ----------
+            if not fixed_celltype:
+                best_k = k
+                best_ll = -1e300
+
+                for kk in range(K):
+                    llk = 0.0
+                    for jj in range(rs, re):
+                        g = indices[jj]
+                        val = data[jj]
+
+                        # full likelihood: ambient + cell + bulk
+                        p_mix = (1.0 - alpha[n]) * p[kk, g] + alpha[n] * a[g]
+                        llk += val * np.log(np.maximum(p_mix, log_eps))
+
+                    if llk > best_ll:
+                        best_ll = llk
+                        best_k = kk
+
+            gamma_idx[n] = best_k
     
     if not done:
         ambient_vals = None
@@ -447,8 +468,8 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
 
         ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row = e_step_numba(
             indptr=indptr, indices=indices, data=data, alpha=alpha, beta=beta, a=a, m_global=m_global,
-            gamma_idx=gamma_idx, p=p, K=K, N=N, G=G, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask,
-            freeze_ambient_profile=freeze_ambient_profile, p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, done=done
+            gamma_idx=gamma_idx, p=p, K=K, N=N, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask,
+            freeze_ambient_profile=freeze_ambient_profile, fixed_celltype=fixed_celltype, p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, done=done
         )
 
         # Reduce per-row scalars
@@ -489,6 +510,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
                 total = np.maximum(u.sum(), eps)
                 u = u / total
                 a = u @ p    # shape (G,)
+        
 
         if verbose:
             if freeze_empty:
@@ -702,7 +724,6 @@ def denoise_count_matrix(
     adata = load_adata(adata, logger=logger)
     if "celltype" not in adata.obs.columns:
         raise KeyError("adata.obs must have column celltype.")
-    adata = adata.copy()
 
     # ensure empty droplets are present
     if "is_empty" not in adata.obs.columns:
