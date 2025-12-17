@@ -2089,14 +2089,8 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, out_dir=Non
     # plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]
     # total_tissues = ["CortexHippocampus", "Heart", "Liver", "HypothalamusPituitary", "Gonads", "Adrenal", "Kidney", "Gastrocnemius"]
 
-    if not os.path.exists(eight_cubed_markers_path):
-        eight_cubed_markers_url = "https://docs.google.com/spreadsheets/d/1RJHnxeobFfXAQdrUGAn4SWxQZzs0KaheuLJgNc6AjCg/export?format=csv&gid=0"
-        r = requests.get(eight_cubed_markers_url)
-        with open(eight_cubed_markers_path, "wb") as f:
-            f.write(r.content)
-
-    eight_cubed_markers_df = pd.read_csv(eight_cubed_markers_path, usecols=["ai", "Tissue"])
-    tissue_to_marker_gene_dict = eight_cubed_markers_df.groupby("Tissue")["ai"].apply(list).to_dict()
+    eight_cubed_markers_df = pd.read_csv(eight_cubed_markers_path, usecols=["gene_id", "Tissue"])
+    tissue_to_marker_gene_dict = eight_cubed_markers_df.groupby("Tissue")["gene_id"].apply(list).to_dict()
     
     # replace GonadsMale and GonadsFemale with combined Gonads
     tissue_to_marker_gene_dict["Gonads"] = tissue_to_marker_gene_dict.get("GonadsMale", []) + tissue_to_marker_gene_dict.get("GonadsFemale", [])
@@ -2132,6 +2126,9 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, out_dir=Non
                     continue
 
                 genes_in_adata = [g for g in tissue_to_marker_gene_dict[tissue] if g in adata_processed.var_names]
+                if len(genes_in_adata) == 0:
+                    print(f"Warning: No marker genes found for tissue {tissue} in plate {plate}. Skipping.")
+                    continue
                 adata_processed.obs[f"{tissue}_counts_total"] = (np.array(adata_processed[:, genes_in_adata].X.sum(axis=1)).ravel())
                 adata_raw.obs[f"{tissue}_counts_total"] = (np.array(adata_raw[:, genes_in_adata].X.sum(axis=1)).ravel())
 
