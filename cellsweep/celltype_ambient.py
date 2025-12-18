@@ -586,7 +586,7 @@ def denoise_count_matrix(
     dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 10,
     integer_out: bool = False,
     threads: Optional[Annotated[int, Field(gt=0)]] = 1,
-    fixed_celltype: bool = False,
+    fixed_celltype: bool = True,
     freeze_empty: bool = True,
     freeze_ambient_profile: bool = True,
     empty_droplet_method: str = "threshold",
@@ -656,7 +656,7 @@ def denoise_count_matrix(
     threads : int, default 1
         number of numba threads
 
-    fixed_celltype : bool, default False
+    fixed_celltype : bool, default True
         If True, keeps cell-type assignments fixed during EM updates.
 
     freeze_empty : bool, default True
