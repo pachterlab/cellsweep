@@ -1176,7 +1176,7 @@ def print_top_empty_genes(adata, top_n=10, out_path=None):
         })
         df.to_csv(out_path, index=False)
 
-def plot_empty_gene_counts(adata, out_path=None, show=True):
+def plot_empty_gene_counts(adata, title=None, highlight_indices=None, out_path=None, show=True):
     if 'empty_counts' not in adata.var.columns:
         if 'is_empty' not in adata.obs.columns:
             raise ValueError("adata.obs must contain 'is_empty' column indicating empty droplets.")
@@ -1189,7 +1189,30 @@ def plot_empty_gene_counts(adata, out_path=None, show=True):
     plt.plot(sorted_vals)
     plt.xlabel("Gene rank")
     plt.ylabel("Empty-droplet counts")
-    plt.title(f"Counts per gene in empty droplets (total genes: {adata.n_vars})")
+    
+    # add red dots at specific indices
+    if highlight_indices is not None and len(highlight_indices) > 0:
+        hi = np.array(highlight_indices)
+
+        # Keep only those indices within bounds
+        hi = hi[(hi >= 0) & (hi < len(sorted_vals))]
+
+        markers_label = f"markers ({len(hi)})"
+        plt.scatter(
+            hi,
+            sorted_vals[hi],
+            color="red",
+            alpha=0.2,
+            s=4,
+            zorder=5,
+            label=markers_label
+        )
+        plt.legend()
+
+    
+    if title is None:
+        title = f"Counts per gene in empty droplets (total genes: {adata.n_vars})"
+    plt.title(title)
     plt.yscale("log")
     plt.tight_layout()
 
