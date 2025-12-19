@@ -4,6 +4,7 @@ import os
 import numpy as np
 import pandas as pd
 import logging
+from datetime import datetime
 import anndata as ad
 import scipy.sparse as sp
 from pydantic import validate_call, Field, ConfigDict
@@ -716,11 +717,15 @@ def denoise_count_matrix(
       2. M-step: Update parameters (alpha, beta, p_k, a).
       3. Iterate until convergence (relative change in ll < `tol`) or reaching `max_iter`.
     """
+    from cellsweep import __version__
 
     # set thread number
     numba.set_num_threads(threads)
     
     logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    logger.info(f"Starting cellsweep denoising at {timestamp}, cellsweep version {__version__}")
+
     adata = load_adata(adata, logger=logger)
     if "celltype" not in adata.obs.columns:
         raise KeyError("adata.obs must have column celltype.")
@@ -759,10 +764,10 @@ def denoise_count_matrix(
     # count parameters
     if freeze_ambient_profile:
         number_of_parameters = 1 + (K * G)  # alpha (Nr), beta (1), p_k (K * G)
-        logger.debug(f"Number of parameters in the cellmender model: {number_of_parameters:,} (alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
+        logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
     else:
         number_of_parameters = K + 1 + (Nr * K) + (K * G)  # u, alpha (Nr), beta (1), gamma_type (Nr * K), p_k (K * G)
-        logger.debug(f"Number of parameters in the cellmender model: {number_of_parameters:,} (u: {K:,}, alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
+        logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (u: {K:,}, alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
 
     # celltype mapping
     z_true = adata.obs["celltype"].copy()

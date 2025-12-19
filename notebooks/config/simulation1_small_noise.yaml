@@ -54,13 +54,13 @@ decontx_matrix_url: null
 scar_matrix_url: null
 
 # simulation parameters
-G: 2000
-N: 1000
+G: 10000  # genes
+N: 100000  # droplets (empty and cells)
 k: 25
 markers_per_type: 10
 marker_boost: 15
 type_proportions: null
-empty_prob: 0.8
-alpha: 0.03
+empty_prob: 0.95  # proportion of empty droplets
+alpha: 0.05
 beta: 0.03
-expected_cell_size: 1000
+expected_cell_size: 2000

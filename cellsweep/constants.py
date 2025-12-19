@@ -1,4 +1,4 @@
-"""cellmender constant values."""
+"""cellsweep constant values."""
 
 CellBender_Fig2_to_Immune_All_High_celltype_mapping = {
     "Monocytes/neutrophils": [
