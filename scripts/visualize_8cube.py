@@ -2,9 +2,23 @@ import os
 import anndata as ad
 import pandas as pd
 import numpy as np
+import itertools
 import cellsweep.utils as cs_utils
 cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "8cubed")
+eight_cubed_markers_path = os.path.join(data_dir, "8_cube_marker_genes.csv")
+out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "8cubed")
+custom_markers = {
+    'CortexHippocampus': ["Nrxn3", "Nrxn1", "Meis2", "Slc17a7", "Mir124a-1hg", "Snap25"],
+    'Heart': [],
+    'Liver': ["Cyp1a2", "Ttr", "Alb"],
+    'HypothalamusPituitary': ["Slc17a7", "Mir124a-1hg", "Snap25"],
+    'Gonads': [],
+    'Adrenal': ["Chga", "Star"],
+    'Kidney': ["Slc5a2", "Slc34a1", "Akr1c21"],
+    'Gastrocnemius': ["Myh4", "Myh2", "Myh1"]
+}
+
 plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]  # ["igvf_003"]  #? debug
 adata_raw_filtered_dict, adata_cellsweep_dict, adata_cellbender_dict = {}, {}, {}
 for plate in plates:
@@ -34,9 +48,6 @@ for plate in plates:
     adata_cellbender.var_names_make_unique()
     adata_cellbender_dict[plate] = adata_cellbender
 
-eight_cubed_markers_path = os.path.join(data_dir, "8_cube_marker_genes.csv")
-out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "8cubed")
-
 # np.random.seed(42)
 # adata_cellsweep_dict["igvf_003"] = adata_cellsweep_dict["igvf_003"][np.random.choice(adata_cellsweep_dict["igvf_003"].n_obs, size=5000, replace=False), :].copy()  #? debug
 
@@ -45,4 +56,4 @@ dict_of_adata_dicts = {
     "cellsweep": adata_cellsweep_dict,
     "cellbender": adata_cellbender_dict,
 }
-cs_utils.make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, out_dir=out_dir)
+cs_utils.make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=custom_markers, out_dir=out_dir)

@@ -156,6 +156,7 @@ data
 data/
 **/pytest_output/
 notebooks/output
+notebooks/output2
 notebooks/data
 notebooks/extracted_checkpoint
 **/ckpt.tar.gz

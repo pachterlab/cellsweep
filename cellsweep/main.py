@@ -62,7 +62,7 @@ def main():  # noqa: C901
     parser_denoise_count_matrix.add_argument(
         "--max_iter",
         type=int,
-        default=150,
+        default=500,
         help="Maximum number of EM iterations.",
     )
     parser_denoise_count_matrix.add_argument(
@@ -74,13 +74,13 @@ def main():  # noqa: C901
     parser_denoise_count_matrix.add_argument(
         "--beta",
         type=float,
-        default=0.03,
+        default=0.1,
         help="Initial beta (percent bulk contamination) value for each cell. Works better when set to a higher number than expected (expected is around 0.05).",
     )
     parser_denoise_count_matrix.add_argument(
         "--eps",
         type=float,
-        default=1e-9,
+        default=1e-12,
         help="Numerical stability constant to prevent division by zero or log(0).",
     )
     parser_denoise_count_matrix.add_argument(
@@ -92,7 +92,7 @@ def main():  # noqa: C901
     parser_denoise_count_matrix.add_argument(
         "--dirichlet_lambda",
         type=float,
-        default=1e-6,
+        default=10,
         help="Pseudocount. Sometimes used for clipping.",
     )
     parser_denoise_count_matrix.add_argument(
@@ -107,27 +107,19 @@ def main():  # noqa: C901
         help="number of numba threads",
     )
     parser_denoise_count_matrix.add_argument(
-        "--fixed_celltype",
-        action="store_true",
+        "--disable_fixed_celltype",
+        action="store_false",
         help="Use fixed cell type annotations from adata.obs['cell_type'] if available.",
     )
     parser_denoise_count_matrix.add_argument(
-        "--freeze_empty",
-        action="store_true",
-        default=True,
-        help=(
-            "If True, does not attempt to reestimate empty droplets. "
-            "(default: True)"
-        ),
+        "--disable_freeze_empty",
+        action="store_false",
+        help="If True, does not attempt to reestimate empty droplets."
     )
     parser_denoise_count_matrix.add_argument(
-        "--freeze_ambient_profile",
-        action="store_true",
-        default=True,
-        help=(
-            "If True, does not update the ambient profile (a) based on alpha. "
-            "(default: True)"
-        ),
+        "--disable_freeze_ambient_profile",
+        action="store_false",
+        help="If True, does not update the ambient profile (a) based on alpha."
     )
     parser_denoise_count_matrix.add_argument(
         "--empty_droplet_method",
@@ -163,15 +155,6 @@ def main():  # noqa: C901
         help=(
             "Expected number of real cells, used when estimating thresholds. "
             "(default: None)"
-        ),
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--empty_droplet_celltype_name",
-        type=str,
-        default="Empty Droplet",
-        help=(
-            "Name used in `celltype` to denote empty droplets. "
-            "(default: 'Empty Droplet')"
         ),
     )
     parser_denoise_count_matrix.add_argument(
@@ -257,14 +240,13 @@ def main():  # noqa: C901
             dirichlet_lambda=args.dirichlet_lambda,
             integer_out=args.integer_out,
             threads=args.threads,
-            fixed_celltype=args.fixed_celltype,
-            freeze_empty=args.freeze_empty,
-            freeze_ambient_profile=args.freeze_ambient_profile,
+            fixed_celltype=args.disable_fixed_celltype,
+            freeze_empty=args.disable_freeze_empty,
+            freeze_ambient_profile=args.disable_freeze_ambient_profile,
             empty_droplet_method=args.empty_droplet_method,
             ambient_threshold=args.ambient_threshold,
             umi_cutoff=args.umi_cutoff,
             expected_cells=args.expected_cells,
-            empty_droplet_celltype_name=args.empty_droplet_celltype_name,
             tol=args.tol,
             random_state=args.random_state,
             verbose=args.verbose,

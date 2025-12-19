@@ -3,6 +3,7 @@
 import os
 import shutil
 import subprocess
+import itertools
 import re
 import requests
 import matplotlib
@@ -812,7 +813,7 @@ def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell
         bins=100,
         alpha=0.6,
         linewidth=1.5,
-        color="blue",
+        color="#0047b3",
         element="step",
         fill=False,
         ax=ax,
@@ -826,7 +827,7 @@ def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell
         bins=100,
         alpha=0.6,
         linewidth=1.5,
-        color="gray",
+        color="#cc5500",
         element="step",
         fill=False,
         ax=ax,
@@ -2108,7 +2109,7 @@ def plot_multiple_kdes(expr_list, labels=None, colors=None, gene_name=None, log=
 
 
 
-def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, out_dir=None):
+def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=None, out_dir=None):
     # plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]
     # total_tissues = ["CortexHippocampus", "Heart", "Liver", "HypothalamusPituitary", "Gonads", "Adrenal", "Kidney", "Gastrocnemius"]
 
@@ -2156,5 +2157,51 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, out_dir=Non
                 adata_raw.obs[f"{tissue}_counts_total"] = (np.array(adata_raw[:, genes_in_adata].X.sum(axis=1)).ravel())
 
             # make the plot
-            # plot_cross_species_histogram(adata_processed, processed_name=adata_name, out_path=os.path.join(out_dir, f"{tissues[0]}_{tissues[1]}_histograms.png"))
             plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"{tissues[0]}_{tissues[1]}_joint_scatterplot.png"), show=True)
+
+            # use custom markers if provided
+            if custom_markers is not None:
+                num_tissues_present = 0
+                for tissue in tissues:
+                    if tissue not in custom_markers or custom_markers[tissue] is None or len(custom_markers[tissue]) == 0:
+                        continue
+
+                    genes_in_adata = [g for g in custom_markers[tissue] if g in adata_processed.var_names]
+                    if len(genes_in_adata) == 0:
+                        print(f"Warning: No marker genes found for tissue {tissue} in plate {plate} from custom_markers. Skipping.")
+                        continue
+                    adata_processed.obs[f"{tissue}_counts_total_custom"] = (np.array(adata_processed[:, genes_in_adata].X.sum(axis=1)).ravel())
+                    adata_raw.obs[f"{tissue}_counts_total_custom"] = (np.array(adata_raw[:, genes_in_adata].X.sum(axis=1)).ravel())
+                    num_tissues_present += 1
+                
+                # make the plots
+                if num_tissues_present == 2:
+                    plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total_custom", y_axis=f"{tissues[1]}_counts_total_custom", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"{tissues[0]}_{tissues[1]}_joint_scatterplot.png"), show=True)
+                if num_tissues_present >= 1:
+                    # raw vs processed scatterplot per tissue
+                    for marker_tissue in tissues:
+                        if f"{marker_tissue}_counts_total_custom" in adata_processed.obs.columns:
+                            for cell_tissue in tissues:
+                                adata_raw_tissue = adata_raw[adata_raw.obs["Tissue"] == cell_tissue].copy()
+                                adata_processed_tissue = adata_processed[adata_processed.obs["Tissue"] == cell_tissue].copy()
+                                plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers (custom)", density_type="scatter_with_kde", x_axis=f"{marker_tissue}_custom", y_axis='raw', out_path=os.path.join(out_dir, f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_scatterplot.png"), show=False)
+                    
+                    # dotplot
+                    custom_markers_filtered = {k: v for k, v in custom_markers.items() if k in tissues}
+                    make_raw_and_processed_dotplots(adata_raw, adata_processed, custom_markers_filtered, plot_raw=True, cluster_column="celltype", log_raw=False, log_processed=False, title_raw=f"Raw Data Dotplot, plate {plate}", title_processed=f"{tool} Processed Data Dotplot, plate {plate}", out_path_raw=os.path.join(out_dir, f"dotplot_raw_plate_{plate}.png"), out_path_processed=os.path.join(out_dir, f"dotplot_{adata_name}_with_cellsweep_clusters_cellbender_fig2.png"))
+
+    adata_dict_nonempty_length = len([adata for adata in dict_of_adata_dicts.values() if adata is not None])
+    num_iterations = adata_dict_nonempty_length * (adata_dict_nonempty_length - 1) // 2  # n choose 2
+    iteration = 1
+    for (key1, val1), (key2, val2) in itertools.combinations(dict_of_adata_dicts.items(), 2):
+        if val1 is None or val2 is None:
+            continue
+        
+        print(f"{iteration}/{num_iterations} Comparing {key1} vs {key2}...")
+        show = False
+        # Scatterplot by matrix, cell, and gene
+        plot_matrix_scatterplot(val1, val2, point_type="matrix", density_type="scatter_with_density", scale="log", x_axis=key1, y_axis=key2, out_path=os.path.join(out_dir, f"8cubed_{key2}_vs_{key1}_matrix_expression_scatterplot.png"), show=show)
+        plot_matrix_scatterplot(val1, val2, point_type="cell", density_type="scatter_with_kde", scale="log", x_axis=key1, y_axis=key2, out_path=os.path.join(out_dir, f"8cubed_{key2}_vs_{key1}_cell_expression_scatterplot.png"), show=show)
+        plot_matrix_scatterplot(val1, val2, point_type="gene", density_type="scatter_with_kde", scale="log", x_axis=key1, y_axis=key2, out_path=os.path.join(out_dir, f"8cubed_{key2}_vs_{key1}_gene_expression_scatterplot.png"), show=show)
+
+        iteration += 1

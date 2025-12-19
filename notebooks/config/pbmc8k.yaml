@@ -48,15 +48,20 @@ marker_genes: {
     "B cells": ["MS4A1", "CD79A", "CD79B", "HLA-DRA", "CD19"]
 }
 marker_genes_cellbender_fig2: {
-    "Monocytes/neutrophils": ["S100A8", "S100A9", "S100A12", "FCGR3A"],
-    "Monocytes/pDCs": ["LYZ", "CST3", "FCN1", "LILRA4"],
-    "T": ["IL32", "TRAC", "CCR7", "FOXP3", "CD8A", "CD8B", "NKG7", "GNLY", "TRGC1", "SLC4A10"],
-    "B": ["IGHD", "CD79A", "FCER2", "TNFRSF13B"],
-    "NK": ["KLRF1", "SPON2"],
-    "Progenitor": ["PPBP"],
-    "Baso./neutro./progenitor": ["SDPR", "CLU"],
+    "Monocytes/neutrophils": ["S100A8", "S100A9"],
+    "Monocytes/pDCs": ["LYZ", "CST3"],
     "(Broad expression)": ["PTPRC"]
 }
+# marker_genes_cellbender_fig2: {
+#     "Monocytes/neutrophils": ["S100A8", "S100A9", "S100A12", "FCGR3A"],
+#     "Monocytes/pDCs": ["LYZ", "CST3", "FCN1", "LILRA4"],
+#     "T": ["IL32", "TRAC", "CCR7", "FOXP3", "CD8A", "CD8B", "NKG7", "GNLY", "TRGC1", "SLC4A10"],
+#     "B": ["IGHD", "CD79A", "FCER2", "TNFRSF13B"],
+#     "NK": ["KLRF1", "SPON2"],
+#     "Progenitor": ["PPBP"],
+#     "Baso./neutro./progenitor": ["SDPR", "CLU"],
+#     "(Broad expression)": ["PTPRC"]
+# }
 
 
 

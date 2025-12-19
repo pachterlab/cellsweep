@@ -578,7 +578,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def denoise_count_matrix(
     adata: str | ad.AnnData,
-    adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = "adata_straightened.h5ad",
+    adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = "adata_denoised.h5ad",
     max_iter: Annotated[int, Field(gt=1)] = 500,
     init_alpha: Annotated[float, Field(ge=0, le=1)] = 0.9,
     beta: Annotated[float, Field(ge=0, le=1)] = 0.1,
