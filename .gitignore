@@ -158,6 +158,7 @@ data/
 notebooks/output
 notebooks/output2
 notebooks/data
+notebooks/data2
 notebooks/extracted_checkpoint
 **/ckpt.tar.gz
 tmp.py

@@ -288,9 +288,10 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_t
 
     all_vals = np.concatenate([x, y])
     vmin, vmax = all_vals.min(), all_vals.max()
+    vmin = 0.475  # hard-coded
     margin = 1.1
-    ax.set_xlim(left = 0.475, right = vmax * margin)  # left = vmin / margin
-    ax.set_ylim(bottom = 0.475, top = vmax * margin)  # bottom = vmin / margin
+    ax.set_xlim(left = vmin / margin, right = vmax * margin)
+    ax.set_ylim(bottom = vmin / margin, top = vmax * margin)
 
     if scale == "log":
         ax.set_xscale("log", base=2)
@@ -2131,6 +2132,7 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
             if tool == "raw":
                 continue
 
+            print(f"Processing plate {plate} with tool {tool}...")
             adata_raw = adata_raw_dict.get(plate, None)
             if adata_raw is None:
                 print(f"Warning: No raw adata found for plate {plate}. Skipping.")
@@ -2157,6 +2159,7 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                 adata_raw.obs[f"{tissue}_counts_total"] = (np.array(adata_raw[:, genes_in_adata].X.sum(axis=1)).ravel())
 
             # make the plot
+            print(f"Making joint scatterplot for plate {plate} with tool {tool}...")
             plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"{tissues[0]}_{tissues[1]}_joint_scatterplot.png"), show=True)
 
             # use custom markers if provided
@@ -2176,6 +2179,7 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                 
                 # make the plots
                 if num_tissues_present == 2:
+                    print(f"Making joint scatterplot for plate {plate} with tool {tool}...")
                     plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total_custom", y_axis=f"{tissues[1]}_counts_total_custom", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"{tissues[0]}_{tissues[1]}_joint_scatterplot.png"), show=True)
                 if num_tissues_present >= 1:
                     # raw vs processed scatterplot per tissue
@@ -2184,10 +2188,12 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                             for cell_tissue in tissues:
                                 adata_raw_tissue = adata_raw[adata_raw.obs["Tissue"] == cell_tissue].copy()
                                 adata_processed_tissue = adata_processed[adata_processed.obs["Tissue"] == cell_tissue].copy()
+                                print(f"Making raw vs processed scatterplot for plate {plate} with tool {tool}, cell tissue {cell_tissue}, marker tissue {marker_tissue}...")
                                 plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers (custom)", density_type="scatter_with_kde", x_axis=f"{marker_tissue}_custom", y_axis='raw', out_path=os.path.join(out_dir, f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_scatterplot.png"), show=False)
                     
                     # dotplot
                     custom_markers_filtered = {k: v for k, v in custom_markers.items() if k in tissues}
+                    print(f"Making dotplot for plate {plate} with tool {tool}...")
                     make_raw_and_processed_dotplots(adata_raw, adata_processed, custom_markers_filtered, plot_raw=True, cluster_column="celltype", log_raw=False, log_processed=False, title_raw=f"Raw Data Dotplot, plate {plate}", title_processed=f"{tool} Processed Data Dotplot, plate {plate}", out_path_raw=os.path.join(out_dir, f"dotplot_raw_plate_{plate}.png"), out_path_processed=os.path.join(out_dir, f"dotplot_{adata_name}_with_cellsweep_clusters_cellbender_fig2.png"))
 
     adata_dict_nonempty_length = len([adata for adata in dict_of_adata_dicts.values() if adata is not None])
@@ -2197,7 +2203,7 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
         if val1 is None or val2 is None:
             continue
         
-        print(f"{iteration}/{num_iterations} Comparing {key1} vs {key2}...")
+        print(f"{iteration}/{num_iterations} Comparing {key1} vs {key2} with scatterplots...")
         show = False
         # Scatterplot by matrix, cell, and gene
         plot_matrix_scatterplot(val1, val2, point_type="matrix", density_type="scatter_with_density", scale="log", x_axis=key1, y_axis=key2, out_path=os.path.join(out_dir, f"8cubed_{key2}_vs_{key1}_matrix_expression_scatterplot.png"), show=show)
