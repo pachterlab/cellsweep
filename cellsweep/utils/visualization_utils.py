@@ -1554,8 +1554,10 @@ def plot_knee_multi(
 
         # Sparse-safe
         if sparse.issparse(X):
+            X.data[X.data < 0.5] = 0.5
             row_sums = np.array(X.sum(axis=1)).ravel()
         else:
+            X = np.where(X < 0.5, 0.5, X)
             row_sums = X.sum(axis=1)
 
         knee = np.sort(row_sums)[::-1]              # descending
@@ -1572,6 +1574,7 @@ def plot_knee_multi(
     # ---- Formatting ----
     plt.xscale("log")
     plt.yscale("log")
+    plt.ylim(bottom=0.5)
     plt.xlabel("Barcode Rank (log)", fontsize=12)
     plt.ylabel("Total UMI Counts (log)", fontsize=12)
     plt.title(title, fontsize=14)
