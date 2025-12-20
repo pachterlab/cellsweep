@@ -50,7 +50,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     unique_cts = celltypes.cat.categories
 
     # Preallocate array
-    mean_expr = np.zeros((len(unique_cts), adata.n_vars), dtype=np.float32)
+    mean_expr = np.zeros((len(unique_cts), adata.n_vars), dtype=np.float64)
 
     # Compute mean expression per cell type
     for i, ct in enumerate(unique_cts):
@@ -274,7 +274,8 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
 @njit(parallel=True, nogil=True)
 def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                  gamma_idx, p, K, N, eps, log_eps, freeze_empty_mask,
-                 freeze_ambient_profile, fixed_celltype, p_numer_tls, a_numer_tls, done):
+                 freeze_ambient_profile, fixed_celltype, 
+                 p_numer_tls, a_numer_tls, numer_gamma_tls, done):
     """
     Parallel E-step over rows. Returns per-entry arrays and per-row summaries.
     """
@@ -285,8 +286,8 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
 
     p_numer_tls.fill(0.0)
     a_numer_tls.fill(0.0)
+    numer_gamma_tls.fill(0.0)
 
-    numer_gamma = np.zeros(N, dtype=np.float64)
     A_n = np.zeros(N, dtype=np.float64)
     ll_row = np.zeros(N, dtype=np.float64)
     M_row = np.zeros(N, dtype=np.float64)
@@ -340,8 +341,8 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 local_M += cM
                 local_ll += val * np.log(np.maximum(p_tot, log_eps))
         else:
+            local_ng = 0.0
             b = (1.0 - beta) * (1.0 - alpha[n])
-            local_gamma = 0.0
             k = gamma_idx[n]   # int in [0, K) or -1
 
             for jj in range(rs, re):
@@ -351,10 +352,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 # mixture weights
                 wa = (1.0 - beta) * alpha[n] * a[g]
                 wm = beta * m_global[g]
-
-                w_cell = 0.0
-                if k >= 0:
-                    w_cell = b * p[k, g]
+                w_cell = b * p[k, g]
 
                 p_tot = wa + wm + w_cell
                 scale = val / np.maximum(p_tot, eps)
@@ -362,13 +360,10 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 # expected contributions
                 cA = scale * wa
                 cM = scale * wm
-
-                if k >= 0:
-                    cC = scale * w_cell
-                    p_numer_tls[tid, k, g] += cC
-                    local_gamma += cC
-                else:
-                    cC = 0.0
+                cC = scale * w_cell
+                
+                p_numer_tls[tid, k, g] += cC
+                local_ng += cC
 
                 if done:
                     ambient_vals[jj] = cA
@@ -381,38 +376,39 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 local_M += cM
                 local_ll += val * np.log(np.maximum(p_tot, log_eps))
 
-            # write back per-row numbers
-            A_n[n] = local_A
-            M_row[n] = local_M
-            ll_row[n] = local_ll
-            numer_gamma[n] = local_gamma
+            numer_gamma_tls[tid, n] = local_ng
 
-            # ---------- HARD REASSIGNMENT (CEM) ----------
-            if not fixed_celltype:
-                best_k = k
-                best_ll = -1e300
+            # # ---------- HARD REASSIGNMENT (CEM) ----------
+            # if not fixed_celltype:
+            #     best_k = k
+            #     best_ll = -1e300
 
-                for kk in range(K):
-                    llk = 0.0
-                    for jj in range(rs, re):
-                        g = indices[jj]
-                        val = data[jj]
+            #     for kk in range(K):
+            #         llk = 0.0
+            #         for jj in range(rs, re):
+            #             g = indices[jj]
+            #             val = data[jj]
 
-                        # full likelihood: ambient + cell + bulk
-                        p_mix = (1.0 - alpha[n]) * p[kk, g] + alpha[n] * a[g]
-                        llk += val * np.log(np.maximum(p_mix, log_eps))
+            #             # full likelihood: ambient + cell + bulk
+            #             p_mix = (1.0 - alpha[n]) * p[kk, g] + alpha[n] * a[g]
+            #             llk += val * np.log(np.maximum(p_mix, log_eps))
 
-                    if llk > best_ll:
-                        best_ll = llk
-                        best_k = kk
+            #         if llk > best_ll:
+            #             best_ll = llk
+            #             best_k = kk
 
-            gamma_idx[n] = best_k
+            #     gamma_idx[n] = best_k
+        
+        # write back per-row numbers
+        A_n[n] = local_A
+        M_row[n] = local_M
+        ll_row[n] = local_ll
     
     if not done:
         ambient_vals = None
         bulk_vals = None
 
-    return ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row
+    return ambient_vals, bulk_vals, A_n, ll_row, M_row
 
 def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, 
               max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
@@ -466,16 +462,22 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
         nthreads = get_num_threads()
         p_numer_tls = np.zeros((nthreads, K, G), dtype=np.float64)
         a_numer_tls = np.zeros((nthreads, G), dtype=np.float64)
+        numer_gamma_tls = np.zeros((nthreads, N), dtype=np.float64)
 
-        ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row = e_step_numba(
+
+        ambient_vals, bulk_vals, A_n, ll_row, M_row = e_step_numba(
             indptr=indptr, indices=indices, data=data, alpha=alpha, beta=beta, a=a, m_global=m_global,
             gamma_idx=gamma_idx, p=p, K=K, N=N, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask,
-            freeze_ambient_profile=freeze_ambient_profile, fixed_celltype=fixed_celltype, p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, done=done
+            freeze_ambient_profile=freeze_ambient_profile, fixed_celltype=fixed_celltype, 
+            p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, numer_gamma_tls=numer_gamma_tls, done=done
         )
 
         # Reduce per-row scalars
         ll = float(np.sum(ll_row))
         M_total = float(np.sum(M_row))
+
+        # Build numer_gamma
+        numer_gamma = numer_gamma_tls.sum(axis=0)
 
         # Build a_numer
         if not freeze_ambient_profile:
@@ -489,8 +491,9 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
         # ============================
 
         # update p 
-        denoms = p_numer.sum(axis=1) + dirichlet_lambda
-        p = p_numer / np.maximum(denoms[:, None], eps)
+        p = p_numer + dirichlet_lambda
+        denoms = p.sum(axis=1)
+        p = p / np.maximum(denoms[:, None], eps)
 
         # update alpha
         Ccell_n = numer_gamma
@@ -582,7 +585,7 @@ def denoise_count_matrix(
     max_iter: Annotated[int, Field(gt=1)] = 500,
     init_alpha: Annotated[float, Field(ge=0, le=1)] = 0.9,
     beta: Annotated[float, Field(ge=0, le=1)] = 0.1,
-    eps: Annotated[float, Field(gt=0)] = 1e-12,
+    eps: Annotated[float, Field(gt=0)] = 1e-6,
     log_eps: Annotated[float, Field(gt=0)] = 1e-300,
     dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 10,
     integer_out: bool = False,
@@ -841,9 +844,9 @@ def denoise_count_matrix(
         alpha[is_empty] = 1.0
 
     alpha = alpha.astype(np.float64)
-    a = a.astype(np.float32)
-    p = p.astype(np.float32)
-    C = C.astype(np.float32)
+    a = a.astype(np.float64)
+    p = p.astype(np.float64)
+    C = C.astype(np.float64)
 
     logger.info(f"Performing Sparse EM with {numba.get_num_threads()} Numba thread(s)")
     em_dict = sparse_em(C=C, alpha=alpha, beta=beta, a=a, u=u, m_global=m_global, gamma_idx=gamma_idx, p=p, K=K, N=N, G=G, 
