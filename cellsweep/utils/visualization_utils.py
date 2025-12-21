@@ -633,26 +633,27 @@ def plot_alluvial(*adatas, merged_df_csv=None, out_path=None, names=None, displa
 
 
 
-def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, cluster_column="leiden", plot_raw=True, title_raw=None, title_processed=None, log_raw=False, log_processed=False, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
+def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, cluster_column="leiden", plot_raw=True, title_raw=None, title_processed=None, gene_symbols=None, log_raw=False, log_processed=False, out_path_raw="raw_dotplot.png", out_path_processed="processed_dotplot.png"):
     if adata_raw is None or adata_processed is None:
         print("One of the adatas is None, skipping dotplot generation.")
         return
 
     common_cells = adata_raw.obs_names.intersection(adata_processed.obs_names)
     adata_raw_only_cellbender_cells = adata_raw[common_cells].copy()
-    adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[[cluster_column]], how='left')
+    if cluster_column not in adata_raw_only_cellbender_cells.obs.columns:
+        adata_raw_only_cellbender_cells.obs = adata_raw_only_cellbender_cells.obs.join(adata_processed.obs[[cluster_column]], how='left')
 
     if log_raw != log_processed:
         print("Warning: log_raw and log_processed are different; dotplots may not be comparable.")
 
     if plot_raw:
         print(title_raw)
-        sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby=cluster_column, standard_scale=None, save=("raw_tmp.png" if out_path_raw else None), log=log_raw)  # title=title_raw
+        sc.pl.dotplot(adata_raw_only_cellbender_cells, marker_genes, groupby=cluster_column, gene_symbols=gene_symbols, standard_scale=None, save=("raw_tmp.png" if out_path_raw else None), log=log_raw)  # title=title_raw
         print("------------------------------")
         if out_path_raw:
             shutil.move("figures/dotplot_raw_tmp.png", out_path_raw)
     print(title_processed)
-    sc.pl.dotplot(adata_processed, marker_genes, groupby=cluster_column, standard_scale=None, save=("processed_tmp.png" if out_path_processed else None), log=log_processed)  # title=title_processed
+    sc.pl.dotplot(adata_processed, marker_genes, groupby=cluster_column, gene_symbols=gene_symbols, standard_scale=None, save=("processed_tmp.png" if out_path_processed else None), log=log_processed)  # title=title_processed
     print("------------------------------")
     if out_path_processed:
         shutil.move("figures/dotplot_processed_tmp.png", out_path_processed)
@@ -2113,7 +2114,7 @@ def plot_multiple_kdes(expr_list, labels=None, colors=None, gene_name=None, log=
 
 
 
-def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=None, out_dir=None):
+def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=None, gene_name_to_id=None, out_dir=None, overwrite=False):
     # plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]
     # total_tissues = ["CortexHippocampus", "Heart", "Liver", "HypothalamusPituitary", "Gonads", "Adrenal", "Kidney", "Gastrocnemius"]
 
@@ -2136,12 +2137,18 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                 continue
 
             print(f"Processing plate {plate} with tool {tool}...")
+            out_dir_plate = os.path.join(out_dir, f"plate_{plate}")
+            os.makedirs(out_dir_plate, exist_ok=True)
+
             adata_raw = adata_raw_dict.get(plate, None)
             if adata_raw is None:
                 print(f"Warning: No raw adata found for plate {plate}. Skipping.")
                 continue
 
-            adata_raw = adata_raw[adata_processed.obs_names].copy()  # only keep cells in adata_raw that are also in adata_processed
+            # only keep cells in adata_raw that are also in adata_processed
+            common_cells = adata_raw.obs_names.intersection(adata_processed.obs_names)
+            adata_raw = adata_raw[common_cells].copy()
+            adata_processed = adata_processed[common_cells].copy()
 
             # do the gene counting
             tissues = adata_processed.obs["Tissue"].unique().tolist()
@@ -2163,7 +2170,13 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
 
             # make the plot
             print(f"Making joint scatterplot for plate {plate} with tool {tool}...")
-            plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"{tissues[0]}_{tissues[1]}_joint_scatterplot.png"), show=True)
+            # check if all {tissues}_counts_total columns exist
+            if all(f"{tissue}_counts_total" in adata_processed.obs.columns for tissue in tissues):
+                out_path = os.path.join(out_dir_plate, f"plate_{plate}_{tissues[0]}_{tissues[1]}_{tool}_joint_scatterplot.png")
+                if not os.path.exists(out_path) or overwrite:
+                    plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=True)
+            else:
+                print(f"Warning: Missing count columns for tissues {tissues} in plate {plate}. Skipping joint scatterplot.")
 
             # use custom markers if provided
             if custom_markers is not None:
@@ -2181,9 +2194,10 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                     num_tissues_present += 1
                 
                 # make the plots
+                print(f"Making plots using custom markers for plate {plate} with tool {tool}...")
                 if num_tissues_present == 2:
                     print(f"Making joint scatterplot for plate {plate} with tool {tool}...")
-                    plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total_custom", y_axis=f"{tissues[1]}_counts_total_custom", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"{tissues[0]}_{tissues[1]}_joint_scatterplot.png"), show=True)
+                    plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total_custom", y_axis=f"{tissues[1]}_counts_total_custom", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"plate_{plate}_{tissues[0]}_{tissues[1]}_joint_scatterplot.png"), show=True)
                 if num_tissues_present >= 1:
                     # raw vs processed scatterplot per tissue
                     for marker_tissue in tissues:
@@ -2192,25 +2206,51 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                                 adata_raw_tissue = adata_raw[adata_raw.obs["Tissue"] == cell_tissue].copy()
                                 adata_processed_tissue = adata_processed[adata_processed.obs["Tissue"] == cell_tissue].copy()
                                 print(f"Making raw vs processed scatterplot for plate {plate} with tool {tool}, cell tissue {cell_tissue}, marker tissue {marker_tissue}...")
-                                plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers (custom)", density_type="scatter_with_kde", x_axis=f"{marker_tissue}_custom", y_axis='raw', out_path=os.path.join(out_dir, f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_scatterplot.png"), show=False)
-                    
+                                out_path = os.path.join(out_dir_plate, f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_scatterplot.png")
+                                if not os.path.exists(out_path) or overwrite:
+                                    plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers", density_type="scatter_with_kde", x_axis=f"{marker_tissue}_custom", y_axis='raw', out_path=out_path, show=False)
+                                    #!!! change to scatter_with_density???
                     # dotplot
-                    custom_markers_filtered = {k: v for k, v in custom_markers.items() if k in tissues}
+                    custom_markers_filtered = {k: v for k, v in custom_markers.items() if k in tissues and v is not None and len(v) > 0}
+                    
+                    def add_gene_name_column(adata, gene_name_to_id):
+                        if gene_name_to_id is None:
+                            raise ValueError("gene_name_to_id mapping is required to convert gene names to IDs in adata.var.")
+                        gene_id_to_name = {v: k for k, v in gene_name_to_id.items()}
+                        adata.var["gene_name"] = adata.var_names.map(gene_id_to_name).fillna(adata.var_names)
+                        return adata
+                        
+                    if "gene_name" not in adata_raw.var.columns:
+                        adata_raw = add_gene_name_column(adata_raw, gene_name_to_id)
+                    if "gene_name" not in adata_processed.var.columns:
+                        adata_processed = add_gene_name_column(adata_processed, gene_name_to_id)
+
                     print(f"Making dotplot for plate {plate} with tool {tool}...")
-                    make_raw_and_processed_dotplots(adata_raw, adata_processed, custom_markers_filtered, plot_raw=True, cluster_column="celltype", log_raw=False, log_processed=False, title_raw=f"Raw Data Dotplot, plate {plate}", title_processed=f"{tool} Processed Data Dotplot, plate {plate}", out_path_raw=os.path.join(out_dir, f"dotplot_raw_plate_{plate}.png"), out_path_processed=os.path.join(out_dir, f"dotplot_{adata_name}_with_cellsweep_clusters_cellbender_fig2.png"))
+                    out_path_raw = os.path.join(out_dir_plate, f"dotplot_raw_plate_{plate}.png")
+                    out_path_processed = os.path.join(out_dir_plate, f"dotplot_{tool}_plate_{plate}.png")
+                    if not os.path.exists(out_path_processed) or overwrite:
+                        make_raw_and_processed_dotplots(adata_raw, adata_processed, custom_markers_filtered, plot_raw=True, cluster_column="celltype", gene_symbols="gene_name", log_raw=False, log_processed=False, title_raw=f"Raw Data Dotplot, plate {plate}", title_processed=f"{tool} Processed Data Dotplot, plate {plate}", out_path_raw=out_path_raw, out_path_processed=out_path_processed)
 
-    adata_dict_nonempty_length = len([adata for adata in dict_of_adata_dicts.values() if adata is not None])
-    num_iterations = adata_dict_nonempty_length * (adata_dict_nonempty_length - 1) // 2  # n choose 2
-    iteration = 1
-    for (key1, val1), (key2, val2) in itertools.combinations(dict_of_adata_dicts.items(), 2):
-        if val1 is None or val2 is None:
+    for (tool1, plate_to_adata_dict1), (tool2, plate_to_adata_dict2) in itertools.combinations(dict_of_adata_dicts.items(), 2):
+        if plate_to_adata_dict1 is None or plate_to_adata_dict2 is None:
             continue
-        
-        print(f"{iteration}/{num_iterations} Comparing {key1} vs {key2} with scatterplots...")
-        show = False
-        # Scatterplot by matrix, cell, and gene
-        plot_matrix_scatterplot(val1, val2, point_type="matrix", density_type="scatter_with_density", scale="log", x_axis=key1, y_axis=key2, out_path=os.path.join(out_dir, f"8cubed_{key2}_vs_{key1}_matrix_expression_scatterplot.png"), show=show)
-        plot_matrix_scatterplot(val1, val2, point_type="cell", density_type="scatter_with_kde", scale="log", x_axis=key1, y_axis=key2, out_path=os.path.join(out_dir, f"8cubed_{key2}_vs_{key1}_cell_expression_scatterplot.png"), show=show)
-        plot_matrix_scatterplot(val1, val2, point_type="gene", density_type="scatter_with_kde", scale="log", x_axis=key1, y_axis=key2, out_path=os.path.join(out_dir, f"8cubed_{key2}_vs_{key1}_gene_expression_scatterplot.png"), show=show)
 
-        iteration += 1
+        for plate, adata1 in plate_to_adata_dict1.items():
+            adata2 = plate_to_adata_dict2.get(plate, None)
+            if adata1 is None or adata2 is None:
+                continue
+
+            show = False
+            # Scatterplot by matrix, cell, and gene
+            print(f"Making 8cubed scatterplots for plate {plate} between tools {tool1} and {tool2}...")
+            out_path = os.path.join(out_dir_plate, f"8cubed_{tool2}_vs_{tool1}_{plate}_matrix_expression_scatterplot.png")
+            if not os.path.exists(out_path) or overwrite:
+                plot_matrix_scatterplot(adata1, adata2, point_type="matrix", density_type="scatter_with_density", scale="log", x_axis=tool1, y_axis=tool2, title = f"{tool2} vs {tool1} {plate} matrix scatterplot", out_path=out_path, show=show)
+            
+            out_path = os.path.join(out_dir_plate, f"8cubed_{tool2}_vs_{tool1}_{plate}_cell_expression_scatterplot.png")
+            if not os.path.exists(out_path) or overwrite:
+                plot_matrix_scatterplot(adata1, adata2, point_type="cell", density_type="scatter_with_density", scale="log", x_axis=tool1, y_axis=tool2, title = f"{tool2} vs {tool1} {plate} cell scatterplot", out_path=out_path, show=show)
+            
+            out_path = os.path.join(out_dir_plate, f"8cubed_{tool2}_vs_{tool1}_{plate}_gene_expression_scatterplot.png")
+            if not os.path.exists(out_path) or overwrite:
+                plot_matrix_scatterplot(adata1, adata2, point_type="gene", density_type="scatter_with_density", scale="log", x_axis=tool1, y_axis=tool2, title = f"{tool2} vs {tool1} {plate} gene scatterplot", out_path=out_path, show=show)
