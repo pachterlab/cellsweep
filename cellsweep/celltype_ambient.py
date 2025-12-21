@@ -747,7 +747,7 @@ def denoise_count_matrix(
     # Convert matrix to csr format
     is_dense = False
     if not sp.issparse(C) or not sp.isspmatrix_csr(C):
-        if not sp.issparce(C):
+        if not sp.issparse(C):
             logger.info("Input cell x gene matrix is not sparse. Converting to sparse.")
             is_dense=True
         C = sp.csr_matrix(C)
