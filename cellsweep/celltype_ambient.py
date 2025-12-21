@@ -16,7 +16,6 @@ import matplotlib.pyplot as plt
 from ipywidgets import IntSlider, VBox, Output
 from IPython.display import display
 from sklearn.isotonic import IsotonicRegression
-from scipy.interpolate import UnivariateSpline
 import seaborn as sns
 import gc
 
@@ -274,7 +273,8 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
 @njit(parallel=True, nogil=True)
 def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                  gamma_idx, p, K, N, eps, log_eps, freeze_empty_mask,
-                 freeze_ambient_profile, fixed_celltype, p_numer_tls, a_numer_tls, done):
+                 freeze_ambient_profile, fixed_celltype,
+                 p_numer_tls, a_numer_tls, done):
     """
     Parallel E-step over rows. Returns per-entry arrays and per-row summaries.
     """
@@ -319,8 +319,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 wm = beta * m_global[g]
 
                 # treat only ambient+bulk
-                w_p_sum = 0.0
-                p_tot = wa + wm + w_p_sum
+                p_tot = wa + wm
 
                 # fraction scale: vals / p_tot
                 scale = val / np.maximum(p_tot, eps)
@@ -351,10 +350,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 # mixture weights
                 wa = (1.0 - beta) * alpha[n] * a[g]
                 wm = beta * m_global[g]
-
-                w_cell = 0.0
-                if k >= 0:
-                    w_cell = b * p[k, g]
+                w_cell = b * p[k, g]
 
                 p_tot = wa + wm + w_cell
                 scale = val / np.maximum(p_tot, eps)
@@ -362,13 +358,10 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 # expected contributions
                 cA = scale * wa
                 cM = scale * wm
+                cC = scale * w_cell
 
-                if k >= 0:
-                    cC = scale * w_cell
-                    p_numer_tls[tid, k, g] += cC
-                    local_gamma += cC
-                else:
-                    cC = 0.0
+                p_numer_tls[tid, k, g] += cC
+                local_gamma += cC
 
                 if done:
                     ambient_vals[jj] = cA
@@ -380,11 +373,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                     a_numer_tls[tid, g] += cA
                 local_M += cM
                 local_ll += val * np.log(np.maximum(p_tot, log_eps))
-
-            # write back per-row numbers
-            A_n[n] = local_A
-            M_row[n] = local_M
-            ll_row[n] = local_ll
+            
             numer_gamma[n] = local_gamma
 
             # ---------- HARD REASSIGNMENT (CEM) ----------
@@ -398,15 +387,20 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                         g = indices[jj]
                         val = data[jj]
 
-                        # full likelihood: ambient + cell + bulk
-                        p_mix = (1.0 - alpha[n]) * p[kk, g] + alpha[n] * a[g]
+                        # Full Likelihood
+                        p_mix = (1-beta) * ((1.0 - alpha[n]) * p[kk, g] + alpha[n] * a[g]) + beta * m_global[g]
                         llk += val * np.log(np.maximum(p_mix, log_eps))
 
                     if llk > best_ll:
                         best_ll = llk
                         best_k = kk
+                
+                gamma_idx[n] = best_k
 
-            gamma_idx[n] = best_k
+        # write back per-row numbers
+        A_n[n] = local_A
+        M_row[n] = local_M
+        ll_row[n] = local_ll
     
     if not done:
         ambient_vals = None
@@ -470,7 +464,8 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
         ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row = e_step_numba(
             indptr=indptr, indices=indices, data=data, alpha=alpha, beta=beta, a=a, m_global=m_global,
             gamma_idx=gamma_idx, p=p, K=K, N=N, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask,
-            freeze_ambient_profile=freeze_ambient_profile, fixed_celltype=fixed_celltype, p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, done=done
+            freeze_ambient_profile=freeze_ambient_profile, fixed_celltype=fixed_celltype,
+            p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, done=done
         )
 
         # Reduce per-row scalars
@@ -489,8 +484,9 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
         # ============================
 
         # update p 
-        denoms = p_numer.sum(axis=1) + dirichlet_lambda
-        p = p_numer / np.maximum(denoms[:, None], eps)
+        p = p_numer + dirichlet_lambda
+        denoms = p.sum(axis=1)
+        p = p / np.maximum(denoms[:, None], eps)
 
         # update alpha
         Ccell_n = numer_gamma
@@ -511,7 +507,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
                 total = np.maximum(u.sum(), eps)
                 u = u / total
                 a = u @ p    # shape (G,)
-        
+                a = a / a.sum()
 
         if verbose:
             if freeze_empty:
@@ -579,7 +575,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
 def denoise_count_matrix(
     adata: str | ad.AnnData,
     adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = "adata_denoised.h5ad",
-    max_iter: Annotated[int, Field(gt=1)] = 500,
+    max_iter: Annotated[int, Field(gt=1)] = 200,
     init_alpha: Annotated[float, Field(ge=0, le=1)] = 0.9,
     beta: Annotated[float, Field(ge=0, le=1)] = 0.1,
     eps: Annotated[float, Field(gt=0)] = 1e-12,
@@ -657,7 +653,7 @@ def denoise_count_matrix(
     threads : int, default 1
         number of numba threads
 
-    fixed_celltype : bool, default True
+    fixed_celltype : bool, default False
         If True, keeps cell-type assignments fixed during EM updates.
 
     freeze_empty : bool, default True
@@ -763,10 +759,10 @@ def denoise_count_matrix(
 
     # count parameters
     if freeze_ambient_profile:
-        number_of_parameters = 1 + (K * G)  # alpha (Nr), beta (1), p_k (K * G)
+        number_of_parameters = 1 + Nr + (K * G)  # alpha (Nr), beta (1), p_k (K * G)
         logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
     else:
-        number_of_parameters = K + 1 + (Nr * K) + (K * G)  # u, alpha (Nr), beta (1), gamma_type (Nr * K), p_k (K * G)
+        number_of_parameters = K + 1 + Nr + (K * G)  # u, alpha (Nr), beta (1), p_k (K * G)
         logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (u: {K:,}, alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
 
     # celltype mapping
@@ -787,6 +783,10 @@ def denoise_count_matrix(
     gamma_idx[mask] = mapped[mask].to_numpy()
     # empties
     gamma_idx[is_empty] = -1
+
+    if not fixed_celltype:
+        if verbose == 2:
+            gamma_idx_init = gamma_idx.copy()
 
     # initial beta + bulk m
     beta = float(beta)
@@ -862,6 +862,11 @@ def denoise_count_matrix(
         a_tracker = em_dict["a_tracker"]
         p_tracker = em_dict["p_tracker"]
         interactive_distribution_viewer(a_tracker, p_tracker, m_global)
+
+    if not fixed_celltype:
+        if verbose == 2:
+            celltype_mod_num = (gamma_idx_init != gamma_idx).sum()
+            logger.debug(f"The model reassigned the celltype of {celltype_mod_num} cells")
 
 
     # ===================================
