@@ -8,7 +8,7 @@ raw_tar_url: https://cf.10xgenomics.com/samples/cell-exp/1.1.0/pbmc33k/pbmc33k_r
 raw_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
 filtered_tar_url: https://cf.10xgenomics.com/samples/cell-exp/1.1.0/pbmc33k/pbmc33k_filtered_gene_bc_matrices.tar.gz
 filtered_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
-sequencing_technology: 10XV1
+sequencing_technology: 10XV2
 
 # analysis parameters
 model_pkl: Immune_All_High.pkl  # path, filename, or url for celltypist model pkl file
