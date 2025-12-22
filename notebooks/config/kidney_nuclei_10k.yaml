@@ -8,7 +8,7 @@ raw_tar_url: https://cf.10xgenomics.com/samples/cell-vdj/7.0.0/5k_human_kidney_t
 raw_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
 filtered_tar_url: https://cf.10xgenomics.com/samples/cell-vdj/7.0.0/5k_human_kidney_tumor_CNIK_5pv2/5k_human_kidney_tumor_CNIK_5pv2_filtered_feature_bc_matrix.tar.gz
 filtered_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
-sequencing_technology: 10XV2
+sequencing_technology: 10XV3
 
 # analysis parameters
 model_pkl: https://celltypist.cog.sanger.ac.uk/Resources/Organ_atlas/Kidney/models/Adult_Kidney_Mutoetal.2021.pkl  # path, filename, or url for celltypist model pkl file
