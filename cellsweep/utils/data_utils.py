@@ -3,6 +3,7 @@
 import os
 import numpy as np
 import urllib.request
+import tarfile
 from scipy import io, sparse
 import anndata as ad
 import pandas as pd
@@ -273,7 +274,7 @@ def find_single_branch_leaf_dir(base_dir):
     while True:
         entries = os.listdir(current)
         subdirs  = [d for d in entries if os.path.isdir(os.path.join(current, d))]
-        files    = [f for f in entries if os.path.isfile(os.path.join(current, f))]
+        files    = [f for f in entries if os.path.isfile(os.path.join(current, f)) and not f.endswith('.tar.gz')]
 
         # If files exist here, this is the leaf-level directory
         if files:
@@ -290,6 +291,13 @@ def find_single_branch_leaf_dir(base_dir):
         # Exactly one directory → descend
         current = os.path.join(current, subdirs[0])
 
+def get_tar_top_level_dir(tar_path):
+    with tarfile.open(tar_path, "r:*") as tar:
+        names = tar.getnames()
+
+        # Find the first top-level directory
+        top_level = names[0].split("/")[0]
+        return top_level
 
 def matrices_equal(A, B):
     # Case 1: both sparse
