@@ -409,7 +409,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
     return ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row
 
 def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, 
-              max_iter, tol, freeze_empty, fixed_celltype, real_mask, 
+              max_iter, tol, min_tol, freeze_empty, fixed_celltype, real_mask, 
               eps, dirichlet_lambda, log_eps, verbose, logger, 
               freeze_ambient_profile, debug):
     
@@ -441,7 +441,8 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
     else:
         freeze_empty_mask = np.zeros(N, dtype=np.bool_)
 
-    prev_ll = -np.inf
+    prev_ll = None
+    tol_adaptive = None
 
     # Precompute row_of_entry (map each nnz index to its row) -> used for constructing CSR from per-entry arrays
     row_of_entry = np.empty(nnz, dtype=np.int64)
@@ -469,7 +470,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
         )
 
         # Reduce per-row scalars
-        ll = float(np.sum(ll_row))
+        ll = float(np.sum(ll_row)) / N # average per-cell log-likelihood
         M_total = float(np.sum(M_row))
 
         # Build a_numer
@@ -509,6 +510,10 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
                 a = u @ p    # shape (G,)
                 a = a / a.sum()
 
+        # ============================
+        #     Stopping Conditions
+        # ============================
+
         if verbose:
             if freeze_empty:
                 alpha_eff = alpha[real_mask]
@@ -525,9 +530,18 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
             if converged:
                 logger.info("Converged.")
 
-        # Relative change in likelihood stopping condition
-        if it > 1 and abs((ll - prev_ll) / max(abs(prev_ll), 1.0)) < tol:
-            converged = True
+        if it == 2:
+            delta0 = abs((ll - prev_ll))
+            tol_adaptive = delta0 * tol
+        
+        if it > 1 and not converged:
+            min_abs_tol = min_tol * max(abs(prev_ll), 1.0)
+            tol_adaptive = max(tol_adaptive, min_abs_tol)
+
+            # Relative change in likelihood stopping condition
+            if abs((ll - prev_ll)) < tol_adaptive:
+                logger.debug(f"Stopping early because change in log-likelihood is < {tol_adaptive} (tol_adaptive)")
+                converged = True
 
         if debug:
             a_tracker.append(a.copy())
@@ -575,12 +589,12 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
 def denoise_count_matrix(
     adata: str | ad.AnnData,
     adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = "adata_denoised.h5ad",
-    max_iter: Annotated[int, Field(gt=1)] = 200,
+    max_iter: Annotated[int, Field(gt=1)] = 500,
     init_alpha: Annotated[float, Field(ge=0, le=1)] = 0.9,
     beta: Annotated[float, Field(ge=0, le=1)] = 0.1,
     eps: Annotated[float, Field(gt=0)] = 1e-12,
     log_eps: Annotated[float, Field(gt=0)] = 1e-300,
-    dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 10,
+    dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 500,
     integer_out: bool = False,
     threads: Optional[Annotated[int, Field(gt=0)]] = 1,
     fixed_celltype: bool = True,
@@ -590,7 +604,8 @@ def denoise_count_matrix(
     ambient_threshold: Optional[Annotated[float, Field(ge=0, le=1)]] = 0.0,
     umi_cutoff: Optional[Annotated[int, Field(ge=0)]] = None,
     expected_cells: Optional[Annotated[int, Field(ge=0)]] = None,
-    tol: Optional[Annotated[float, Field(ge=0)]] = 1e-6,
+    tol: Annotated[float, Field(gt=0)] = 1e-3,
+    min_tol: Annotated[float, Field(gt=0)] = 1e-6,
     random_state: Optional[Annotated[int, Field(ge=0)]] = 42,
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
@@ -636,7 +651,8 @@ def denoise_count_matrix(
        Initial value of alpha_n for each cell. Works better when set to a higher number than expected (expected is around 0.05 per cell).
     
     beta : float, default 0.1
-        Initial beta (percent bulk contamination) value for each cell. Works better when set to a higher number than expected (expected is around 0.05).
+        Initial beta (percent bulk contamination) value for each cell. Works better when set to a higher number than expected (expected is around 0.05). 
+        Set to a lower value than alpha_init since bulk contamination is usually less than ambient contamination.
 
     eps : float, default 1e-12
         Numerical stability constant to prevent division by zero.
@@ -645,7 +661,7 @@ def denoise_count_matrix(
         Numerical stability constant to log(0).
 
     dirichlet_lambda: float, default 10
-        Pseudocount. Will be divided by the number of genes G
+        Pseudocount. Will be divided by the number of genes G. Higher values lead to smoother cell-type profiles.
 
     integer_out : bool, default False
         If True, rounds denoised counts to nearest integer before saving.
@@ -847,7 +863,7 @@ def denoise_count_matrix(
 
     logger.info(f"Performing Sparse EM with {numba.get_num_threads()} Numba thread(s)")
     em_dict = sparse_em(C=C, alpha=alpha, beta=beta, a=a, u=u, m_global=m_global, gamma_idx=gamma_idx, p=p, K=K, N=N, G=G, 
-                        max_iter=max_iter, tol=tol, freeze_empty=freeze_empty, fixed_celltype=fixed_celltype, 
+                        max_iter=max_iter, tol=tol, min_tol=min_tol, freeze_empty=freeze_empty, fixed_celltype=fixed_celltype, 
                         real_mask=real_mask, eps=eps, dirichlet_lambda=dirichlet_lambda,log_eps=log_eps, verbose=verbose, 
                         logger=logger, freeze_ambient_profile=freeze_ambient_profile, debug=debug)
 
