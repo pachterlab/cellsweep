@@ -3,7 +3,7 @@ url: https://www.10xgenomics.com/datasets/33-k-pbm-cs-from-a-healthy-donor-1-sta
 
 # data file URLs and names
 adata_raw_url: null
-adata_raw_file_name: null  # automatically takes file name from adata_raw_url if provided
+adata_raw_file_name: raw_feature_bc_matrix.h5  # automatically takes file name from adata_raw_url if provided
 raw_tar_url: https://cf.10xgenomics.com/samples/cell-exp/1.1.0/pbmc33k/pbmc33k_raw_gene_bc_matrices.tar.gz
 raw_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
 filtered_tar_url: https://cf.10xgenomics.com/samples/cell-exp/1.1.0/pbmc33k/pbmc33k_filtered_gene_bc_matrices.tar.gz
@@ -62,3 +62,10 @@ cellbender_ckpt_url: null
 soupx_matrix_url: null
 decontx_matrix_url: null
 scar_matrix_url: null
+
+# how adata_raw_url was made
+# *run first few cells of benchmarking.ipynb - up to "Raw" cell*
+# library(DropletUtils)
+# library(Seurat)
+# filter_matrix <- Read10X(raw_tar_file_dir)
+# write10xCounts(adata_path_raw, filter_matrix, type = "HDF5", genome = "hg19", chemistry ="Single Cell 3' v2", version = "2", overwrite = TRUE, gene.id = rownames(filter_matrix), gene.symbol = rownames(filter_matrix))

@@ -31,7 +31,6 @@ cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 adata_raw_parent_dir = "/mnt/data1"
 adata_filtered_dir = "/mnt/data1/8_cube"
 
-debug = False
 verbose = 2  # 2 debug, 1 info, 0 warning, -1 error, -2 critical
 overwrite = False  # overwrite existing files
 threads = 32  # for cellsweep and CellBender (if use_cuda=False)
@@ -80,6 +79,8 @@ expected_cells = {
     'igvf_011': 721541
 }
 
+adata_cellsweep_dict = {}
+# for plate, adata_raw in adata_raw_dict.items():
 try:
     for plate in plates:
         adata_path_cellsweep = os.path.join(data_dir, plate, "cellsweep.h5ad")
@@ -90,9 +91,15 @@ try:
         adata_raw = ad.read_h5ad(os.path.join(data_dir, plate, "raw_counts.h5ad"))
         cellsweep_log_path = os.path.join(data_dir, plate, "cellsweep.log")
         
-        _ = denoise_count_matrix(adata_raw, adata_out=adata_path_cellsweep, beta=cellsweep_beta, freeze_ambient_profile=True, init_alpha=cellsweep_init_alpha, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells[plate], threads=threads, verbose=verbose, log_file=cellsweep_log_path)
+        adata_cellsweep = denoise_count_matrix(adata_raw, adata_out=adata_path_cellsweep, beta=cellsweep_beta, freeze_ambient_profile=True, init_alpha=cellsweep_init_alpha, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells[plate], threads=threads, verbose=verbose, log_file=cellsweep_log_path)
+        # adata_cellsweep = adata_cellsweep[~adata_cellsweep.obs["is_empty"]].copy()
+        # adata_cellsweep.var_names_make_unique()
+        # adata_filtered_path_cellsweep = os.path.join(data_dir, plate, "cellsweep_filtered.h5ad")
+        # if not os.path.exists(adata_filtered_path_cellsweep) or overwrite:
+        #     adata_cellsweep.write_h5ad(adata_filtered_path_cellsweep)
+        # adata_cellsweep_dict[plate] = adata_cellsweep
 
-        _ = None  #? memory management
+        adata_cellsweep = None  #? memory management
         del adata_raw   #? memory management
 except MemoryError:
     print("❌ Memory limit exceeded — exiting")  # might just print 'Segmentation fault (core dumped)' rather than this

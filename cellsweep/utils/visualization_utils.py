@@ -1644,6 +1644,9 @@ def plot_iterative_difference_counts(
         adata_list = adatas_dict[key]
         results = []
 
+        if adata_list is None:
+            continue
+
         for i in range(len(adata_list) - 1):
             A = adata_list[i]
             B = adata_list[i + 1]
