@@ -594,7 +594,7 @@ def denoise_count_matrix(
     beta: Annotated[float, Field(ge=0, le=1)] = 0.1,
     eps: Annotated[float, Field(gt=0)] = 1e-12,
     log_eps: Annotated[float, Field(gt=0)] = 1e-300,
-    dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 10,
+    dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 500,
     integer_out: bool = False,
     threads: Optional[Annotated[int, Field(gt=0)]] = 1,
     fixed_celltype: bool = True,
@@ -651,7 +651,8 @@ def denoise_count_matrix(
        Initial value of alpha_n for each cell. Works better when set to a higher number than expected (expected is around 0.05 per cell).
     
     beta : float, default 0.1
-        Initial beta (percent bulk contamination) value for each cell. Works better when set to a higher number than expected (expected is around 0.05).
+        Initial beta (percent bulk contamination) value for each cell. Works better when set to a higher number than expected (expected is around 0.05). 
+        Set to a lower value than alpha_init since bulk contamination is usually less than ambient contamination.
 
     eps : float, default 1e-12
         Numerical stability constant to prevent division by zero.
@@ -660,7 +661,7 @@ def denoise_count_matrix(
         Numerical stability constant to log(0).
 
     dirichlet_lambda: float, default 10
-        Pseudocount. Will be divided by the number of genes G
+        Pseudocount. Will be divided by the number of genes G. Higher values lead to smoother cell-type profiles.
 
     integer_out : bool, default False
         If True, rounds denoised counts to nearest integer before saving.
