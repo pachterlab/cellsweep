@@ -2,7 +2,7 @@ description: 33k PBMCs from a Healthy Donor
 url: https://www.10xgenomics.com/datasets/33-k-pbm-cs-from-a-healthy-donor-1-standard-1-1-0
 
 # data file URLs and names
-adata_raw_url: null
+adata_raw_url: https://caltech.box.com/shared/static/i0lb8vpiot1uvsolgdc6dbf3cqc4a3zv.h5  # custom
 adata_raw_file_name: raw_feature_bc_matrix.h5  # automatically takes file name from adata_raw_url if provided
 raw_tar_url: https://cf.10xgenomics.com/samples/cell-exp/1.1.0/pbmc33k/pbmc33k_raw_gene_bc_matrices.tar.gz
 raw_tar_file_dir_suffix: null  # automatically detects if there is a single leaf path
