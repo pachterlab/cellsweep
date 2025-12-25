@@ -3,14 +3,23 @@ import anndata as ad
 import pandas as pd
 import numpy as np
 import itertools
+import argparse
 import resource
 import sys
 import cellsweep.utils as cs_utils
 
 debug = False
-plates = ["igvf_003", "igvf_009"]  # ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]  # ["igvf_003"]  #? debug
+plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]  # ["igvf_003"]  #? debug
 include_cellbender = True
 overwrite = False
+
+#!!! erase
+parser = argparse.ArgumentParser(description="Run plates processing pipeline.")
+parser.add_argument("--plates", nargs="+", default=["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"], help="List of plate names (default: igvf_004)",)
+args = parser.parse_args()
+plates = args.plates
+#!!! erase
+
 
 # Set max RAM usage in bytes
 max_ram_gb = 600  # GB
@@ -20,8 +29,9 @@ soft, hard = resource.getrlimit(resource.RLIMIT_AS)
 resource.setrlimit(resource.RLIMIT_AS, (MAX_RAM, MAX_RAM))
 
 cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-data_dir = os.path.join(cellsweep_dir, "notebooks", "data2", "8cubed")
+data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "8cubed")
 eight_cubed_markers_path = os.path.join(data_dir, "8_cube_marker_genes.csv")
+gene_id_name_map_path = os.path.join(data_dir, "gene_id_name_map.csv")
 out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "8cubed")
 os.makedirs(out_dir, exist_ok=True)
 custom_markers = {
@@ -77,7 +87,10 @@ try:
         adata_cellbender = ad.read_h5ad(adata_cellbender_path)
         
         if custom_markers is not None and len(custom_markers) > 0 and gene_name_to_id is None:
-            gene_name_to_id = adata_cellbender.var.set_index("gene_name")["gene_id"].to_dict()
+            if "gene_name" not in adata_cellbender.var.columns or "gene_id" not in adata_cellbender.var.columns or adata_cellbender.var["gene_name"].str.startswith("ENSMUSG").all() or not adata_cellbender.var["gene_id"].str.startswith("ENSMUSG").all():
+                gene_name_to_id = pd.read_csv(gene_id_name_map_path).set_index("gene_name")["gene_id"].to_dict()
+            else:    
+                gene_name_to_id = adata_cellbender.var.set_index("gene_name")["gene_id"].to_dict()
         
         if not all_custom_markers_start_with_ensmug:
             for tissue in custom_markers:

@@ -2231,7 +2231,9 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                 print(f"Making plots using custom markers for plate {plate} with tool {tool}...")
                 if num_tissues_present == 2:
                     print(f"Making joint scatterplot for plate {plate} with tool {tool}...")
-                    plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total_custom", y_axis=f"{tissues[1]}_counts_total_custom", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=os.path.join(out_dir, f"plate_{plate}_{tissues[0]}_{tissues[1]}_joint_scatterplot.png"), show=True)
+                    out_path = os.path.join(out_dir, f"plate_{plate}_{tissues[0]}_{tissues[1]}_{tool}_joint_scatterplot.png")
+                    if not os.path.exists(out_path) or overwrite:
+                        plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total_custom", y_axis=f"{tissues[1]}_counts_total_custom", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=True)
                 if num_tissues_present >= 1:
                     # raw vs processed scatterplot per tissue
                     for marker_tissue in tissues:
@@ -2240,7 +2242,7 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                                 adata_raw_tissue = adata_raw[adata_raw.obs["Tissue"] == cell_tissue].copy()
                                 adata_processed_tissue = adata_processed[adata_processed.obs["Tissue"] == cell_tissue].copy()
                                 print(f"Making raw vs processed scatterplot for plate {plate} with tool {tool}, cell tissue {cell_tissue}, marker tissue {marker_tissue}...")
-                                out_path = os.path.join(out_dir_plate, f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_scatterplot.png")
+                                out_path = os.path.join(out_dir_plate, f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_{tool}_scatterplot.png")
                                 if not os.path.exists(out_path) or overwrite:
                                     plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers", density_type="scatter_with_kde", x_axis=tool, y_axis='raw', out_path=out_path, show=False)  #? change to scatter_with_density if too large
                     # dotplot
