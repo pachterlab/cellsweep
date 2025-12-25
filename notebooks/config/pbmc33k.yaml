@@ -56,11 +56,11 @@ decontx_out_prefix_name: pbmc33k_output_decontx
 adata_path_scar_name: pbmc33k_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: null
-cellbender_matrix_filtered_url: null
+cellsweep_matrix_url: https://caltech.box.com/shared/static/4vhgs34mft8ek8kym3e8i1auin68guto.h5ad
+cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/yslm0qf4j8ccmvdpukpv73wfx1dizqbf.h5
 cellbender_ckpt_url: null
-soupx_matrix_url: null
-decontx_matrix_url: null
+soupx_matrix_url: https://caltech.box.com/shared/static/62mfknok0lefmao77xggw4x76a8a9wsa.gz
+decontx_matrix_url: https://caltech.box.com/shared/static/ifp3howd8dmb5n71yiun0r8d1czpau91.gz
 scar_matrix_url: null
 
 # how adata_raw_url was made

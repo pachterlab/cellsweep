@@ -46,9 +46,9 @@ decontx_out_prefix_name: kidney_nuclei_10k_output_decontx
 adata_path_scar_name: kidney_nuclei_10k_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: null
-cellbender_matrix_filtered_url: null
+cellsweep_matrix_url: https://caltech.box.com/shared/static/tvoibqf3ni72jzpxndljhmhtp43q4git.h5ad
+cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/sgdplzjkajjux13w5is6ugk3po5w47ai.h5
 cellbender_ckpt_url: null
-soupx_matrix_url: null
-decontx_matrix_url: null
-scar_matrix_url: null
+soupx_matrix_url: https://caltech.box.com/shared/static/ka9y0zancafky16g2rg7jtbrb65e76k0.gz
+decontx_matrix_url: https://caltech.box.com/shared/static/ci3zohjb3qoevnz2f1jmuyezegkxp86l.gz
+scar_matrix_url: https://caltech.box.com/shared/static/danoouowdyi7vaeqn7zqp2ftxaevh6tm.h5ad

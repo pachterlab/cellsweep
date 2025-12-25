@@ -46,9 +46,9 @@ decontx_out_prefix_name: melanoma_output_decontx
 adata_path_scar_name: melanoma_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: null
-cellbender_matrix_filtered_url: null
+cellsweep_matrix_url: https://caltech.box.com/shared/static/1621hm7bg9v313goq3ezzula0ucb9t7p.h5ad
+cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/b4z4nqgm7hk74uofszhwhsoide1pmmmd.h5
 cellbender_ckpt_url: null
-soupx_matrix_url: null
-decontx_matrix_url: null
-scar_matrix_url: null
+soupx_matrix_url: https://caltech.box.com/shared/static/xb27m0mgfl0m01v73e7w3vu792efge84.gz
+decontx_matrix_url: https://caltech.box.com/shared/static/phw2i1k3zueyo0k1ywpgvurlqwcvezyq.gz
+scar_matrix_url: https://caltech.box.com/shared/static/txhifgwqg385ws6jz31nrvql8hs1slsy.h5ad

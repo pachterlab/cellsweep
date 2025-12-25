@@ -46,12 +46,12 @@ decontx_out_prefix_name: sim1_output_decontx
 adata_path_scar_name: sim1_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: null
-cellbender_matrix_filtered_url: null
+cellsweep_matrix_url: https://caltech.box.com/shared/static/53yj11t13ohcnpsdpj95ezf6rzbp06u1.h5ad
+cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/n9meav2llufw5e3haxd5p6urwf2k4vui.h5
 cellbender_ckpt_url: null
-soupx_matrix_url: null
-decontx_matrix_url: null
-scar_matrix_url: null
+soupx_matrix_url: https://caltech.box.com/shared/static/qyp8ed5af896jphwbz6hugj6hzx5gn3v.gz
+decontx_matrix_url: https://caltech.box.com/shared/static/s4obntzxic54sb346e1z2ueuv432jkdo.gz
+scar_matrix_url: https://caltech.box.com/shared/static/q6jmzbxuz3pzfuuj6rn3k3y42gwtzbyi.h5ad
 
 # simulation parameters
 G: 10000  # genes

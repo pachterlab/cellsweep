@@ -44,7 +44,7 @@ maybe_tar_and_copy() {
     local all_exist=true
     for f in "${files[@]}"; do
         if [[ ! -e "$BASE/$f" ]]; then
-            echo "[SKIP] Missing: $BASE/$f — skipping tar $outfile"
+            echo "[SKIP2] Missing: $BASE/$f — skipping tar $outfile"
             all_exist=false
         fi
     done
