@@ -13,12 +13,12 @@ plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009
 include_cellbender = True
 overwrite = False
 
-#!!! erase
-parser = argparse.ArgumentParser(description="Run plates processing pipeline.")
-parser.add_argument("--plates", nargs="+", default=["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"], help="List of plate names (default: igvf_004)",)
-args = parser.parse_args()
-plates = args.plates
-#!!! erase
+# #!!! erase
+# parser = argparse.ArgumentParser(description="Run plates processing pipeline.")
+# parser.add_argument("--plates", nargs="+", default=["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"], help="List of plate names (default: igvf_004)",)
+# args = parser.parse_args()
+# plates = args.plates
+# #!!! erase
 
 
 # Set max RAM usage in bytes

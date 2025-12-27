@@ -2143,6 +2143,9 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
             if tool == "raw":
                 continue
 
+            # if tool == "cellsweep":  #!!!! erase
+            #     continue  #!!!! erase
+
             print(f"Processing plate {plate} with tool {tool}...")
             out_dir_plate = os.path.join(out_dir, f"plate_{plate}")
             os.makedirs(out_dir_plate, exist_ok=True)
@@ -2163,6 +2166,7 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                 print(f"Warning: Plate {plate} does not have exactly 2 tissues in adata_processed. Found tissues: {tissues}. Skipping.")
                 continue
 
+            breakpoint()
             for tissue in tissues:
                 if tissue not in tissue_to_marker_gene_dict:
                     print(f"Warning: Tissue {tissue} not found in marker gene dictionary. Skipping plate {plate}.")
