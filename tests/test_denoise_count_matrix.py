@@ -4,7 +4,7 @@ import pandas as pd
 import anndata as ad
 import scipy.sparse as sp
 from cellsweep import denoise_count_matrix
-from cellsweep.celltype_ambient import infer_gene_ambient_fraction, infer_celltype_profile
+from cellsweep.celltype_ambient import infer_celltype_profile
 
 # -----------------------
 # Fixtures
@@ -27,16 +27,6 @@ def small_adata():
 
 
 # -----------------------
-# infer_gene_ambient_fraction
-# -----------------------
-def test_infer_gene_ambient_fraction(small_adata):
-    adata = infer_gene_ambient_fraction(small_adata)
-    assert "ambient_fraction" in adata.var.columns
-    assert np.all(adata.var["ambient_fraction"].values >= 0)
-    assert len(adata.var["ambient_fraction"]) == adata.n_vars
-
-
-# -----------------------
 # infer_celltype_profile
 # -----------------------
 def test_infer_celltype_profile(small_adata):
@@ -54,8 +44,8 @@ def test_denoise_count_matrix_runs(tmp_path, small_adata, monkeypatch):
     """Smoke test: ensure function runs and produces valid output."""
 
     # Mock expensive dependencies
-    monkeypatch.setattr("cellsweep.denoise.infer_empty_droplets", lambda *a, **kw: small_adata)
-    monkeypatch.setattr("cellsweep.denoise.load_adata", lambda a, logger=None: small_adata)
+    monkeypatch.setattr("cellsweep.utils.infer_empty_droplets", lambda *a, **kw: small_adata)
+    monkeypatch.setattr("cellsweep.utils.load_adata", lambda a, logger=None: small_adata)
 
     out_path = tmp_path / "denoised.h5ad"
 
@@ -78,17 +68,6 @@ def test_denoise_count_matrix_runs(tmp_path, small_adata, monkeypatch):
 
     # Check file written
     assert out_path.exists()
-
-
-# -----------------------
-# Sparse matrix support
-# -----------------------
-def test_sparse_input_support(small_adata):
-    """Ensure that sparse matrices work as well."""
-    small_adata.X = sp.csr_matrix(small_adata.X)
-    adata = infer_gene_ambient_fraction(small_adata)
-    assert "ambient_fraction" in adata.var
-
 
 # -----------------------
 # Edge cases

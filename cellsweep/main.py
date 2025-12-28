@@ -160,9 +160,18 @@ def main():  # noqa: C901
     parser_denoise_count_matrix.add_argument(
         "--tol",
         type=float,
+        default=1e-3,
+        help=(
+            "Relative change in likelihood below which training stops."
+            "(default: 1e-3)"
+        ),
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--min_tol",
+        type=float,
         default=1e-6,
         help=(
-            "Relative change in likelihood below which training stops. "
+            "The minimum absolute change in likelihood below which training is discontinued."
             "(default: 1e-6)"
         ),
     )
@@ -192,6 +201,12 @@ def main():  # noqa: C901
         type=str,
         default=None,
         help="Optional path to save EM iteration logs. (default: None)",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--debug",
+        action="store_true",
+        default=False,
+        help="If True, return tracker objects",
     )
 
     args, unknown_args = parent_parser.parse_known_args()
@@ -248,9 +263,11 @@ def main():  # noqa: C901
             umi_cutoff=args.umi_cutoff,
             expected_cells=args.expected_cells,
             tol=args.tol,
+            min_tol=args.min_tol,
             random_state=args.random_state,
             verbose=args.verbose,
             quiet=args.quiet,
             log_file=args.log_file,
+            debug=args.debug,
         )
         

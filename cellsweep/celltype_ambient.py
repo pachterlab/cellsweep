@@ -691,8 +691,11 @@ def denoise_count_matrix(
     expected_cells : int | None, default None
         Expected number of real cells, used when estimating thresholds.
 
-    tol: float, default 1e-6
+    tol: float, default 1e-3
         The relative change in likelihood below which training is discontinued
+    
+    min_tol: float, default 1e-6
+        The minimum absolute change in likelihood below which training is discontinued.
 
     random_state: int | None, default 42
         Random seed
