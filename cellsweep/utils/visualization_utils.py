@@ -2166,7 +2166,6 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                 print(f"Warning: Plate {plate} does not have exactly 2 tissues in adata_processed. Found tissues: {tissues}. Skipping.")
                 continue
 
-            breakpoint()
             for tissue in tissues:
                 if tissue not in tissue_to_marker_gene_dict:
                     print(f"Warning: Tissue {tissue} not found in marker gene dictionary. Skipping plate {plate}.")

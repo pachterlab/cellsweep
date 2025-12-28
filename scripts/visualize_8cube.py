@@ -22,7 +22,7 @@ overwrite = False
 
 
 # Set max RAM usage in bytes
-max_ram_gb = 600  # GB
+max_ram_gb = 500  # GB
 MAX_RAM = max_ram_gb * 1024**3
 
 soft, hard = resource.getrlimit(resource.RLIMIT_AS)

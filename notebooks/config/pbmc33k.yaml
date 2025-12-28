@@ -61,7 +61,7 @@ cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/yslm0qf4j8
 cellbender_ckpt_url: null
 soupx_matrix_url: https://caltech.box.com/shared/static/62mfknok0lefmao77xggw4x76a8a9wsa.gz
 decontx_matrix_url: https://caltech.box.com/shared/static/ifp3howd8dmb5n71yiun0r8d1czpau91.gz
-scar_matrix_url: null
+scar_matrix_url: https://caltech.box.com/shared/static/0usrvy00ycyfbsbi1ko8x1ewb4t5m76s.h5ad
 
 # how adata_raw_url was made``
 # *run first few cells of benchmarking.ipynb - up to "Raw" cell*
