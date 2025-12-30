@@ -234,6 +234,10 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_t
         y = adata2
     else:
         raise ValueError(f"Unknown point_type '{point_type}'. Use 'matrix', 'cell', or 'gene'.")
+    
+    # calculate vertical MSE
+    mse_vertical = np.mean((y - x)**2)
+    print(f"Vertical MSE ({y_axis} vs {x_axis}): {mse_vertical:.4f}")
 
     # -------------------------
     # 4. Log handling
