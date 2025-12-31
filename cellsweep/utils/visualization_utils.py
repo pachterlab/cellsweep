@@ -804,7 +804,7 @@ def histogram_auc(values, bins=100):
     auc = np.sum(counts * bin_widths)
     return auc
 
-def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell_set=None, out_path=None, show=True):
+def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell_set=None, display_stats = True, out_path=None, show=True):
     if adata is None:
         return
 
@@ -850,11 +850,29 @@ def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell
     ax.set_title(f"Cross-species Gene Counts in {processed_name} Data")
     ax.legend(title="Genome", loc="upper right")
 
-    mouse_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"], bins=100)
-    human_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"], bins=100)
+    if display_stats:
+        human_counts = adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"]
+        mouse_counts = adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"]
 
-    print(f"{processed_name} human cell mouse gene contamination AUC:", mouse_auc)
-    print(f"{processed_name} mouse cell human gene contamination AUC:", human_auc)
+        percent_mouse_counts = mouse_counts / (adata.obs.loc[adata.obs["genome"] == "hg19", "human_counts_total"] + mouse_counts) * 100
+        percent_human_counts = human_counts / (adata.obs.loc[adata.obs["genome"] == "mm10", "mouse_counts_total"] + human_counts) * 100
+
+        mouse_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"], bins=100)
+        human_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"], bins=100)
+
+        print(f"{processed_name} human cell mouse gene contamination total counts:", human_counts.sum())
+        print(f"{processed_name} mouse cell human gene contamination total counts:", mouse_counts.sum())
+        print(f"{processed_name} human cell mouse gene contamination stats:", "\n", human_counts.describe())
+        print(f"{processed_name} mouse cell human gene contamination stats:", "\n", mouse_counts.describe())
+        print(f"{processed_name} human cell mouse gene percent contamination stats:", "\n", percent_mouse_counts.describe())
+        print(f"{processed_name} mouse cell human gene percent contamination stats:", "\n", percent_human_counts.describe())
+        print(f"{processed_name} human cell mouse gene contamination > 100:", (human_counts > 100).sum())
+        print(f"{processed_name} mouse cell human gene contamination > 100:", (mouse_counts > 100).sum())
+        print(f"{processed_name} human cell human gene counts retained:", adata.obs.loc[adata.obs["genome"] == "hg19", "human_counts_total"].sum())
+        print(f"{processed_name} mouse cell mouse gene counts retained:", adata.obs.loc[adata.obs["genome"] == "mm10", "mouse_counts_total"].sum())
+        print(f"{processed_name} human cell mouse gene contamination AUC:", mouse_auc)
+        print(f"{processed_name} mouse cell human gene contamination AUC:", human_auc)
+        print(f"{processed_name} number of demolished cells:", (adata.obs["human_counts_total"] + adata.obs["mouse_counts_total"] < 200).sum())
 
     if out_path:
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
