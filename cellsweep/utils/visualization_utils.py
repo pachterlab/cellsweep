@@ -804,7 +804,7 @@ def histogram_auc(values, bins=100):
     auc = np.sum(counts * bin_widths)
     return auc
 
-def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell_set=None, display_stats = True, out_path=None, show=True):
+def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell_set=None, out_path=None, show=True):
     if adata is None:
         return
 
@@ -850,29 +850,11 @@ def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell
     ax.set_title(f"Cross-species Gene Counts in {processed_name} Data")
     ax.legend(title="Genome", loc="upper right")
 
-    if display_stats:
-        human_counts = adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"]
-        mouse_counts = adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"]
+    mouse_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"], bins=100)
+    human_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"], bins=100)
 
-        percent_mouse_counts = mouse_counts / (adata.obs.loc[adata.obs["genome"] == "hg19", "human_counts_total"] + mouse_counts) * 100
-        percent_human_counts = human_counts / (adata.obs.loc[adata.obs["genome"] == "mm10", "mouse_counts_total"] + human_counts) * 100
-
-        mouse_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"], bins=100)
-        human_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"], bins=100)
-
-        print(f"{processed_name} human cell mouse gene contamination total counts:", human_counts.sum())
-        print(f"{processed_name} mouse cell human gene contamination total counts:", mouse_counts.sum())
-        print(f"{processed_name} human cell mouse gene contamination stats:", "\n", human_counts.describe())
-        print(f"{processed_name} mouse cell human gene contamination stats:", "\n", mouse_counts.describe())
-        print(f"{processed_name} human cell mouse gene percent contamination stats:", "\n", percent_mouse_counts.describe())
-        print(f"{processed_name} mouse cell human gene percent contamination stats:", "\n", percent_human_counts.describe())
-        print(f"{processed_name} human cell mouse gene contamination > 100:", (human_counts > 100).sum())
-        print(f"{processed_name} mouse cell human gene contamination > 100:", (mouse_counts > 100).sum())
-        print(f"{processed_name} human cell human gene counts retained:", adata.obs.loc[adata.obs["genome"] == "hg19", "human_counts_total"].sum())
-        print(f"{processed_name} mouse cell mouse gene counts retained:", adata.obs.loc[adata.obs["genome"] == "mm10", "mouse_counts_total"].sum())
-        print(f"{processed_name} human cell mouse gene contamination AUC:", mouse_auc)
-        print(f"{processed_name} mouse cell human gene contamination AUC:", human_auc)
-        print(f"{processed_name} number of demolished cells:", (adata.obs["human_counts_total"] + adata.obs["mouse_counts_total"] < 200).sum())
+    print(f"{processed_name} human cell mouse gene contamination AUC:", mouse_auc)
+    print(f"{processed_name} mouse cell human gene contamination AUC:", human_auc)
 
     if out_path:
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -2256,7 +2238,7 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                 print(f"Making plots using custom markers for plate {plate} with tool {tool}...")
                 if num_tissues_present == 2:
                     print(f"Making joint scatterplot for plate {plate} with tool {tool}...")
-                    out_path = os.path.join(out_dir, f"plate_{plate}_{tissues[0]}_{tissues[1]}_{tool}_joint_scatterplot.png")
+                    out_path = os.path.join(out_dir_plate, f"plate_{plate}_{tissues[0]}_{tissues[1]}_{tool}_joint_scatterplot_tissue_markers.png")
                     if not os.path.exists(out_path) or overwrite:
                         plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total_custom", y_axis=f"{tissues[1]}_counts_total_custom", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=True)
                 if num_tissues_present >= 1:
