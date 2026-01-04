@@ -10,7 +10,8 @@ import cellsweep.utils as cs_utils
 
 debug = False
 plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]  # ["igvf_003"]  #? debug
-include_cellbender = True
+include_cellbender = False
+print_custom_markers = True
 overwrite = False
 
 #!!! erase
@@ -35,15 +36,26 @@ gene_id_name_map_path = os.path.join(data_dir, "gene_id_name_map.csv")
 out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "8cubed")
 os.makedirs(out_dir, exist_ok=True)
 custom_markers = {
-    'CortexHippocampus': ["Nrxn3", "Nrxn1", "Meis2", "Slc17a7", "Mir124a-1hg", "Snap25"],
+    'CortexHippocampus': ["Snap25", "Nrxn3", "Nrxn1"],  # Snap25: found in plate 3, tissue heart, cluster 36; Nrxn3, Nrxn1: found in plate 11, tissue gastroc, cluster 38
     'Heart': [],
-    'Liver': ["Cyp1a2", "Ttr", "Alb"],
-    'HypothalamusPituitary': ["Slc17a7", "Mir124a-1hg", "Snap25"],
+    'Liver': ["Alb"],  # found in plate 5, tissue heart, cluster 30
+    'HypothalamusPituitary': [],
     'Gonads': [],
-    'Adrenal': ["Chga", "Star"],
-    'Kidney': ["Slc5a2", "Slc34a1", "Akr1c21"],
-    'Gastrocnemius': ["Myh4", "Myh2", "Myh1"]
+    'Adrenal': ["Star"],  # found in plate 9, tissue kidney, cluster 14
+    'Kidney': ["Slc34a1"],  # found in plate 10, tissue gastroc, cluster 32
+    'Gastrocnemius': ["Myh4"]  # found in plate 10, tissue kidney, clusters 0,28,29,30
 }
+
+# custom_markers = {
+#     'CortexHippocampus': ["Nrxn3", "Nrxn1", "Meis2", "Slc17a7", "Mir124a-1hg", "Snap25"],
+#     'Heart': [],
+#     'Liver': ["Cyp1a2", "Ttr", "Alb"],
+#     'HypothalamusPituitary': [],
+#     'Gonads': [],
+#     'Adrenal': ["Chga", "Star"],
+#     'Kidney': ["Slc5a2", "Slc34a1", "Akr1c21"],
+#     'Gastrocnemius': ["Myh4", "Myh2", "Myh1"]
+# }
 
 all_custom_markers_start_with_ensmug = all(gene.startswith("ENSMUG") for genes in custom_markers.values() for gene in genes)
 gene_name_to_id = None
@@ -129,7 +141,7 @@ try:
     if not include_cellbender:
         dict_of_adata_dicts.pop("cellbender")
     print("Generating 8cubed plots...")
-    cs_utils.make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=custom_markers, gene_name_to_id=gene_name_to_id, out_dir=out_dir, overwrite=overwrite)
+    cs_utils.make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=custom_markers, gene_name_to_id=gene_name_to_id, print_custom_markers=print_custom_markers, out_dir=out_dir, overwrite=overwrite)
 except MemoryError:
     print("❌ Memory limit exceeded — exiting")  # might just print 'Segmentation fault (core dumped)' rather than this
     sys.exit(1)

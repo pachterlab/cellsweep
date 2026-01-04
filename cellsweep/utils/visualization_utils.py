@@ -2142,7 +2142,7 @@ def plot_multiple_kdes(expr_list, labels=None, colors=None, gene_name=None, log=
 
 
 
-def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=None, gene_name_to_id=None, out_dir=None, overwrite=False):
+def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=None, gene_name_to_id=None, print_custom_markers=False, out_dir=None, overwrite=False):
     # plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]
     # total_tissues = ["CortexHippocampus", "Heart", "Liver", "HypothalamusPituitary", "Gonads", "Adrenal", "Kidney", "Gastrocnemius"]
 
@@ -2214,11 +2214,12 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
 
                     # get genes to label
                     gene_to_scatter_location_dict = {}
-                    for marker in custom_markers:
-                        if marker in adata_processed_tissue.var_names and marker in adata_raw_tissue.var_names:
-                            x = adata_processed_tissue.var.loc[marker, "total_counts"]
-                            y = adata_raw_tissue.var.loc[marker, "total_counts"]
-                            gene_to_scatter_location_dict[marker] = (x, y)
+                    if custom_markers is not None:
+                        for marker in custom_markers:
+                            if marker in adata_processed_tissue.var_names and marker in adata_raw_tissue.var_names:
+                                x = adata_processed_tissue.var.loc[marker, "total_counts"]
+                                y = adata_raw_tissue.var.loc[marker, "total_counts"]
+                                gene_to_scatter_location_dict[marker] = (x, y)
 
                     out_path = os.path.join(out_dir_plate, f"plate_{plate}_tissue_{tissue}_{tool}_gene_counts_scatterplot.png")
                     os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -2322,15 +2323,17 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                     # raw vs processed scatterplot per tissue
                     for marker_tissue in tissues:
                         if f"{marker_tissue}_counts_total_custom" in adata_processed.obs.columns:
+                            custom_markers_print = "" if not print_custom_markers else f" ({','.join(custom_markers.get(marker_tissue, []))})"
                             for cell_tissue in tissues:
                                 adata_raw_tissue = adata_raw[adata_raw.obs["Tissue"] == cell_tissue].copy()
                                 adata_processed_tissue = adata_processed[adata_processed.obs["Tissue"] == cell_tissue].copy()
                                 print(f"Making raw vs processed scatterplot for plate {plate} with tool {tool}, cell tissue {cell_tissue}, marker tissue {marker_tissue}...")
                                 out_path = os.path.join(out_dir_plate, f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_{tool}_scatterplot.png")
                                 if not os.path.exists(out_path) or overwrite:
-                                    plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers", density_type="scatter_with_kde", x_axis=tool, y_axis='raw', out_path=out_path, show=False)  #? change to scatter_with_density if too large
+                                    plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers{custom_markers_print}", density_type="scatter_with_kde", x_axis=tool, y_axis='raw', out_path=out_path, show=False)  #? change to scatter_with_density if too large
                     
                                 # stratified by celltype/leiden
+                                #* Unique tissue-celltype combinations in the raw AnnData
                                 for celltype in adata_raw_tissue.obs["celltype"].dropna().drop_duplicates().values:
                                     ad_raw_sub = adata_raw_tissue[(adata_raw_tissue.obs['celltype'] == celltype)].copy()
                                     ad_proc_sub = adata_processed_tissue[(adata_processed_tissue.obs['celltype'] == celltype)].copy()
@@ -2340,7 +2343,7 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                                     out_path = os.path.join(out_dir_plate, "tissue_celltype_custom_marker_scatterplots", f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_celltype_{celltype}_{tool}_cell_scatterplot.png")
                                     os.makedirs(os.path.dirname(out_path), exist_ok=True)
                                     if not os.path.exists(out_path) or overwrite:
-                                        plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers, celltype {celltype}", density_type="scatter", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
+                                        plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers, celltype {celltype}{custom_markers_print}", density_type="scatter", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
 
                                 #* Unique tissue-leiden combinations in the raw AnnData
                                 for leiden in adata_raw_tissue.obs["leiden"].dropna().drop_duplicates().values:
@@ -2373,10 +2376,17 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                         adata_processed = add_gene_name_column(adata_processed, gene_id_to_name)
 
                     print(f"Making dotplot for plate {plate} with tool {tool}...")
-                    out_path_raw = os.path.join(out_dir_plate, f"dotplot_raw_plate_{plate}.png")
-                    out_path_processed = os.path.join(out_dir_plate, f"dotplot_{tool}_plate_{plate}.png")
+                    # celltype
+                    out_path_raw = os.path.join(out_dir_plate, f"dotplot_raw_plate_{plate}_celltype.png")
+                    out_path_processed = os.path.join(out_dir_plate, f"dotplot_{tool}_plate_{plate}_celltype.png")
                     if not os.path.exists(out_path_processed) or overwrite:
                         make_raw_and_processed_dotplots(adata_raw, adata_processed, custom_markers_filtered, plot_raw=True, cluster_column="celltype", gene_symbols="gene_name", log_raw=False, log_processed=False, title_raw=f"Raw Data Dotplot, plate {plate}", title_processed=f"{tool} Processed Data Dotplot, plate {plate}", out_path_raw=out_path_raw, out_path_processed=out_path_processed)
+                    
+                    # leiden
+                    out_path_raw = os.path.join(out_dir_plate, f"dotplot_raw_plate_{plate}_leiden.png")
+                    out_path_processed = os.path.join(out_dir_plate, f"dotplot_{tool}_plate_{plate}_leiden.png")
+                    if not os.path.exists(out_path_processed) or overwrite:
+                        make_raw_and_processed_dotplots(adata_raw, adata_processed, custom_markers_filtered, plot_raw=True, cluster_column="leiden", gene_symbols="gene_name", log_raw=False, log_processed=False, title_raw=f"Raw Data Dotplot, plate {plate}", title_processed=f"{tool} Processed Data Dotplot, plate {plate}", out_path_raw=out_path_raw, out_path_processed=out_path_processed)
 
     for (tool1, plate_to_adata_dict1), (tool2, plate_to_adata_dict2) in itertools.combinations(dict_of_adata_dicts.items(), 2):
         if plate_to_adata_dict1 is None or plate_to_adata_dict2 is None:
