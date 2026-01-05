@@ -33,7 +33,7 @@ cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "8cubed")
 eight_cubed_markers_path = os.path.join(data_dir, "8_cube_marker_genes.csv")
 gene_id_name_map_path = os.path.join(data_dir, "gene_id_name_map.csv")
-out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "8cubed")
+out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "8cubed_tmp")
 os.makedirs(out_dir, exist_ok=True)
 custom_markers = {
     'CortexHippocampus': ["Snap25", "Nrxn3", "Nrxn1"],  # Snap25: found in plate 3, tissue heart, cluster 36; Nrxn3, Nrxn1: found in plate 11, tissue gastroc, cluster 38
@@ -83,6 +83,8 @@ try:
             continue
         adata_cellsweep = ad.read_h5ad(adata_cellsweep_path)
         adata_cellsweep = adata_cellsweep[~adata_cellsweep.obs["is_empty"]].copy()
+        # if "leiden" not in adata_cellsweep.obs.columns:  #!!! erase
+        #     adata_cellsweep.obs["leiden"] = adata_raw_filtered_dict[plate].obs["leiden"].reindex(adata_cellsweep.obs_names)  #!!! erase
         adata_cellsweep.var_names_make_unique()
         if debug:  # filter to the same 5000 cells as above for debugging
             adata_cellsweep = adata_cellsweep[adata_cellsweep.obs_names.isin(barcodes), :].copy()

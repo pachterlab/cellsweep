@@ -61,7 +61,8 @@ analysis = [
     "scikit-learn",
     "ipywidgets",
     "torch",
-    "scikit-misc"
+    "scikit-misc",
+    "adjustText"
 ]
 
 [project.urls]
