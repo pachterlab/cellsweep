@@ -67,6 +67,29 @@ def concat_on_barcodes(adatas):
 
     return combined
 
+def read_kb_mtx_as_adata(kb_count_counts_dir, use_gene_symbols=True):
+    import scanpy as sc
+    matrix_path = os.path.join(kb_count_counts_dir, "cells_x_genes.mtx")
+    barcodes_path = os.path.join(kb_count_counts_dir, "cells_x_genes.barcodes.txt")
+    genes_path = os.path.join(kb_count_counts_dir, "cells_x_genes.genes.names.txt" if use_gene_symbols else "cells_x_genes.genes.txt")
+
+    # for kb python's approach: from kb_python.utils import import_matrix_as_anndata, adata = import_matrix_as_anndata(matrix_path, barcodes_path, genes_path)  # avoided to prevent circular import
+
+    adata = sc.read_mtx(matrix_path)
+    barcodes = pd.read_csv(barcodes_path, header=None)[0].values
+    genes = pd.read_csv(genes_path, header=None)[0].values
+
+    if adata.n_obs == len(genes) and adata.n_vars == len(barcodes):
+        adata = adata.T
+    
+    assert adata.n_vars == len(genes), f"Number of genes in matrix ({adata.n_vars}) does not match number of genes in {genes_path} ({len(genes)})"
+    assert adata.n_obs == len(barcodes), f"Number of barcodes in matrix ({adata.n_obs}) does not match number of barcodes in {barcodes_path} ({len(barcodes)})"
+
+    adata.var_names = genes
+    adata.obs_names = barcodes
+    
+    return adata
+
 # anndata object, h5 path, h5ad path, a 10x matrix directory (containing matrix.mtx, genes.tsv, barcodes.tsv), or an R matrix prefix ({prefix}.mtx, {prefix}_genes.csv, {prefix}_barcodes.csv)
 def load_adata(adata, multiple_anndatas=False, merge_multiple_adatas=False, backed=None, logger=None, verbose=0, quiet=False):
     if logger is None:
@@ -110,13 +133,22 @@ def load_adata(adata, multiple_anndatas=False, merge_multiple_adatas=False, back
                 logger.info(f"Searching recursively for 10x-style dataset under {adata!r}")
 
                 found_dirs = []
+                tenx_style, kb_style = False, False
                 for root, dirs, files in os.walk(adata):
                     files_lower = [f.lower() for f in files]
-                    has_matrix = any(f in files_lower for f in ("matrix.mtx", "matrix.mtx.gz"))
-                    has_barcodes = any(f in files_lower for f in ("barcodes.tsv", "barcodes.tsv.gz"))
-                    has_genes = any(f in files_lower for f in ("genes.tsv", "genes.tsv.gz", "features.tsv", "features.tsv.gz"))
+                    has_matrix = any(f in files_lower for f in ["matrix.mtx", "matrix.mtx.gz"])
+                    has_barcodes = any(f in files_lower for f in ["barcodes.tsv", "barcodes.tsv.gz"])
+                    has_genes = any(f in files_lower for f in ["genes.tsv", "genes.tsv.gz", "features.tsv", "features.tsv.gz"])
                     if has_matrix and has_barcodes and has_genes:
                         found_dirs.append(root)
+                        tenx_style = True
+                    
+                    has_matrix_kb_python = any(f in files_lower for f in ["cells_x_genes.mtx"])
+                    has_barcodes_kb_python = any(f in files_lower for f in ["cells_x_genes.barcodes.txt"])
+                    has_genes_kb_python = any(f in files_lower for f in ["cells_x_genes.genes.txt", "cells_x_genes.genes.names.txt"])
+                    if has_matrix_kb_python and has_barcodes_kb_python and has_genes_kb_python:
+                        found_dirs.append(root)
+                        kb_style = True
 
                 if len(found_dirs) == 0:
                     raise FileNotFoundError(f"No valid 10x dataset found under {adata!r}. Expected matrix.mtx, barcodes.tsv, and genes.tsv or features.tsv.")
@@ -127,15 +159,25 @@ def load_adata(adata, multiple_anndatas=False, merge_multiple_adatas=False, back
                         "\nPlease specify one directory explicitly."
                     )
 
-                tenx_dir = found_dirs[0]
-                logger.info(f"Found 10x dataset in {tenx_dir!r}")
-                
-                use_gene_symbols = os.path.exists(os.path.join(tenx_dir, "genes.tsv"))
-                adata = sc.read_10x_mtx(
-                    tenx_dir,
-                    var_names="gene_symbols" if use_gene_symbols else "gene_ids",
-                    make_unique=True
-                )
+                if tenx_style:
+                    tenx_dir = found_dirs[0]
+                    logger.info(f"Found 10x dataset in {tenx_dir!r}")
+                    
+                    use_gene_symbols = os.path.exists(os.path.join(tenx_dir, "genes.tsv"))
+                    adata = sc.read_10x_mtx(
+                        tenx_dir,
+                        var_names="gene_symbols" if use_gene_symbols else "gene_ids",
+                        make_unique=True
+                    )
+                elif kb_style:
+                    kb_count_counts_unfiltered_dir = found_dirs[0]
+                    logger.info(f"Found kb dataset in {kb_count_counts_unfiltered_dir!r}")
+
+                    use_gene_symbols = os.path.exists(os.path.join(kb_count_counts_unfiltered_dir, "cells_x_genes.genes.names.txt"))
+                    
+                    adata = read_kb_mtx_as_adata(kb_count_counts_unfiltered_dir, use_gene_symbols=use_gene_symbols)
+                else:
+                    raise ValueError("Unrecognized 10x-style dataset format.")
         else:
             raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file, an .h5 file, a matrix-containing directory, or an AnnData object.")
     elif isinstance(adata, ad.AnnData):

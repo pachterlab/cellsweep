@@ -927,7 +927,7 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
         df = pd.DataFrame({
             "x": np.concatenate([human_raw, human_processed]),
             "y": np.concatenate([mouse_raw, mouse_processed]),
-            "group": (["raw"] * len(human_raw)) + ([processed_name] * len(human_processed))
+            "group": (["raw"] * len(human_raw)) + (["processed"] * len(human_processed))
         })
         palette = {
             "raw": "#a6c8ff",         # light blue
