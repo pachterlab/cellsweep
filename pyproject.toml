@@ -51,6 +51,7 @@ analysis = [
     "nbdime>=4.0.2",
     "ipython>=8.0.0",
     "upsetplot",
+    "yaml",
     "scanpy",
     "seaborn",
     "matplotlib",

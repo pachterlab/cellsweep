@@ -2,7 +2,6 @@
 
 import os
 import shutil
-import yaml
 import requests
 import subprocess
 import logging
@@ -72,6 +71,7 @@ def load_dataset_yaml(yaml_file=None):
     Load dataset YAML from local notebooks/config/.  
     If missing (e.g., running in Colab), download from GitHub.
     """
+    import yaml
 
     dataset_name = os.path.splitext(os.path.basename(yaml_file))[0]
 
@@ -115,6 +115,7 @@ def load_dataset_yaml(yaml_file=None):
     return cfg
 
 def list_github_yaml_files():
+    import yaml
     api_url = "https://api.github.com/repos/pachterlab/cellsweep/contents/notebooks/config"
 
     r = requests.get(api_url)

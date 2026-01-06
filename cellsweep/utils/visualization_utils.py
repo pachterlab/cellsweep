@@ -310,15 +310,8 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_t
                 zorder=10,
             )
             texts.append(t)
-        adjust_text(
-            texts,
-            ax=ax,
-            expand_text=(1.05, 1.1),
-            expand_points=(1.2, 1.2),
-            force_text=(0.3, 0.5),
-            force_points=(0.2, 0.4),
-            arrowprops=dict(arrowstyle="-", color="gray", lw=0.5),
-        )
+        # if len(texts) > 1:
+        #     adjust_text(texts)
 
 
     all_vals = np.concatenate([x, y])
