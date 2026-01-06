@@ -13,9 +13,6 @@ from numba import njit, prange, get_num_threads, get_thread_id
 from typing import Annotated, Optional, Tuple
 from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types  # , plot_cellsweep_likelihood_over_epochs
 import matplotlib.pyplot as plt
-from ipywidgets import IntSlider, VBox, Output
-from IPython.display import display
-from sklearn.isotonic import IsotonicRegression
 import seaborn as sns
 import gc
 
@@ -94,6 +91,8 @@ def plot_epoch(a_history, p_history, m, epoch, max_G_to_plot=1000):
     - q_grid_a, q_levels: precomputed quantile grid for heatmap
     - max_k_to_plot: maximum number of p_k curves to plot (thins if K large)
     """
+    from IPython.display import display
+    
     a = np.asarray(a_history[epoch])
     P = np.asarray(p_history[epoch])   # (K, G)
     K = P.shape[0]
@@ -186,6 +185,8 @@ def plot_epoch(a_history, p_history, m, epoch, max_G_to_plot=1000):
 
 
 def interactive_distribution_viewer(a_history, p_history, m, max_G_to_plot=1000):
+    from ipywidgets import IntSlider, VBox, Output
+    from IPython.display import display
     """
     Create an interactive viewer that shows epoch slider and redraws plots into a single Output widget.
     """
