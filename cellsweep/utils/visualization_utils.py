@@ -692,6 +692,40 @@ def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, cl
     if os.path.exists("figures"):
         os.rmdir("figures")
 
+def plot_histogram(data, data_type="matrix", log_scale=False, title=None):
+    if sparse.issparse(data):
+        if data_type == "matrix":
+            # non-zero entries only
+            vals = data.data
+        elif data_type == "cell":
+            # sum across columns (per cell / row)
+            vals = np.asarray(data.sum(axis=1)).ravel()
+        elif data_type == "gene":
+            # sum across rows (per gene / column)
+            vals = np.asarray(data.sum(axis=0)).ravel()
+        else:
+            raise ValueError("data_type must be one of {'matrix','cell','gene'}")
+    else:
+        if data_type == "matrix":
+            vals = data.ravel()
+        elif data_type == "cell":
+            vals = data.sum(axis=1)
+        elif data_type == "gene":
+            vals = data.sum(axis=0)
+        else:
+            raise ValueError("data_type must be one of {'matrix','cell','gene'}")
+
+    plt.figure(figsize=(6, 4))
+    plt.hist(vals, bins=100, edgecolor="black")
+    plt.xlabel(f"{data_type} expression values")
+    plt.ylabel("Count")
+    if log_scale:
+        plt.yscale("log")
+    if title is not None:
+        plt.title(title)
+    plt.tight_layout()
+    plt.show()
+
 def count_cellsweep_parameters(log_path):
     with open(log_path, "r") as f:
         for line in f:
@@ -816,6 +850,27 @@ def identify_human_and_mouse_cells(adata, human_prefix="hg19_", mouse_prefix="mm
     adata.obs['genome'] = np.where(adata.obs['human_counts_total'] >= adata.obs['mouse_counts_total'], 'hg19', 'mm10')  # predict genome
     return adata
 
+def identify_human_and_mouse_gene_counts(adata):
+    if "genome" not in adata.obs.columns:
+        raise ValueError("adata.obs['genome'] not found. Run identify_human_and_mouse_cells first.")
+
+    is_human_cell = (adata.obs["genome"] == "hg19").to_numpy()
+    is_mouse_cell = (adata.obs["genome"] == "mm10").to_numpy()
+
+    X = adata.X
+
+    if sparse.issparse(X):
+        human_counts = np.asarray(X[is_human_cell, :].sum(axis=0)).ravel()
+        mouse_counts = np.asarray(X[is_mouse_cell, :].sum(axis=0)).ravel()
+    else:
+        human_counts = X[is_human_cell, :].sum(axis=0)
+        mouse_counts = X[is_mouse_cell, :].sum(axis=0)
+
+    adata.var["counts_in_human"] = human_counts
+    adata.var["counts_in_mouse"] = mouse_counts
+
+    return adata
+
 def histogram_auc(values, bins=100):
     # remove NaNs if present
     values = np.asarray(values)
@@ -828,57 +883,98 @@ def histogram_auc(values, bins=100):
     auc = np.sum(counts * bin_widths)
     return auc
 
-def plot_cross_species_histogram(adata, processed_name="processed", doublet_cell_set=None, out_path=None, show=True):
+def plot_cross_species_histogram(adata, processed_name="processed", histogram_values="cells", doublet_cell_set=None, human_prefix="hg19_", mouse_prefix="mm10_", out_path=None, show=True):
     if adata is None:
         return
 
     if "human_counts_total" not in adata.obs.columns or "mouse_counts_total" not in adata.obs.columns:
-        adata = identify_human_and_mouse_cells(adata)
+        adata = identify_human_and_mouse_cells(adata, human_prefix=human_prefix, mouse_prefix=mouse_prefix)
     
     if isinstance(doublet_cell_set, set):  # remove doublets if provided
         adata = adata[~adata.obs_names.isin(doublet_cell_set)].copy()
 
     fig, ax = plt.subplots(figsize=(6, 4))
 
-    # --- Mouse cells: plotting human_counts_total in blue ---
-    sns.histplot(
-        data=adata.obs[adata.obs["genome"] == "mm10"],
-        x="human_counts_total",
-        bins=100,
-        alpha=0.6,
-        linewidth=1.5,
-        color="#0047b3",
-        element="step",
-        fill=False,
-        ax=ax,
-        label="Mouse cell human gene contamination"
-    )
+    if histogram_values == "cells":
+        # --- Mouse cells: plotting human_counts_total in blue ---
+        sns.histplot(
+            data=adata.obs[adata.obs["genome"] == "mm10"],
+            x="human_counts_total",
+            bins=100,
+            alpha=0.6,
+            linewidth=1.5,
+            color="#0047b3",
+            element="step",
+            fill=False,
+            ax=ax,
+            label="Mouse cell human gene contamination"
+        )
 
-    # --- Human cells: plotting mouse_counts_total in gray ---
-    sns.histplot(
-        data=adata.obs[adata.obs["genome"] == "hg19"],
-        x="mouse_counts_total",
-        bins=100,
-        alpha=0.6,
-        linewidth=1.5,
-        color="#cc5500",
-        element="step",
-        fill=False,
-        ax=ax,
-        label="Human cell mouse gene contamination"
-    )
+        # --- Human cells: plotting mouse_counts_total in gray ---
+        sns.histplot(
+            data=adata.obs[adata.obs["genome"] == "hg19"],
+            x="mouse_counts_total",
+            bins=100,
+            alpha=0.6,
+            linewidth=1.5,
+            color="#cc5500",
+            element="step",
+            fill=False,
+            ax=ax,
+            label="Human cell mouse gene contamination"
+        )
+
+        mouse_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"], bins=100)
+        human_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"], bins=100)
+    
+    elif histogram_values == "genes":
+        if "counts_in_human" not in adata.var.columns or "counts_in_mouse" not in adata.var.columns:
+            adata = identify_human_and_mouse_gene_counts(adata)
+
+        is_human_gene = adata.var_names.str.startswith(human_prefix)
+        is_mouse_gene = adata.var_names.str.startswith(mouse_prefix)
+
+        # --- Mouse cells: plotting human_counts_total in blue ---
+        sns.histplot(
+            data=adata.var.loc[is_human_gene],
+            x="counts_in_mouse",
+            bins=100,
+            alpha=0.6,
+            linewidth=1.5,
+            color="#0047b3",
+            element="step",
+            fill=False,
+            ax=ax,
+            label="Human genes in mouse cells"
+        )
+
+        # --- Human cells: plotting mouse_counts_total in gray ---
+        sns.histplot(
+            data=adata.var.loc[is_mouse_gene],
+            x="counts_in_human",
+            bins=100,
+            alpha=0.6,
+            linewidth=1.5,
+            color="#cc5500",
+            element="step",
+            fill=False,
+            ax=ax,
+            label="Mouse genes in human cells"
+        )
+
+        mouse_auc = histogram_auc(adata.var.loc[is_human_gene, "counts_in_mouse"], bins=100)
+        human_auc = histogram_auc(adata.var.loc[is_mouse_gene, "counts_in_human"], bins=100)
+    else:
+        raise ValueError("histogram_values must be either 'cells' or 'genes'")
+
+    print(f"{processed_name} human cell mouse gene contamination AUC:", mouse_auc)
+    print(f"{processed_name} mouse cell human gene contamination AUC:", human_auc)
 
     ax.set_xlabel("Cross-species counts")
     ax.set_ylabel("Frequency")
     ax.set_yscale("log")
     ax.set_title(f"Cross-species Gene Counts in {processed_name} Data")
     ax.legend(title="Genome", loc="upper right")
-
-    mouse_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"], bins=100)
-    human_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"], bins=100)
-
-    print(f"{processed_name} human cell mouse gene contamination AUC:", mouse_auc)
-    print(f"{processed_name} mouse cell human gene contamination AUC:", human_auc)
 
     if out_path:
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
