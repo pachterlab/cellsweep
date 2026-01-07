@@ -33,7 +33,7 @@ def determine_cutoff_umi_for_expected_cells(adata, expected_cells):
     cutoff_umi = knee[expected_cells - 1]
     return cutoff_umi
 
-def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, hvg_flavor="seurat_v3", n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
+def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, min_genes=100, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, hvg_flavor="seurat_v3", n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
     try:
         import scanpy as sc
     except ImportError:
@@ -41,6 +41,15 @@ def run_scanpy_preprocessing_and_clustering(adata, min_genes=100, min_cells=3, u
     
     logger = setup_logger(verbose=verbose, quiet=quiet)
     logger.info(f"Adata initial shape: {adata.shape}")
+
+    #* empty droplet filtering
+    if filter_empty_droplets:
+        logger.info(f"Filtering empty droplets using 'infer_empty_droplets' function with method 'threshold'. This is done by calculating the total UMI counts for each cell and removing those that fall below a certain threshold, which helps to eliminate empty droplets that do not contain any cells.")
+        if "is_empty" in adata.obs.columns:
+            logger.info(f"'is_empty' column found in adata.obs. Using this column to filter empty droplets.")
+            adata = infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, verbose=verbose, quiet=quiet, logger=logger)
+        adata = adata[~adata.obs["is_empty"]].copy()
+        logger.info(f"After filtering empty droplets, adata shape: {adata.shape}")
     
     #* cell filtering
     if min_genes:
