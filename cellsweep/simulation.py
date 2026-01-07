@@ -1,6 +1,6 @@
 """
 Simulate scRNA-seq count matrix with cell-type structure, noise, empty cells,
-library-size variation, and dropout sparsity.
+and library-size variation
 """
 
 import numpy as np
@@ -12,60 +12,39 @@ from typing import Annotated, Optional
 
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def simulate_cells(
-    G : Annotated[int, Field(gt=0)] = 200,                         # number of genes
-    N : Annotated[int, Field(gt=0)] = 1000,                        # number of cells (barcodes)
-    k : Annotated[int, Field(gt=0)] = 5,                           # number of cell types
-    markers_per_type : Annotated[int, Field(gt=0)] = 30,           # number of marker genes per cell type
-    marker_boost : Annotated[float, Field(gt=0)] = 15.0,           # fold increase for marker genes in their type
-    type_proportions: Optional[np.ndarray] = None,                 # vector of length k, normalized to 1
-    empty_prob : Annotated[float, Field(ge=0, le=1)] = 0.8,        # fraction of empty barcodes
-    alpha : Annotated[float, Field(ge=0, le=1)] = 0.01,            # fraction of size of ambient RNA relative to real cells
-    expected_cell_size : Annotated[float, Field(gt=0)] = 10e3,     # expected library size for real cells
-    libsize_logmean : Annotated[float, Field(gt=0)] = 0.0,         # mean of log library-size scaling
-    libsize_logsd : Annotated[float, Field(gt=0)] = 0.5,           # sd of log library-size scaling
-    dispersion : Annotated[float, Field(gt=0)] = 2.0,              # NB dispersion (lower => more overdispersion)
-    dropout_midpoint : Annotated[float, Field(gt=0)] = 1.0,        # midpoint for dropout logistic curve
-    dropout_slope : Annotated[float, Field(gt=0)] = 1.5,           # slope for dropout probability curve
-    beta : Annotated[float, Field(ge=0, le=1)] = 0.03,             # fraction of counts to swap (bulk noise)
-    singleton_prob : Annotated[float, Field(ge=0, le=1)] = 0.25,   # probability UMI has a single read
-    rng_seed : Annotated[int, Field(ge=0)] = 42,                   # RNG seed
-    gene_prefix : Annotated[str, Field(min_length=1)] = "Gene",    # gene name prefix
-    cell_prefix : Annotated[str, Field(min_length=1)] = "Cell"     # cell name prefix
+    G : Annotated[int, Field(gt=0)] = 200,                         
+    N : Annotated[int, Field(gt=0)] = 1000,                        
+    k : Annotated[int, Field(gt=0)] = 5,                           
+    markers_per_type : Annotated[int, Field(gt=0)] = 30,           
+    marker_boost : Annotated[float, Field(gt=0)] = 15.0,           
+    type_proportions: Optional[np.ndarray] = None,                 
+    empty_prob : Annotated[float, Field(ge=0, le=1)] = 0.8,        
+    alpha : Annotated[float, Field(ge=0, le=1)] = 0.01,            
+    expected_cell_size : Annotated[float, Field(gt=0)] = 10e3,     
+    libsize_logmean : Annotated[float, Field(gt=0)] = 0.0,         
+    libsize_logsd : Annotated[float, Field(gt=0)] = 0.4,           
+    dispersion : Annotated[float, Field(gt=0)] = 2.0,                      
+    beta : Annotated[float, Field(ge=0, le=1)] = 0.03,             
+    singleton_prob : Annotated[float, Field(ge=0, le=1)] = 0.25,   
+    rng_seed : Annotated[int, Field(ge=0)] = 42,                   
+    gene_prefix : Annotated[str, Field(min_length=1)] = "Gene",    
+    cell_prefix : Annotated[str, Field(min_length=1)] = "Cell",
+    housekeeping_frac: float = 0.08,          # fraction of genes that are housekeeping
+    hk_logmean: float = 0.0,                 # mean log-expression of housekeeping genes
+    hk_logsd: float   = 1.0,                  # variability in housekeeping gene expression
+    marker_logsd: float = 0.5,               # variability in marker strength
+    noise_logsd_empty = 0.8,   # empty droplets: very heterogeneous
+    noise_logsd_cell = 0.5,    # cells: more constrained contamination
+    bg_alpha: float = 0.1,   # background ambient load scaling
+    bg_leakage: float = 0.01   # fraction of ambient profile that leaks into all genes
+
 ):
     """
-    G: number of genes
-    N: number of cells (barcodes)
-    k: number of cell types
-    markers_per_type: number of marker genes per cell type
-    marker_boost: fold increase for marker genes in their type
-    type_proportions: vector of length k, normalized to 1
-    empty_prob: fraction of empty barcodes
-    alpha: fraction of size of ambient RNA relative to real cells
-    expected_cell_size: expected library size for real cells
-    libsize_logmean: mean of log library-size scaling
-    libsize_logsd: sd of log library-size scaling
-    dispersion: NB dispersion (lower => more overdispersion)
-    dropout_midpoint: midpoint for dropout logistic curve
-    dropout_slope: slope for dropout probability curve
-    beta: fraction of counts to swap (bulk noise)
-    rng_seed: RNG seed
-    gene_prefix: gene name prefix
-    cell_prefix: cell name prefix
-
-    Returns
-    -------
-    adata : AnnData
-        anndata object with:
-            - adata.X : (G x N) sparse count matrix
-            - adata.layers['noise'] : background noise counts
-            - adata.layers['real'] : true cell-derived counts
-            - adata.obs : cell metadata (type, empty flag, lib_size, ambient fraction)
-            - adata.var : gene names, marker annotation, ambient profile
-            - adata.uns : simulation parameters, marker sets, and type profiles
+    Enhanced scRNA-seq simulator with realistic housekeeping genes, and overdispersed noise before adding noise.
     """
     rng = np.random.default_rng(rng_seed)
 
-    # --- 1. Define celltype proportions --- 
+    # --- 1. Define cell type proportions ---
     if type_proportions is None:
         type_proportions = rng.dirichlet(np.ones(k))
     else:
@@ -73,25 +52,44 @@ def simulate_cells(
         type_proportions /= type_proportions.sum()
 
     # --- 2. Create per-type expected expression profiles ---
-    type_expected = np.full((k, G), 1, dtype=float)
+    type_expected = np.zeros((k, G), dtype=float)  # start with zeros (true zeros for most genes)
     all_genes = np.arange(G)
     rng.shuffle(all_genes)
 
-    # Randomly pick marker genes for each type
+    # --- 2a. Assign marker genes ---
     marker_sets = []
     pos = 0
+    
     for t in range(k):
         markers = all_genes[pos:pos + markers_per_type]
         pos = (pos + markers_per_type) % G
         marker_sets.append(markers)
-        type_expected[t, markers] *= marker_boost
+        marker_strengths = marker_boost * rng.lognormal(
+        mean=0.0,
+        sigma=marker_logsd,
+        size=len(marker_sets[t])
+        )
+        type_expected[t, markers] = marker_strengths
 
-    # random jitter for realism
-    jitter = rng.normal(1.0, 0.5, size=type_expected.shape)
-    type_expected *= np.clip(jitter, 0, 3)
+    # --- 2b. Assign housekeeping genes ---
+    n_housekeeping = int(housekeeping_frac * G)
+    hk_genes = rng.choice(G, size=n_housekeeping, replace=False)
+    
+    hk_strengths = rng.lognormal(
+        mean=hk_logmean,
+        sigma=hk_logsd,
+        size=len(hk_genes)
+    )
 
-    # normalize to probabilities
-    type_expected /= type_expected.sum(axis=1, keepdims=True) 
+    for t in range(k):
+        type_expected[t, hk_genes] = hk_strengths
+
+    # -- 2c. Add background ambient load ---
+    bg_alpha = 0.01  
+    p_background = rng.dirichlet(np.full(G, bg_alpha))
+
+    # --- 2d. Normalize to probability profiles per cell type ---
+    type_expected /= type_expected.sum(axis=1, keepdims=True)
 
     # --- 3. Assign cell types and empty barcodes ---
     cell_types = rng.choice(np.arange(k), size=N, p=type_proportions)
@@ -101,48 +99,48 @@ def simulate_cells(
     lib_factors = np.exp(rng.normal(libsize_logmean, libsize_logsd, size=N)) * expected_cell_size
     lib_factors[is_empty] = 0.0
 
-    # --- 5. Background noise distribution ---
-    pop_expected = (type_proportions.reshape(-1, 1) * type_expected).sum(axis=0) # weighted sum of celltype profiles
-    noise_lambda = alpha * expected_cell_size * pop_expected
+    # --- 5. Compute weighted ambient profile (overdispersed) ---
+    pop_expected = (type_proportions.reshape(-1, 1) * type_expected).sum(axis=0)
+    pop_expected /= pop_expected.sum()  # ensure proper probability distribution
+    ambient_profile = (1 - bg_leakage) * pop_expected + bg_leakage * p_background
+    ambient_profile /= ambient_profile.sum()
+
+    # Parameters controlling ambient load variability
+    noise_logmean = np.log(alpha * expected_cell_size)
 
     # --- 6. Generate counts ---
     counts = np.zeros((N, G), dtype=np.int32)
     noise = np.zeros((N, G), dtype=np.int32)
     real = np.zeros((N, G), dtype=np.int32)
     alphas = np.zeros(N, dtype=float)
-    r = float(dispersion)
-    r = max(r, 1e-6)
-
+    r = max(dispersion, 1e-6) # shape parameter for NB
+    
     for i in range(N):
-        c_noise = rng.poisson(noise_lambda)
+        # --- 6a. Draw latent ambient load for this droplet ---
+        if is_empty[i]:
+            # Empty droplets have wide variation in ambient capture
+            lambda_i = rng.lognormal(mean=noise_logmean, sigma=noise_logsd_empty)
+        else:
+            # Cell-containing droplets have more constrained contamination
+            lambda_i = rng.lognormal(mean=noise_logmean, sigma=noise_logsd_cell)
+
+        # --- 6b. Sample ambient noise (Poisson conditional on lambda_i) ---
+        c_noise = rng.poisson(lambda_i * ambient_profile)
+
+        # --- 6c. Sample real counts (NB / Gamma–Poisson) ---
         if is_empty[i]:
             c_real = np.zeros(G, dtype=np.int32)
         else:
             mu = type_expected[cell_types[i]] * lib_factors[i]
-            # Negative Binomial via Gamma-Poisson
             lam_real = rng.gamma(shape=r, scale=mu / r)
             c_real = rng.poisson(lam_real)
+
+        # --- 6d. Combine ---
         counts[i, :] = c_real + c_noise
         noise[i, :] = c_noise
         real[i, :] = c_real
 
-    # --- 7. Apply dropout / sparsity ---
-    # Dropout prob = sigmoid(-slope*(log1p(mu_scaled) - midpoint))
-    # so that low-expression genes are more likely to drop out
-    log_means = np.log1p(type_expected[cell_types].T * lib_factors)
-    dropout_probs = 1.0 / (1.0 + np.exp(-dropout_slope * (dropout_midpoint - log_means)))
-    mask = rng.random(size=counts.shape) < dropout_probs.T
-    counts[mask] = 0
-    noise[mask] = 0
-    real[mask] = 0
-
-    # Compute ambient fraction after dropout
-    pos_mask = counts.sum(axis=1) > 0
-    alphas = np.zeros(N, dtype=float)
-    alphas[pos_mask] = noise[pos_mask, :].sum(axis=1) / counts[pos_mask, :].sum(axis=1)
-    alphas[is_empty] = 1.0
-
-    # --- 8. Bulk noise / barcode swapping (count-weighted) ---
+    # --- 7. Bulk noise / barcode swapping ---
     if beta > 0:
         total_counts = counts.sum()
         n_swap = int(beta * total_counts)
@@ -150,31 +148,29 @@ def simulate_cells(
             flat_counts = counts.flatten()
             nonzero_idx = np.nonzero(flat_counts)[0]
             weights = flat_counts[nonzero_idx] / flat_counts[nonzero_idx].sum()
-
-            # choose source indices proportional to count weight
             src_indices = rng.choice(nonzero_idx, size=n_swap, replace=True, p=weights)
-
-            # map back to (cell x gene)
             g_src = src_indices // N
             c_src = src_indices % N
-
-            # choose random destination cells
             c_dst = rng.integers(0, N, size=n_swap)
-
             for gs, cs, cd in zip(g_src, c_src, c_dst):
                 if counts[cs, gs] > 0:
                     counts[cd, gs] += 1
-                    noise[cd, gs] += 1 # treat swapped-in counts as noise
+                    noise[cd, gs] += 1
                     if rng.random() < singleton_prob:
                         counts[cs, gs] -= 1
                         real[cs, gs] -= 1
+
+    # --- 8. Compute ambient fraction ---
+    pos_mask = counts.sum(axis=1) > 0
+    alphas = np.zeros(N, dtype=float)
+    alphas[pos_mask] = noise[pos_mask, :].sum(axis=1) / counts[pos_mask, :].sum(axis=1)
+    alphas[is_empty] = 1.0
 
     # --- 9. Build AnnData ---
     gene_names = [f"{gene_prefix}_{g}" for g in range(G)]
     cell_names = [f"{cell_prefix}_{c}" for c in range(N)]
 
-    # make sparse for memory efficiency
-    X = sp.csr_matrix(counts) 
+    X = sp.csr_matrix(counts)
     X_noise = sp.csr_matrix(noise)
     X_real = sp.csr_matrix(real)
 
@@ -185,21 +181,16 @@ def simulate_cells(
         "ambient_fraction": alphas,
         "lib_size": lib_factors
     }, index=cell_names)
-
     obs["celltype"] = obs["celltype"].mask(is_empty, "Empty Droplet")
     obs["cellid"] = obs["cellid"].mask(is_empty, -1)
 
     var = pd.DataFrame(index=gene_names)
     var["ambient_profile"] = pop_expected / pop_expected.sum()
-
-    # annotate marker genes for convenience
     var["is_marker"] = False
     for t, genes in enumerate(marker_sets):
         var.loc[[f"{gene_prefix}_{g}" for g in genes], "is_marker"] = True
 
     adata = ad.AnnData(X=X, obs=obs, var=var)
-
-    # Add layers for noise and real counts for reference
     adata.layers["noise"] = X_noise
     adata.layers["real"] = X_real
 
@@ -207,8 +198,7 @@ def simulate_cells(
         G=G, N=N, k=k, empty_prob=empty_prob, alpha=alpha,
         expected_real_size=expected_cell_size, libsize_logmean=libsize_logmean,
         libsize_logsd=libsize_logsd,
-        dispersion=dispersion, dropout_midpoint=dropout_midpoint,
-        dropout_slope=dropout_slope, beta=beta, 
+        dispersion=dispersion, beta=beta, 
         singleton_prob=singleton_prob, rng_seed=rng_seed,
         type_proportions=type_proportions.tolist()
     )
@@ -219,13 +209,9 @@ def simulate_cells(
     cell_profiles = np.zeros((k, G), dtype=float)
     for t in range(k):
         cell_profiles[t, :] = type_expected[t, :] / type_expected[t, :].sum()
-
     adata.uns["type_profiles"] = cell_profiles
 
     return adata
-
-import numpy as np
-from typing import Optional, Tuple
 
 def simple_simulation(
     N=5000,        # droplets

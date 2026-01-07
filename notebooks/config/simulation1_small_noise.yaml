@@ -24,7 +24,7 @@ cellbender_expected_cells: null
 cellbender_total_droplets: null
 scar_epochs: 200
 scar_prob: 0.975
-expected_cells: 5000  # see below - N * (1 - empty_prob)
+expected_cells: 10000  # see below - N * (1 - empty_prob)
 min_genes: 0
 min_cells: 0
 umi_top_percentile_to_remove: 0
@@ -56,11 +56,11 @@ scar_matrix_url: https://caltech.box.com/shared/static/q6jmzbxuz3pzfuuj6rn3k3y42
 # simulation parameters
 G: 10000  # genes
 N: 100000  # droplets (empty and cells)
-k: 25
-markers_per_type: 10
+k: 12
+markers_per_type: 30
 marker_boost: 15
 type_proportions: null
-empty_prob: 0.95  # proportion of empty droplets
-alpha: 0.05
-beta: 0.03
+empty_prob: 0.9  # proportion of empty droplets
+alpha: 0.03
+beta: 0.01
 expected_cell_size: 2000
