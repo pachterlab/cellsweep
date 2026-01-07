@@ -39,9 +39,6 @@ def simulate_cells(
     bg_leakage: float = 0.01   # fraction of ambient profile that leaks into all genes
 
 ):
-    """
-    Enhanced scRNA-seq simulator with realistic housekeeping genes, and overdispersed noise before adding noise.
-    """
     rng = np.random.default_rng(rng_seed)
 
     # --- 1. Define cell type proportions ---
@@ -73,8 +70,17 @@ def simulate_cells(
 
     # --- 2b. Assign housekeeping genes ---
     n_housekeeping = int(housekeeping_frac * G)
-    hk_genes = rng.choice(G, size=n_housekeeping, replace=False)
-    
+    marker_union = np.unique(np.concatenate(marker_sets))
+    candidate_genes = np.setdiff1d(np.arange(G), marker_union)
+
+    hk_genes = rng.choice(
+        candidate_genes,
+        size=n_housekeeping,
+        replace=False
+    )
+
+    assert len(np.intersect1d(marker_union, hk_genes)) == 0
+
     hk_strengths = rng.lognormal(
         mean=hk_logmean,
         sigma=hk_logsd,
@@ -202,9 +208,7 @@ def simulate_cells(
         singleton_prob=singleton_prob, rng_seed=rng_seed,
         type_proportions=type_proportions.tolist()
     )
-    adata.uns["marker_sets"] = {
-        f"Type_{t}": [f"{gene_prefix}_{g}" for g in marker_sets[t]] for t in range(k)
-    }
+    adata.uns["marker_sets"] = np.array(marker_sets)
 
     cell_profiles = np.zeros((k, G), dtype=float)
     for t in range(k):
