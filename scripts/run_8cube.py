@@ -29,7 +29,7 @@ resource.setrlimit(resource.RLIMIT_AS, (MAX_RAM, MAX_RAM))
 cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 adata_raw_parent_dir = "/mnt/data1"
-adata_filtered_dir = "/mnt/data1/8_cube"
+adata_filtered_dir = "/mnt/data1/8_cube_cellbender_raw"
 
 verbose = 2  # 2 debug, 1 info, 0 warning, -1 error, -2 critical
 overwrite = False  # overwrite existing files
