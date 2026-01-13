@@ -597,7 +597,7 @@ def denoise_count_matrix(
     log_eps: Annotated[float, Field(gt=0)] = 1e-300,
     dirichlet_lambda: Optional[Annotated[float, Field(ge=0)]] = 500,
     integer_out: bool = False,
-    threads: Optional[Annotated[int, Field(gt=0)]] = 1,
+    threads: Annotated[int, Field(gt=0)] = 1,
     fixed_celltype: bool = True,
     freeze_empty: bool = True,
     freeze_ambient_profile: bool = True,
