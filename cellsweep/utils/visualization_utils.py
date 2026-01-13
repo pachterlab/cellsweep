@@ -930,6 +930,60 @@ def histogram_auc(values, bins=100):
     auc = np.sum(counts * bin_widths)
     return auc
 
+def plot_multi_histogram(df1, df2, plotting_column, df1_name="df1", df2_name="df2", out_path=None, show=True):
+    if df1 is None and df2 is None:
+        return
+    
+    fig, ax = plt.subplots(figsize=(6, 4))
+
+    # df1
+    sns.histplot(
+        data=df1,
+        x=plotting_column,
+        bins=100,
+        alpha=0.6,
+        linewidth=1.5,
+        color="#0047b3",
+        element="step",
+        fill=False,
+        ax=ax,
+        label=df1_name
+    )
+
+    # df2
+    sns.histplot(
+        data=df2,
+        x=plotting_column,
+        bins=100,
+        alpha=0.6,
+        linewidth=1.5,
+        color="#cc5500",
+        element="step",
+        fill=False,
+        ax=ax,
+        label=df2_name
+    )
+
+    df1_auc = histogram_auc(df1[plotting_column], bins=100)
+    df2_auc = histogram_auc(df2[plotting_column], bins=100)
+
+    print(f"{df1_name} cell contamination AUC:", df1_auc)
+    print(f"{df2_name} cell contamination AUC:", df2_auc)
+
+    ax.set_xlabel("Contamination Fraction")
+    ax.set_ylabel("Frequency")
+    ax.set_yscale("log")
+    ax.set_title(f"Contamination Fraction per Cell, {df1_name} vs {df2_name}")
+    ax.legend(title="Technology", loc="upper right")
+
+    if out_path:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
+
+    if not show:
+        plt.close()
+    else:
+        plt.show()
+
 def plot_cross_species_histogram(adata, processed_name="processed", histogram_values="cells", doublet_cell_set=None, human_prefix="hg19_", mouse_prefix="mm10_", out_path=None, show=True):
     if adata is None:
         return

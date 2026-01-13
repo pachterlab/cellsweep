@@ -746,6 +746,8 @@ def denoise_count_matrix(
     if "celltype" not in adata.obs.columns:
         raise KeyError("adata.obs must have column celltype.")
 
+    logger.info(f"Number of celltypes: {adata.obs['celltype'].nunique()}")
+
     # ensure empty droplets are present
     if "is_empty" not in adata.obs.columns:
         logger.info("Inferring empty droplets.")
