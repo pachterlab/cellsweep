@@ -850,9 +850,13 @@ def count_cellbender_parameters(ckpt_tar_path):
     return total_params
 
 def parse_em_log(log_path):
-    pattern = re.compile(r"EM Iter\s+(\d+): ll=([-\d\.]+)")
+    pattern = re.compile(r"EM Iter\s+(\d+): ll=([-\d\.]+) log_delta_p=([-\d\.]+) min_alpha=([\d\.]+) mean_alpha=([\d\.]+) median_alpha=([\d\.]+) max_alpha=([\d\.]+) beta=([\d\.]+)")
     iters = []
     lls = []
+    delta_ps = []
+    mean_alphas = []
+    med_alphas = []
+    betas = []
 
     with open(log_path) as f:
         for line in f:
@@ -860,30 +864,74 @@ def parse_em_log(log_path):
             if m:
                 iters.append(int(m.group(1)))
                 lls.append(float(m.group(2)))
+                delta_ps.append(float(m.group(3)))
+                mean_alphas.append(float(m.group(5)))
+                med_alphas.append(float(m.group(6)))
+                betas.append(float(m.group(8)))
 
-    return iters, lls
+    return iters, lls, delta_ps, mean_alphas, med_alphas, betas
 
 def plot_cellsweep_likelihood_over_epochs(iters=None, lls=None, log_path=None, out_path=None, show=True):
     if log_path is None and (iters is None or lls is None):
         raise ValueError("Either log_path or both iters and lls must be provided.")
     
     if log_path is not None:
-        iters, lls = parse_em_log(log_path)
-
-    # Convert negative log-likelihoods to positive values
-    lls_pos = [-x for x in lls]  # now all > 0
+        iters, lls, _, _, _, _ = parse_em_log(log_path)
 
     fig, ax = plt.subplots(figsize=(6,4), constrained_layout=True)
 
     # Plot only the positive values
-    ax.plot(iters, lls_pos, marker="o", linewidth=2, color="steelblue")
-
-    # Set y-axis to log scale ONCE
-    ax.set_yscale("log")
+    ax.plot(iters, lls, marker="o", linewidth=2, color="steelblue", label="Log-Likelihood")
 
     ax.set_title("EM Log-Likelihood Curve")
     ax.set_xlabel("Iteration")
-    ax.set_ylabel("-Log-Likelihood")
+    ax.set_ylabel("Log-Likelihood")
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+def plot_cellsweep_delta_p_over_epochs(iters=None, delta_ps=None, log_path=None, out_path=None, show=True):
+    if log_path is None and (iters is None or delta_ps is None):
+        raise ValueError("Either log_path or both iters and delta_ps must be provided.")
+    
+    if log_path is not None:
+        iters, _, delta_ps, _, _, _ = parse_em_log(log_path)
+
+    fig, ax = plt.subplots(figsize=(6,4), constrained_layout=True)
+
+    ax.plot(iters, delta_ps, marker="o", linewidth=2, color="purple", label="Delta P")
+
+    ax.set_title("EM Log Delta P Curve")
+    ax.set_xlabel("Iteration")
+    ax.set_ylabel("Log Delta P")
+
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight")
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+def plot_cellsweep_parameters_over_epochs(iters=None, alphas=None, betas=None, log_path=None, out_path=None, show=True):
+    if log_path is None and (iters is None or alphas is None or betas is None):
+        raise ValueError("Either log_path or both iters and alphas/betas must be provided.")
+    
+    if log_path is not None:
+        iters, _, _, mean_alphas, med_alphas, betas = parse_em_log(log_path)
+
+    fig, ax = plt.subplots(figsize=(6,4), constrained_layout=True)
+
+    ax.plot(iters, mean_alphas, marker="o", linewidth=2, color="orange", label="Mean Alpha")
+    ax.plot(iters, med_alphas, marker="o", linewidth=2, color="blue", label="Median Alpha")
+    ax.plot(iters, betas, marker="o", linewidth=2, color="green", label="Beta")
+    ax.legend()
+
+    ax.set_title("EM Parameter Curve")
+    ax.set_xlabel("Iteration")
 
     if out_path:
         plt.savefig(out_path, bbox_inches="tight")

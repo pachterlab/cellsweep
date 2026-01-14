@@ -54,13 +54,31 @@ decontx_matrix_url: https://caltech.box.com/shared/static/s4obntzxic54sb346e1z2u
 scar_matrix_url: https://caltech.box.com/shared/static/q6jmzbxuz3pzfuuj6rn3k3y42gwtzbyi.h5ad
 
 # simulation parameters
-G: 10000  # genes
-N: 100000  # droplets (empty and cells)
+# Core scale
+G: 10000
+N: 100000
 k: 12
-markers_per_type: 30
-marker_boost: 15
-type_proportions: null
-empty_prob: 0.9  # proportion of empty droplets
-alpha: 0.03
-beta: 0.01
+
+# Cell composition
+empty_prob: 0.9              
 expected_cell_size: 2000
+
+# Ambient RNA
+alpha: 0.03                   
+noise_logsd_empty: 0.8        
+noise_logsd_cell: 0.5         
+
+# Expression structure
+type_proportions: null
+markers_per_type: 30
+marker_boost: 15              
+housekeeping_frac: 0.08
+hk_logmean: -0.5  
+hk_logsd: 1.0  
+
+# Count variability
+dispersion: 2.0               
+
+# Barcode swapping
+beta: 0.05                   
+
