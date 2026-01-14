@@ -47,7 +47,7 @@ os.makedirs(out_dir, exist_ok=True)
 
 eight_cubed_markers_path = os.path.join(data_dir, "8_cube_marker_genes.csv")
 
-cellsweep_max_iter = 500
+cellsweep_max_iter = 1000
 cellsweep_beta = 0.1
 cellsweep_init_alpha = 0.9
 

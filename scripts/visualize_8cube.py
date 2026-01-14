@@ -33,7 +33,7 @@ cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "8cubed")
 eight_cubed_markers_path = os.path.join(data_dir, "8_cube_marker_genes.csv")
 gene_id_name_map_path = os.path.join(data_dir, "gene_id_name_map.csv")
-out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "8cubed_tmp")
+out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "8cubed")
 os.makedirs(out_dir, exist_ok=True)
 custom_markers = {
     'CortexHippocampus': ["Snap25", "Nrxn3", "Nrxn1"],  # Snap25: found in plate 3, tissue heart, cluster 36; Nrxn3, Nrxn1: found in plate 11, tissue gastroc, cluster 38
@@ -143,7 +143,6 @@ try:
     if not include_cellbender:
         dict_of_adata_dicts.pop("cellbender")
     print("Generating 8cubed plots...")
-    breakpoint()
     cs_utils.make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=custom_markers, gene_name_to_id=gene_name_to_id, print_custom_markers=print_custom_markers, out_dir=out_dir, overwrite=overwrite)
 except MemoryError:
     print("❌ Memory limit exceeded — exiting")  # might just print 'Segmentation fault (core dumped)' rather than this
