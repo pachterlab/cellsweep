@@ -639,7 +639,7 @@ def denoise_count_matrix(
     repulsion_strength: Annotated[float, Field(ge=0, le=1e-3)] = 1e-4,
     max_frac_gene_repulsion: Annotated[float, Field(gt=0, le=1)] = 0.2,
     integer_out: bool = False,
-    threads: Optional[Annotated[int, Field(gt=0)]] = 1,
+    threads: Annotated[int, Field(gt=0)] = 1,
     fixed_celltype: bool = True,
     freeze_empty: bool = True,
     freeze_ambient_profile: bool = True,
@@ -804,6 +804,8 @@ def denoise_count_matrix(
     adata = load_adata(adata, logger=logger)
     if "celltype" not in adata.obs.columns:
         raise KeyError("adata.obs must have column celltype.")
+
+    logger.info(f"Number of celltypes: {adata.obs['celltype'].nunique()}")
 
     # ensure empty droplets are present
     if "is_empty" not in adata.obs.columns:

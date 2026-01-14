@@ -33,7 +33,7 @@ def determine_cutoff_umi_for_expected_cells(adata, expected_cells):
     cutoff_umi = knee[expected_cells - 1]
     return cutoff_umi
 
-def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, min_genes=100, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, hvg_flavor="seurat_v3", n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
+def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, min_genes=100, min_counts=None, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, hvg_flavor="seurat_v3", n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
     try:
         import scanpy as sc
     except ImportError:
@@ -52,6 +52,11 @@ def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, 
         logger.info(f"After filtering empty droplets, adata shape: {adata.shape}")
     
     #* cell filtering
+    if min_counts:
+        logger.info(f"Filtering cells with < {min_counts} counts")
+        sc.pp.filter_cells(adata, min_counts=min_counts)
+        logger.info(f"After filtering cells with < {min_counts} counts, adata shape: {adata.shape}")
+
     if min_genes:
         logger.info(f"Filtering cells with < {min_genes} genes")
         sc.pp.filter_cells(adata, min_genes=min_genes)

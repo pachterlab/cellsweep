@@ -13,6 +13,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.scale import SymmetricalLogScale
 import matplotlib.patheffects as pe
+import matplotlib.cm as cm
 from matplotlib.colors import LogNorm
 import seaborn as sns
 import scanpy as sc
@@ -71,7 +72,7 @@ def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None,
         plt.close()
     return ax_dict
 
-def knee_plot(adata, expected_cells=None, color_column=None, title="Knee Plot", out_path=None, show=True):
+def knee_plot(adata, expected_cells=None, color_column=None, title="Knee Plot", transpose=False, out_path=None, show=True):
     # Compute total counts per barcode
     knee = np.sort(np.ravel(adata.X.sum(axis=1)))[::-1]
     barcodes = np.arange(1, len(knee) + 1)
@@ -79,44 +80,51 @@ def knee_plot(adata, expected_cells=None, color_column=None, title="Knee Plot", 
     # Create figure and axes
     fig, ax = plt.subplots(figsize=(5, 5), constrained_layout=True)
 
+    if transpose:
+        x, y = knee, barcodes
+        ax.set_xlabel("UMI counts", fontsize=18)
+        ax.set_ylabel("Barcodes", fontsize=18)
+    else:
+        x, y = barcodes, knee
+        ax.set_xlabel("Barcodes", fontsize=18)
+        ax.set_ylabel("UMI counts", fontsize=18)
+
     # Plot (x=barcodes, y=knee)
     if color_column is not None:
         if color_column not in adata.obs.columns:
             raise ValueError(f"color_column '{color_column}' not found in adata.obs columns.")
         color = adata.obs[color_column].values
-        sc = ax.scatter(barcodes, knee, c=color, s=8, cmap="viridis", alpha=0.9, edgecolors="none")
+        sc = ax.scatter(x, y, c=color, s=8, cmap="viridis", alpha=0.9, edgecolors="none")
         plt.colorbar(sc, ax=ax, label=color_column)
     else:
-        ax.plot(barcodes, knee, linewidth=2, color="gray")
+        ax.plot(x, y, linewidth=2, color="gray")
 
     cutoff_umi = None
     if expected_cells is not None:
         cutoff_umi = knee[expected_cells - 1]
 
         # Correct axes
-        ax.axvline(x=expected_cells, color="k", ls="--", linewidth=1.5)
-        ax.axhline(y=cutoff_umi, color="k", ls="--", linewidth=1.5)
+        if transpose:
+            ax.axhline(y=expected_cells, color="k", ls="--", linewidth=1.5)
+            ax.axvline(x=cutoff_umi, color="k", ls="--", linewidth=1.5)
+        else:
+            ax.axvline(x=expected_cells, color="k", ls="--", linewidth=1.5)
+            ax.axhline(y=cutoff_umi, color="k", ls="--", linewidth=1.5)
 
         # Keep only barcodes up to expected_cells
         if color_column is None:
             keep_mask = barcodes <= expected_cells
-            ax.plot(barcodes[keep_mask], knee[keep_mask], linewidth=2, color="blue")
+            ax.plot(x[keep_mask], y[keep_mask], linewidth=2, color="blue")
 
         print(f"UMI cutoff for expected cells ({expected_cells}): {cutoff_umi:.2f}")
 
-    # Log scales
     ax.set_xscale("log")
     ax.set_yscale("log")
-
-    # Auto axis limits based on data range
-    ax.set_xlim(barcodes.min(), barcodes.max())
-    # ax.set_ylim(knee.min(), knee.max())
-    ax.set_ylim(1, knee.max())
+    ax.set_xlim(1, x.max())
+    ax.set_ylim(1, y.max())
 
     # Labels and styling
     ax.set_title(title, fontsize=18)
-    ax.set_xlabel("Barcodes", fontsize=18)
-    ax.set_ylabel("UMI counts per barcode", fontsize=18)
     ax.grid(True, which="both", color="lightgray")
     ax.set_axisbelow(True)
     ax.tick_params(axis="both", labelsize=14)
@@ -295,22 +303,61 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_t
         raise ValueError(f"Unknown density_type '{density_type}'. Use '2d_hist', 'scatter', 'scatter_with_density', or 'scatter_with_kde'.")
 
     if label_to_scatter_location_dict is not None and len(label_to_scatter_location_dict) > 0:
-        from adjustText import adjust_text
-        texts = []
-        for label, (xg, yg) in label_to_scatter_location_dict.items():
-            t = ax.text(
+        labels = list(label_to_scatter_location_dict.keys())
+        n = len(labels)
+
+        # Use a dark-orange colormap range
+        cmap = cm.get_cmap("Oranges")
+        colors = cmap(np.linspace(0.55, 0.95, n))  # darker oranges only
+
+        handles = []
+        for (label, (xg, yg)), color in zip(label_to_scatter_location_dict.items(), colors):
+            sc = ax.scatter(
                 xg,
                 yg,
-                label,
-                color="orange",
-                fontsize=9,
-                ha="left",
-                va="bottom",
-                # path_effects=[pe.withStroke(linewidth=2, foreground="black")],
+                s=50,
+                color=color,
+                edgecolor="black",
+                linewidth=0.5,
                 zorder=10,
             )
-            texts.append(t)
+
+            # Dummy handle for legend
+            handles.append(
+                plt.Line2D(
+                    [0], [0],
+                    marker="o",
+                    linestyle="",
+                    markerfacecolor=color,
+                    markeredgecolor="black",
+                    label=label,
+                )
+            )
+
+        # Legend
+        ax.legend(
+            handles=handles,
+            title="Highlighted genes",
+            fontsize=9,
+            title_fontsize=10,
+            frameon=True,
+        )
+        # texts = []
+        # for label, (xg, yg) in label_to_scatter_location_dict.items():
+        #     t = ax.text(
+        #         xg,
+        #         yg,
+        #         label,
+        #         color="orange",
+        #         fontsize=9,
+        #         ha="left",
+        #         va="bottom",
+        #         # path_effects=[pe.withStroke(linewidth=2, foreground="black")],
+        #         zorder=10,
+        #     )
+        #     texts.append(t)
         # if len(texts) > 1:
+        #     from adjustText import adjust_text
         #     adjust_text(texts)
 
 
@@ -930,6 +977,60 @@ def histogram_auc(values, bins=100):
     # area under histogram
     auc = np.sum(counts * bin_widths)
     return auc
+
+def plot_multi_histogram(df1, df2, plotting_column, df1_name="df1", df2_name="df2", out_path=None, show=True):
+    if df1 is None and df2 is None:
+        return
+    
+    fig, ax = plt.subplots(figsize=(6, 4))
+
+    # df1
+    sns.histplot(
+        data=df1,
+        x=plotting_column,
+        bins=100,
+        alpha=0.6,
+        linewidth=1.5,
+        color="#0047b3",
+        element="step",
+        fill=False,
+        ax=ax,
+        label=df1_name
+    )
+
+    # df2
+    sns.histplot(
+        data=df2,
+        x=plotting_column,
+        bins=100,
+        alpha=0.6,
+        linewidth=1.5,
+        color="#cc5500",
+        element="step",
+        fill=False,
+        ax=ax,
+        label=df2_name
+    )
+
+    df1_auc = histogram_auc(df1[plotting_column], bins=100)
+    df2_auc = histogram_auc(df2[plotting_column], bins=100)
+
+    print(f"{df1_name} cell contamination AUC:", df1_auc)
+    print(f"{df2_name} cell contamination AUC:", df2_auc)
+
+    ax.set_xlabel("Contamination Fraction")
+    ax.set_ylabel("Frequency")
+    ax.set_yscale("log")
+    ax.set_title(f"Contamination Fraction per Cell, {df1_name} vs {df2_name}")
+    ax.legend(title="Technology", loc="upper right")
+
+    if out_path:
+        plt.savefig(out_path, dpi=300, bbox_inches="tight")
+
+    if not show:
+        plt.close()
+    else:
+        plt.show()
 
 def plot_cross_species_histogram(adata, processed_name="processed", histogram_values="cells", doublet_cell_set=None, human_prefix="hg19_", mouse_prefix="mm10_", out_path=None, show=True):
     if adata is None:
@@ -1675,6 +1776,7 @@ def plot_knee_multi(
     colors=None,
     title="Knee Plot (UMI Counts per Barcode)",
     linewidth=2,
+    transpose=False,
     out_path=None,
     filter_empty=False,
     show=True
@@ -1742,20 +1844,32 @@ def plot_knee_multi(
         knee = np.sort(row_sums)[::-1]              # descending
         barcodes = np.arange(1, len(knee) + 1)      # rank axis
 
+        if transpose:
+            x, y = knee, barcodes
+        else:
+            x, y = barcodes, knee
+
         plt.plot(
-            barcodes,
-            knee,
+            x,
+            y,
             color=color,
             linewidth=linewidth,
             label=label
         )
-
-    # ---- Formatting ----
+    
     plt.xscale("log")
     plt.yscale("log")
-    plt.ylim(bottom=0.5)
-    plt.xlabel("Barcode Rank (log)", fontsize=12)
-    plt.ylabel("Total UMI Counts (log)", fontsize=12)
+
+    # ---- Formatting ----
+    if transpose:
+        plt.ylabel("Barcode Rank (log)", fontsize=12)
+        plt.xlabel("Total UMI Counts (log)", fontsize=12)
+    else:
+        plt.xlabel("Barcode Rank (log)", fontsize=12)
+        plt.ylabel("Total UMI Counts (log)", fontsize=12)
+    plt.xlim(left=1)
+    plt.ylim(bottom=1)
+
     plt.title(title, fontsize=14)
     plt.legend()
     plt.tight_layout()
