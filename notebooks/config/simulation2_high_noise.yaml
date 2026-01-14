@@ -1,0 +1,84 @@
+description: Simulation 2 - high noise
+url: null
+
+# data file URLs and names
+adata_raw_url: null
+adata_raw_file_name: "adata_raw.h5ad"
+raw_tar_url: null
+raw_tar_file_dir_suffix: null
+filtered_tar_url: null
+filtered_tar_file_dir_suffix: null
+sequencing_technology: "10XV2"
+
+# analysis parameters
+model_pkl: null  # path, filename, or url for celltypist model pkl file
+celltypist_convert: False
+celltypist_map_file: null
+cellsweep_max_iter: 500
+cellsweep_beta: 0.1
+cellsweep_init_alpha: 0.9
+cellbender_epochs: 150
+cellbender_fpr: 0.01
+cellbender_zdim: 64
+cellbender_expected_cells: null
+cellbender_total_droplets: null
+scar_epochs: 200
+scar_prob: 0.975
+expected_cells: 3000  # see below - N * (1 - empty_prob)
+min_genes: 0
+min_cells: 0
+umi_top_percentile_to_remove: 0
+fraction_doublet: 0
+unique_genes_top_percentile_to_remove: 0
+mt_gene_percentile_to_remove: 0
+max_mt_percentage: null
+n_top_genes: 2000
+n_pcs: 25
+n_neighbors: 20
+leiden_resolution: 1.0
+marker_genes: null
+
+# output file names
+adata_path_cellsweep_name: sim2_output_cellsweep.h5ad
+adata_path_cellbender_name: sim2_output_cellbender.h5
+soupx_out_prefix_name: sim2_output_soupx
+decontx_out_prefix_name: sim2_output_decontx
+adata_path_scar_name: sim2_output_scar.h5ad
+
+#output file URLs from manuscript
+cellsweep_matrix_url: null
+cellbender_matrix_filtered_url: null
+cellbender_ckpt_url: null
+soupx_matrix_url: null
+decontx_matrix_url: null
+scar_matrix_url: null
+
+# simulation parameters
+# Core scale
+G: 10000
+N: 100000
+k: 25
+
+# Cell composition
+empty_prob: 0.97              # slightly higher empty rate
+expected_cell_size: 2000
+
+# Ambient RNA
+alpha: 0.10                   # ↑ from 0.05 (key change)
+noise_logsd_empty: 1.2        # very wide empty droplets
+noise_logsd_cell: 0.5         # moderate cell-to-cell variation
+
+# Expression structure
+type_proportions: null
+markers_per_type: 10
+marker_boost: 20              # slightly stronger to survive noise
+housekeeping_frac: 0.10       # ~1000 genes
+hk_logmean: 0  
+hk_logsd: 1.2 
+
+
+# Count variability
+dispersion: 1.0               # more overdispersion in real counts
+
+# Barcode swapping
+beta: 0.05                    # higher barcode swapping

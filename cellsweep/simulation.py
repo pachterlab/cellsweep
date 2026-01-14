@@ -30,7 +30,7 @@ def simulate_cells(
     gene_prefix : Annotated[str, Field(min_length=1)] = "Gene",    
     cell_prefix : Annotated[str, Field(min_length=1)] = "Cell",
     housekeeping_frac: float = 0.08,          # fraction of genes that are housekeeping
-    hk_logmean: float = 0.0,                 # mean log-expression of housekeeping genes
+    hk_logmean: float = -0.5,                 # mean log-expression of housekeeping genes
     hk_logsd: float   = 1.0,                  # variability in housekeeping gene expression
     marker_logsd: float = 0.5,               # variability in marker strength
     noise_logsd_empty = 0.8,   # empty droplets: very heterogeneous
