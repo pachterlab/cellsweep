@@ -143,6 +143,7 @@ try:
     if not include_cellbender:
         dict_of_adata_dicts.pop("cellbender")
     print("Generating 8cubed plots...")
+    breakpoint()
     cs_utils.make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=custom_markers, gene_name_to_id=gene_name_to_id, print_custom_markers=print_custom_markers, out_dir=out_dir, overwrite=overwrite)
 except MemoryError:
     print("❌ Memory limit exceeded — exiting")  # might just print 'Segmentation fault (core dumped)' rather than this
