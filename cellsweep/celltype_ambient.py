@@ -270,11 +270,115 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
                           (np.array(rows, dtype=int), np.array(cols, dtype=int))),
                          shape=(N, G))
 
+@njit(parallel=True, nogil=True)
+def warm_up_e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
+                         gamma_idx, p, N, eps, freeze_empty_mask):
+    """
+    Parallel ambient calculation over rows to get initial alpha trajectories
+    """
+    numer_gamma = np.zeros(N, dtype=np.float64)
+    A_n = np.zeros(N, dtype=np.float64)
+
+    # We will fill entries sequentially but rows are parallelized
+    # Build an array mapping entry index to its position: compute per-row offsets
+    for n in prange(N):
+        rs = indptr[n]
+        re = indptr[n + 1]
+        if re <= rs:
+            continue
+
+        # local accumulators for this row
+        local_A = 0.0
+
+        # index into global flattened arrays
+        # we will write to positions [rs:re) which correspond to the CSR data indices
+        # this is safe because each row writes to a unique slice
+
+        if freeze_empty_mask[n]:
+            for jj in range(rs, re):
+                g = indices[jj]        # gene index
+                val = data[jj]
+
+                # compute mixture weights for this nonzero
+                wa = (1.0 - beta) * alpha[n] * a[g]
+                wm = beta * m_global[g]
+
+                # treat only ambient+bulk
+                p_tot = wa + wm
+
+                # fraction scale: vals / p_tot
+                scale = val / np.maximum(p_tot, eps)
+
+                # expected ambient and bulk at this entry
+                cA = scale * wa
+
+                # accumulate per-row totals
+                local_A += cA
+        else:
+            b = (1.0 - beta) * (1.0 - alpha[n])
+            local_gamma = 0.0
+            k = gamma_idx[n]   # int in [0, K) or -1
+
+            for jj in range(rs, re):
+                g = indices[jj]
+                val = data[jj]
+
+                # mixture weights
+                wa = (1.0 - beta) * alpha[n] * a[g]
+                wm = beta * m_global[g]
+                w_cell = b * p[k, g]
+
+                p_tot = wa + wm + w_cell
+                scale = val / np.maximum(p_tot, eps)
+
+                # expected contributions
+                cA = scale * wa
+                cC = scale * w_cell
+
+                local_gamma += cC
+
+                # accumulate per-row totals
+                local_A += cA
+            
+            numer_gamma[n] = local_gamma
+
+        # write back per-row numbers
+        A_n[n] = local_A
+    
+    return numer_gamma, A_n
+
+def warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N, 
+            freeze_empty, freeze_empty_mask, real_mask, eps, alpha_cap):
+    
+    """
+    Helper to initialize exclude_from_p_update mask based on which barcodes 
+    are inclined to have alpha_n > alpha_cap.
+    """
+
+    numer_gamma, A_n = warm_up_e_step_numba(indptr=indptr, indices=indices, data=data, 
+                                            alpha=alpha, beta=beta, a=a, m_global=m_global,
+                                            gamma_idx=gamma_idx, p=p, N=N, eps=eps, 
+                                            freeze_empty_mask=freeze_empty_mask)
+    
+
+    # see which alpha_n values will exceed alpha_cap
+    Ccell_n = numer_gamma
+    alpha_test = A_n / np.maximum(A_n + Ccell_n, eps)
+    if freeze_empty:
+        alpha_test[~real_mask] = 1.0
+
+    exclude_from_p_update = (alpha_test > (alpha_cap + 1e-6)) & (~freeze_empty_mask)
+
+
+    return exclude_from_p_update
+
+
 # ---------- Numba-parallel E-step kernel ----------
 @njit(parallel=True, nogil=True)
 def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                  gamma_idx, p, K, N, eps, log_eps, freeze_empty_mask,
                  freeze_ambient_profile, fixed_celltype,
+                 exclude_from_p_update,
                  p_numer_tls, a_numer_tls, done):
     """
     Parallel E-step over rows. Returns per-entry arrays and per-row summaries.
@@ -343,6 +447,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
             b = (1.0 - beta) * (1.0 - alpha[n])
             local_gamma = 0.0
             k = gamma_idx[n]   # int in [0, K) or -1
+            allow_p_update = not exclude_from_p_update[n]
 
             for jj in range(rs, re):
                 g = indices[jj]
@@ -361,7 +466,8 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 cM = scale * wm
                 cC = scale * w_cell
 
-                p_numer_tls[tid, k, g] += cC
+                if allow_p_update:
+                    p_numer_tls[tid, k, g] += cC
                 local_gamma += cC
 
                 if done:
@@ -378,7 +484,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
             numer_gamma[n] = local_gamma
 
             # ---------- HARD REASSIGNMENT (CEM) ----------
-            if not fixed_celltype:
+            if not allow_p_update:
                 best_k = k
                 best_ll = -1e300
 
@@ -409,7 +515,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
 
     return ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row
 
-def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, 
+def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap, 
               max_iter, tol, min_tol, tol_p, tol_f, freeze_empty, fixed_celltype, real_mask, 
               eps, dirichlet_lambda, repulsion_strength, max_frac_gene_repulsion,
               log_eps, verbose, logger, freeze_ambient_profile, debug):
@@ -417,7 +523,9 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
     """
     Helper for denoise_count_matrix. Performs sparse compatible EM on model
     """
-    
+
+    exclude_from_p_update = np.zeros(N, dtype=np.bool_)
+
     converged = False
     ll_converged = False
     
@@ -458,6 +566,9 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
         if re > rs:
             row_of_entry[rs:re] = n
 
+    exclude_from_p_update = warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N, 
+                                    freeze_empty, freeze_empty_mask, real_mask, eps, alpha_cap)
+
     # EM loop
     for it in range(1, max_iter + 1):
         done = (it == max_iter or converged)
@@ -469,10 +580,13 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
         p_numer_tls = np.zeros((nthreads, K, G), dtype=np.float64)
         a_numer_tls = np.zeros((nthreads, G), dtype=np.float64)
 
+        fixed_celltype = not ll_converged
+
         ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row = e_step_numba(
             indptr=indptr, indices=indices, data=data, alpha=alpha, beta=beta, a=a, m_global=m_global,
             gamma_idx=gamma_idx, p=p, K=K, N=N, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask,
             freeze_ambient_profile=freeze_ambient_profile, fixed_celltype=fixed_celltype,
+            exclude_from_p_update = exclude_from_p_update,
             p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, done=done
         )
 
@@ -496,6 +610,15 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
         alpha = A_n / np.maximum(A_n + Ccell_n, eps)
         if freeze_empty:
             alpha[~real_mask] = 1.0
+
+        if not ll_converged:
+            # Stage 1: Don't allow suspect cells to update p
+            exclude_from_p_update = (alpha > alpha_cap + 1e-6) & (~freeze_empty_mask)
+            # Apply cap to all (non-empty) cells in stage 1
+            alpha = np.minimum(alpha, alpha_cap)
+        else:
+            # Stage 2: allow full alpha and allow everyone to update p_k
+            exclude_from_p_update[:] = False
 
         # update beta
         total_counts = M_total + A_n.sum() + numer_gamma.sum()
@@ -525,11 +648,6 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
             sub = np.minimum(sub, sub_cap)
 
             p = p - sub
-
-            frac_clipped = np.mean(p <= eps)
-            if frac_clipped > 0.05:  # even 1–5% is already a warning sign
-                logger.debug(f"Warning: {frac_clipped:.3%} of p entries clipped to eps")
-
             p = np.maximum(p, eps)
             p = p / np.maximum(p.sum(axis=1)[:, None], eps)
         else:
@@ -556,6 +674,9 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G,
             alpha_min = np.min(alpha_eff)
 
             logger.info(f"EM Iter {it:3d}: ll={ll:.3f} log_delta_p={np.log(delta_p):.4f} min_alpha={alpha_min:.4f} mean_alpha={alpha_mean:.4f} median_alpha={alpha_median:.4f} max_alpha={alpha_max:.4f} beta={beta:.6f}")
+            
+            if not ll_converged:
+                logger.debug(f"{exclude_from_p_update.sum()} cells want to exceed alpha_n > {alpha_cap}. They will be excluded from update of p_k and allowed cell-type reassignment")
 
             if converged:
                 logger.info("Converged.")
@@ -630,6 +751,7 @@ def denoise_count_matrix(
     adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = "adata_denoised.h5ad",
     max_iter: Annotated[int, Field(gt=1)] = 1000,
     init_alpha: Annotated[float, Field(ge=0, le=1)] = 0.9,
+    alpha_cap: Annotated[float, Field(ge=0, le=1)] = 0.9,
     beta: Annotated[float, Field(ge=0, le=1)] = 0.1,
     eps: Annotated[float, Field(gt=0)] = 1e-12,
     log_eps: Annotated[float, Field(gt=0)] = 1e-300,
@@ -693,6 +815,10 @@ def denoise_count_matrix(
 
     init_alpha : float, default 0.9
        Initial value of alpha_n for each cell. Works better when set to a higher number than expected (expected is around 0.05 per cell).
+
+    alpha_cap : float default 0.9
+        alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold
+        will be excluded from updating p_k and allowed to change cell-types.
     
     beta : float, default 0.1
         Initial beta (percent bulk contamination) value for each cell. Works better when set to a higher number than expected (expected is around 0.05). 
@@ -865,9 +991,8 @@ def denoise_count_matrix(
     # empties
     gamma_idx[is_empty] = -1
 
-    if not fixed_celltype:
-        if verbose == 2:
-            gamma_idx_init = gamma_idx.copy()
+    if verbose:
+        gamma_idx_init = gamma_idx.copy()
 
     # initial beta + bulk m
     beta = float(beta)
@@ -921,7 +1046,7 @@ def denoise_count_matrix(
     C = C.astype(np.float32)
 
     logger.info(f"Performing Sparse EM with {numba.get_num_threads()} Numba thread(s)")
-    em_dict = sparse_em(C=C, alpha=alpha, beta=beta, a=a, u=u, m_global=m_global, gamma_idx=gamma_idx, p=p, K=K, N=N, G=G, 
+    em_dict = sparse_em(C=C, alpha=alpha, beta=beta, a=a, u=u, m_global=m_global, gamma_idx=gamma_idx, p=p, K=K, N=N, G=G, alpha_cap=alpha_cap,
                         max_iter=max_iter, tol=tol, min_tol=min_tol, tol_p=tol_p, tol_f=tol_f, freeze_empty=freeze_empty, fixed_celltype=fixed_celltype, 
                         real_mask=real_mask, eps=eps, dirichlet_lambda=dirichlet_lambda, repulsion_strength= repulsion_strength, max_frac_gene_repulsion=max_frac_gene_repulsion,
                         log_eps=log_eps, verbose=verbose, logger=logger, freeze_ambient_profile=freeze_ambient_profile, debug=debug)
@@ -938,10 +1063,9 @@ def denoise_count_matrix(
         p_tracker = em_dict["p_tracker"]
         interactive_distribution_viewer(a_tracker, p_tracker, m_global)
 
-    if not fixed_celltype:
-        if verbose == 2:
-            celltype_mod_num = (gamma_idx_init != gamma_idx).sum()
-            logger.debug(f"The model reassigned the celltype of {celltype_mod_num} cells")
+    if verbose:
+        celltype_mod_num = (gamma_idx_init != gamma_idx).sum()
+        logger.debug(f"The model reassigned the celltype of {celltype_mod_num} cells")
 
 
     # ===================================
