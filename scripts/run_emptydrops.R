@@ -31,9 +31,21 @@ cat("📦 Starting EmptyDrops pipeline...\n")
 cat("Raw matrix dir: ", raw_tar_file_dir, "\n")
 
 sce <- read10xCounts(
-    raw_tar_file_dir,
-    col.names = TRUE
-)
+      raw_tar_file_dir,
+      col.names = TRUE
+  )
+
+# # check if raw_tar_file_dir ends with .h5ad - requires zellkonverter and git to be installed, so won't work as-is
+# if (grepl("\\.h5ad$", raw_tar_file_dir)) {
+#   library(zellkonverter)
+#   BiocManager::install("anndataR")
+#   sce <- readH5AD(raw_tar_file_dir)
+# } else {
+#   sce <- read10xCounts(
+#       raw_tar_file_dir,
+#       col.names = TRUE
+#   )
+# }
 
 e.out <- emptyDrops(
     counts(sce),

@@ -197,7 +197,7 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
     else:
         plt.close()
 
-def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_type="matrix", title=None, density_type="scatter_with_density", alpha=0.6, cmap='viridis', label_to_scatter_location_dict=None, x_axis='adata1', y_axis='adata2', calculate_mse_vertical=False, out_path=None, show=True):
+def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", minimum=0.5, point_type="matrix", title=None, density_type="scatter_with_density", alpha=0.6, cmap='viridis', label_to_scatter_location_dict=None, x_axis='adata1', y_axis='adata2', calculate_mse_vertical=False, out_path=None, show=True):
     # -------------------------
     # 1. Match cells + genes
     # -------------------------
@@ -255,8 +255,8 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_t
     # 4. Log handling
     # -------------------------
     if scale == "log":
-        x = np.where(x < 0.5, 0.5, x)
-        y = np.where(y < 0.5, 0.5, y)
+        x = np.where(x < minimum, minimum, x)
+        y = np.where(y < minimum, minimum, y)
 
     # -------------------------
     # 6. Plotting
@@ -363,7 +363,10 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", point_t
 
     all_vals = np.concatenate([x, y])
     vmin, vmax = all_vals.min(), all_vals.max()
-    vmin = 0.475  # hard-coded
+    if scale == "log":
+        vmin = minimum * 0.95  # hard-coded
+    else:
+        vmin = 0.0
     margin = 1.1
     ax.set_xlim(left = vmin / margin, right = vmax * margin)
     ax.set_ylim(bottom = vmin / margin, top = vmax * margin)

@@ -14,7 +14,7 @@ sequencing_technology: "10XV2"
 model_pkl: null  # path, filename, or url for celltypist model pkl file
 celltypist_convert: False
 celltypist_map_file: null
-cellsweep_max_iter: 500
+cellsweep_max_iter: 1000
 cellsweep_beta: 0.1
 cellsweep_init_alpha: 0.9
 cellbender_epochs: 150
