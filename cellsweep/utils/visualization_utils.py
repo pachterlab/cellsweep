@@ -2449,6 +2449,45 @@ def plot_histogram(adata, col, title=None, bins=100, filter_empty=True, ylog=Fal
     else:
         plt.close()
 
+def subplot_section(ax, xx, yy, cc = None, val = None, cmap = None) :
+    
+    if cmap is not None :
+        ax.scatter(xx, yy, s=0.5, c=val, marker='.', cmap=cmap)
+    elif cc is not None :
+        ax.scatter(xx, yy, s=0.5, color=cc, marker='.')
+    ax.set_ylim(11, 0)
+    ax.set_xlim(0, 11)
+    ax.axis('equal')
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+def plot_merfish(adata, example_section, cc = None, val = None, fig_width = 5, fig_height = 5, cmap = None, title = None, suptitle = None, out_path = None, show = True) :
+    
+    fig, ax = plt.subplots(1, 1)
+    fig.set_size_inches(fig_width, fig_height)
+
+    pred = adata.obs['brain_section_label'] == example_section
+    section = adata.obs[pred]
+
+    if cmap is not None :
+        subplot_section(ax, section['x'], section['y'], val=section[val], cmap=cmap)
+    elif cc is not None :
+        subplot_section(ax, section['x'], section['y'], section[cc])
+    if title is None:
+        title = example_section
+    ax.set_title(title)
+    if suptitle is not None :
+        plt.suptitle(suptitle)
+
+    if out_path is not None :
+        plt.savefig(out_path, bbox_inches='tight', dpi=300)
+    if not show :
+        plt.close()
+    else :
+        plt.show()
+
+    return fig, ax
+
 
 def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=None, gene_name_to_id=None, print_custom_markers=False, out_dir=None, overwrite=False):
     # plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]
