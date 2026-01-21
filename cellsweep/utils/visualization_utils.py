@@ -981,8 +981,8 @@ def histogram_auc(values, bins=100):
     auc = np.sum(counts * bin_widths)
     return auc
 
-def plot_multi_histogram(df1, df2, plotting_column, df1_name="df1", df2_name="df2", out_path=None, show=True):
-    if df1 is None and df2 is None:
+def plot_multi_histogram(df1, df2, plotting_column, df1_name="df1", df2_name="df2", df3=None, df3_name=None, out_path=None, show=True):
+    if df1 is None or df2 is None:
         return
     
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -1014,6 +1014,23 @@ def plot_multi_histogram(df1, df2, plotting_column, df1_name="df1", df2_name="df
         ax=ax,
         label=df2_name
     )
+
+    # df3 (optional)
+    if df3 is not None and df3_name is not None:
+        sns.histplot(
+            data=df3,
+            x=plotting_column,
+            bins=100,
+            alpha=0.6,
+            linewidth=1.5,
+            color="#228B22",
+            element="step",
+            fill=False,
+            ax=ax,
+            label=df3_name
+        )
+        df3_auc = histogram_auc(df3[plotting_column], bins=100)
+        print(f"{df3_name} cell contamination AUC:", df3_auc)
 
     df1_auc = histogram_auc(df1[plotting_column], bins=100)
     df2_auc = histogram_auc(df2[plotting_column], bins=100)
@@ -2410,6 +2427,66 @@ def plot_multiple_kdes(expr_list, labels=None, colors=None, gene_name=None, log=
     plt.tight_layout()
     plt.show()
 
+
+def plot_histogram(adata, col, title=None, bins=100, filter_empty=True, ylog=False, out_path=None, show=True):
+    if filter_empty and "is_empty" in adata.obs.columns:
+        data = adata.obs.loc[~adata.obs["is_empty"], col]
+    else:
+        data = adata.obs[col]
+    plt.figure(figsize=(8,6))
+    plt.hist(data, bins=bins, color='blue', alpha=0.7)
+    if title:
+        plt.title(title)
+    if ylog:
+        plt.yscale('log')
+    plt.xlabel(col)
+    plt.ylabel("Number of Cells")
+    plt.grid(axis='y', alpha=0.75)
+    if out_path:
+        plt.savefig(out_path)
+    if show:
+        plt.show()
+    else:
+        plt.close()
+
+def subplot_section(ax, xx, yy, cc = None, val = None, cmap = None) :
+    
+    if cmap is not None :
+        ax.scatter(xx, yy, s=0.5, c=val, marker='.', cmap=cmap)
+    elif cc is not None :
+        ax.scatter(xx, yy, s=0.5, color=cc, marker='.')
+    ax.set_ylim(11, 0)
+    ax.set_xlim(0, 11)
+    ax.axis('equal')
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+def plot_merfish(adata, example_section, cc = None, val = None, fig_width = 5, fig_height = 5, cmap = None, title = None, suptitle = None, out_path = None, show = True) :
+    
+    fig, ax = plt.subplots(1, 1)
+    fig.set_size_inches(fig_width, fig_height)
+
+    pred = adata.obs['brain_section_label'] == example_section
+    section = adata.obs[pred]
+
+    if cmap is not None :
+        subplot_section(ax, section['x'], section['y'], val=section[val], cmap=cmap)
+    elif cc is not None :
+        subplot_section(ax, section['x'], section['y'], section[cc])
+    if title is None:
+        title = example_section
+    ax.set_title(title)
+    if suptitle is not None :
+        plt.suptitle(suptitle)
+
+    if out_path is not None :
+        plt.savefig(out_path, bbox_inches='tight', dpi=300)
+    if not show :
+        plt.close()
+    else :
+        plt.show()
+
+    return fig, ax
 
 
 def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=None, gene_name_to_id=None, print_custom_markers=False, out_dir=None, overwrite=False):
