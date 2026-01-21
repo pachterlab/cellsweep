@@ -1275,6 +1275,7 @@ def denoise_count_matrix(
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
     log_file: Optional[str] = None,
+    cluster_dashboard: bool = False,
     debug: bool = False,
 ):
     """
@@ -1390,6 +1391,12 @@ def denoise_count_matrix(
 
     log_file : str | None, default None
         Optional path to save EM iteration logs.
+
+    cluster_dashboard : bool, default False
+        Compares clustering before and after CellSweep
+
+    debug: bool, default False
+        Displays graphs showing the progress of the model parameters over each iteration
 
     Returns
     -------
@@ -1598,17 +1605,18 @@ def denoise_count_matrix(
     else:
         logger.warning("adata_out not specified; not saving inferred adata to a file.")
 
-    report_cellsweep_dashboard_both(
-        adata,
-        initial_key="celltype",
-        final_key="z_hat",
-        empty_key="is_empty",
-        n_components=50,
-        sample_size=50000,
-        knn_k=30,
-        n_random=25,
-        random_state=random_state or 0,
-        logger=logger,
-    )
+    if cluster_dashboard:
+        report_cellsweep_dashboard_both(
+            adata,
+            initial_key="celltype",
+            final_key="z_hat",
+            empty_key="is_empty",
+            n_components=50,
+            sample_size=50000,
+            knn_k=30,
+            n_random=25,
+            random_state=random_state or 0,
+            logger=logger,
+        )
 
     return adata
