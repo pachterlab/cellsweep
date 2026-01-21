@@ -15,6 +15,9 @@ from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_c
 import matplotlib.pyplot as plt
 import seaborn as sns
 import gc
+from sklearn.decomposition import PCA, TruncatedSVD
+from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, silhouette_score
+from sklearn.neighbors import NearestNeighbors
 
 #* Take the mean expression of each gene across all cells of a given cell type, and normalize to sum to 1.
 def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
@@ -270,6 +273,491 @@ def sparse_integerize(expected_cell: sp.csr_matrix, random_state=None):
                           (np.array(rows, dtype=int), np.array(cols, dtype=int))),
                          shape=(N, G))
 
+
+def _to_int_labels_from_obs(adata, key: str, real_mask: np.ndarray) -> np.ndarray:
+    """Convert categorical/string labels in adata.obs[key] to contiguous int labels (0..K-1) on real cells."""
+    x = adata.obs[key].to_numpy()
+    # Handle pandas categoricals cleanly
+    try:
+        if isinstance(adata.obs[key].dtype, pd.CategoricalDtype) or str(adata.obs[key].dtype) == "category":
+            cats = adata.obs[key].cat.categories
+            mapping = {c: i for i, c in enumerate(cats)}
+            out = np.full(x.shape[0], -1, dtype=np.int32)
+            for i in range(x.shape[0]):
+                if real_mask[i]:
+                    out[i] = mapping[x[i]]
+            return out[real_mask]
+    except Exception:
+        pass
+
+    # Generic mapping for strings/objects
+    uniq = {}
+    out = np.full(x.shape[0], -1, dtype=np.int32)
+    nxt = 0
+    for i in range(x.shape[0]):
+        if not real_mask[i]:
+            continue
+        v = x[i]
+        if v not in uniq:
+            uniq[v] = nxt
+            nxt += 1
+        out[i] = uniq[v]
+    return out[real_mask]
+
+
+def _final_labels_from_z_hat(adata, key: str, real_mask: np.ndarray) -> np.ndarray:
+    """Convert z_hat (1..K on real cells; -1 on empties) -> (0..K-1) contiguous on real cells."""
+    z = np.asarray(adata.obs[key].to_numpy(), dtype=np.int64)
+    z_real = z[real_mask]
+    # Expect z_real >= 1
+    return (z_real - 1).astype(np.int32)
+
+
+def _make_embedding_from_counts(
+    X,
+    n_components: int = 50,
+    random_state: int = 0,
+):
+    """
+    Build a fixed embedding from counts.
+    - Applies log1p to counts
+    - Uses TruncatedSVD for sparse, PCA for dense
+    Returns: embedding (n_cells, n_components_used)
+    """
+    if sp.issparse(X):
+        X = X.tocsr()
+        X_log = X.copy()
+        # log1p only on stored nonzeros (consistent with sparse convention)
+        X_log.data = np.log1p(X_log.data)
+        # TruncatedSVD works directly on sparse matrices
+        svd = TruncatedSVD(n_components=n_components, random_state=random_state)
+        emb = svd.fit_transform(X_log)
+        return emb
+    else:
+        X = np.asarray(X)
+        X_log = np.log1p(X)
+        pca = PCA(n_components=min(n_components, X_log.shape[1]), random_state=random_state)
+        emb = pca.fit_transform(X_log)
+        return emb
+
+
+def _knn_purity(emb: np.ndarray, labels: np.ndarray, k: int = 30) -> float:
+    """
+    kNN purity: for each point, fraction of its k nearest neighbors (excluding itself)
+    that share the same label; then averaged over points.
+    """
+    n = emb.shape[0]
+    if n <= k + 1:
+        return np.nan
+
+    nn = NearestNeighbors(n_neighbors=k + 1, algorithm="auto")
+    nn.fit(emb)
+    neigh = nn.kneighbors(emb, return_distance=False)  # (n, k+1)
+    neigh = neigh[:, 1:]  # drop self
+    same = (labels[neigh] == labels[:, None])
+    return float(np.mean(same))
+
+
+def _median_dispersion(emb: np.ndarray, labels: np.ndarray) -> float:
+    """
+    Robust within-cluster dispersion:
+    median (over clusters) of the median Euclidean distance
+    of points to their cluster centroid.
+    """
+    K = int(labels.max()) + 1
+    per_cluster = []
+
+    for k in range(K):
+        idx = np.where(labels == k)[0]
+        if idx.size < 2:
+            continue
+        Xk = emb[idx]
+        mu = Xk.mean(axis=0)
+        d = np.sqrt(np.sum((Xk - mu) ** 2, axis=1))
+        per_cluster.append(np.median(d))
+
+    return float(np.median(per_cluster)) if per_cluster else np.nan
+
+
+
+def _safe_silhouette(emb: np.ndarray, labels: np.ndarray, max_points: int = 50000, random_state: int = 0) -> float:
+    """
+    Silhouette can be expensive. Compute on a subsample if needed.
+    Requires at least 2 clusters and no cluster with 1 point in the subsample.
+    """
+    n = emb.shape[0]
+    if n < 10:
+        return np.nan
+    if len(np.unique(labels)) < 2:
+        return np.nan
+
+    rng = np.random.default_rng(random_state)
+    if n > max_points:
+        idx = rng.choice(n, size=max_points, replace=False)
+        emb_s = emb[idx]
+        lab_s = labels[idx]
+    else:
+        emb_s = emb
+        lab_s = labels
+
+    # If subsampling created singleton clusters, silhouette_score can error; guard by dropping them
+    uniq, counts = np.unique(lab_s, return_counts=True)
+    keep_clusters = set(uniq[counts >= 2].tolist())
+    keep = np.array([l in keep_clusters for l in lab_s], dtype=bool)
+    if keep.sum() < 10 or len(np.unique(lab_s[keep])) < 2:
+        return np.nan
+
+    return float(silhouette_score(emb_s[keep], lab_s[keep], metric="euclidean"))
+
+
+def _matched_random_reassignment(
+    init_labels: np.ndarray,
+    final_labels: np.ndarray,
+    rng: np.random.Generator,
+):
+    """
+    Create a randomized label vector that:
+      - keeps all UNMOVED cells fixed
+      - reassigns MOVED cells, matching the number of moved-out cells per source cluster
+      - draws destinations from the empirical destination distribution of moved cells
+
+    This tests whether CellSweep's changes improve tightness beyond "random changes of the same size".
+    """
+    assert init_labels.shape == final_labels.shape
+    n = init_labels.shape[0]
+
+    moved = (final_labels != init_labels)
+    moved_idx = np.where(moved)[0]
+    if moved_idx.size == 0:
+        return final_labels.copy()
+
+    src = init_labels[moved_idx]
+    dst = final_labels[moved_idx]
+
+    # Destination distribution among moved cells
+    K = int(max(init_labels.max(), final_labels.max())) + 1
+    dst_counts = np.bincount(dst, minlength=K).astype(np.float64)
+    dst_probs = dst_counts / np.maximum(dst_counts.sum(), 1.0)
+
+    # For each source cluster, reassign exactly the same number of moved cells
+    rand_labels = init_labels.copy()
+    for s in np.unique(src):
+        s_idx = moved_idx[src == s]
+        m = s_idx.size
+        # sample new destinations iid from dst_probs
+        new_dst = rng.choice(K, size=m, replace=True, p=dst_probs)
+        rand_labels[s_idx] = new_dst
+
+    return rand_labels
+
+def report_cellsweep_dashboard_both(
+    adata,
+    *,
+    initial_key="celltype",
+    final_key="z_hat",
+    empty_key="is_empty",
+    n_components=50,
+    sample_size=50000,
+    knn_k=30,
+    n_random=25,
+    random_state=0,
+    logger=None,
+):
+    """
+    Run the minimal dashboard on BOTH raw and denoised embeddings.
+    Returns a dict:
+      - global change stats (moved_frac, ARI, NMI)
+      - per-embedding tightness + nonrandomness summaries
+    """
+    # Run RAW
+    raw = report_cellsweep_dashboard(
+        adata,
+        initial_key=initial_key,
+        final_key=final_key,
+        empty_key=empty_key,
+        embedding_source="raw",
+        n_components=n_components,
+        sample_size=sample_size,
+        knn_k=knn_k,
+        n_random=n_random,
+        random_state=random_state,
+        logger=None,  # we'll log combined below
+    )
+
+    # Run DENOISED
+    den = report_cellsweep_dashboard(
+        adata,
+        initial_key=initial_key,
+        final_key=final_key,
+        empty_key=empty_key,
+        embedding_source="denoised",
+        n_components=n_components,
+        sample_size=sample_size,
+        knn_k=knn_k,
+        n_random=n_random,
+        random_state=random_state,
+        logger=None,
+    )
+
+    out = {
+        # global change stats (same for both)
+        "moved_frac": raw["moved_frac"],
+        "ARI": raw["ARI"],
+        "NMI": raw["NMI"],
+        "n_real": raw["n_real"],
+        "n_eval": raw["n_eval"],
+
+        # embedding-specific
+        "raw": {
+            "tightness_initial": raw["tightness_initial"],
+            "tightness_final": raw["tightness_final"],
+            "nonrandomness": raw["nonrandomness"],
+            "tightness_final_moved": raw["tightness_final_moved"],
+            "tightness_final_unmoved": raw["tightness_final_unmoved"],
+        },
+        "denoised": {
+            "tightness_initial": den["tightness_initial"],
+            "tightness_final": den["tightness_final"],
+            "nonrandomness": den["nonrandomness"],
+            "tightness_final_moved": den["tightness_final_moved"],
+            "tightness_final_unmoved": den["tightness_final_unmoved"],
+        },
+
+        "knn_k": knn_k,
+        "n_random": n_random,
+    }
+
+    if logger is not None:
+        logger.info("CellSweep minimal dashboard (real cells):")
+        logger.info(f"  moved_frac={out['moved_frac']:.4f}  ARI={out['ARI']:.4f}  NMI={out['NMI']:.4f}")
+
+        for name in ["raw", "denoised"]:
+            ti = out[name]["tightness_initial"]
+            tf = out[name]["tightness_final"]
+            nr = out[name]["nonrandomness"]
+            logger.info(f"  Tightness in {name} embedding:")
+            logger.info(
+                f"    initial: silhouette={ti['silhouette']:.4f}  "
+                f"knn_purity={ti['knn_purity']:.4f}  "
+                f"median_disp={ti['median_dispersion']:.4f}"
+            )
+            logger.info(
+                f"    final:   silhouette={tf['silhouette']:.4f}  "
+                f"knn_purity={tf['knn_purity']:.4f}  "
+                f"median_disp={tf['median_dispersion']:.4f}"
+            )
+            logger.info(
+                f"    beats_random_frac: silhouette={nr['silhouette_beats_random_frac']:.3f}  "
+                f"knn_purity={nr['knn_purity_beats_random_frac']:.3f}  "
+                f"median_dispersion={nr['median_dispersion_beats_random_frac']:.3f}"
+            )
+
+    return out
+
+def report_cellsweep_dashboard(
+    adata,
+    *,
+    initial_key: str = "celltype",
+    final_key: str = "z_hat",
+    empty_key: str = "is_empty",
+    embedding_source: str = "raw",   # "raw" uses adata.layers["raw"]; "denoised" uses adata.X
+    n_components: int = 50,
+    sample_size: int = 50000,        # tightness metrics computed on this many real cells (None => all)
+    knn_k: int = 30,
+    n_random: int = 25,
+    random_state: int = 0,
+    logger=None,
+):
+    """
+    Minimal dashboard:
+      - moved_frac, ARI, NMI (full real set)
+      - silhouette, knn_purity, median_dispersion (sampled real set)
+      - matched-random baseline distribution for tightness metrics
+
+    Returns dict with metrics + random baseline percentiles.
+    """
+
+    # ----------------------
+    # Masks and label vectors
+    # ----------------------
+    is_empty = np.asarray(adata.obs[empty_key].to_numpy(), dtype=bool)
+    real_mask = ~is_empty
+
+    init_labels_full = _to_int_labels_from_obs(adata, initial_key, real_mask)
+    final_labels_full = _final_labels_from_z_hat(adata, final_key, real_mask)
+
+    if init_labels_full.shape[0] != final_labels_full.shape[0]:
+        raise ValueError("Initial and final label vectors have different lengths on real cells.")
+
+    # ----------------------
+    # Change magnitude
+    # ----------------------
+    moved_frac = float(np.mean(init_labels_full != final_labels_full))
+    ari = float(adjusted_rand_score(init_labels_full, final_labels_full))
+    nmi = float(normalized_mutual_info_score(init_labels_full, final_labels_full))
+
+    # ----------------------
+    # Build embedding (fixed)
+    # ----------------------
+    if embedding_source == "raw":
+        X = adata.layers["raw"]
+    elif embedding_source == "denoised":
+        X = adata.X
+    else:
+        raise ValueError("embedding_source must be 'raw' or 'denoised'.")
+
+    # restrict to real cells for embedding + tightness
+    if sp.issparse(X):
+        X_real = X[real_mask, :]
+    else:
+        X_real = np.asarray(X)[real_mask, :]
+
+    emb_real = _make_embedding_from_counts(X_real, n_components=n_components, random_state=random_state)
+
+    # ----------------------
+    # Sample for tightness metrics (for speed)
+    # ----------------------
+    n_real = emb_real.shape[0]
+    rng = np.random.default_rng(random_state)
+
+    if (sample_size is not None) and (n_real > sample_size):
+        idx = rng.choice(n_real, size=sample_size, replace=False)
+    else:
+        idx = np.arange(n_real)
+
+    emb = emb_real[idx]
+    init_labels = init_labels_full[idx]
+    final_labels = final_labels_full[idx]
+
+    # ----------------------
+    # Tightness metrics (initial vs final)
+    # ----------------------
+    def tightness(emb_, labels_):
+        return {
+            "silhouette": _safe_silhouette(emb_, labels_, max_points=min(50000, emb_.shape[0]), random_state=random_state),
+            "knn_purity": _knn_purity(emb_, labels_, k=knn_k),
+            "median_dispersion": _median_dispersion(emb_, labels_),
+        }
+
+    tight_init = tightness(emb, init_labels)
+    tight_final = tightness(emb, final_labels)
+
+    # ----------------------
+    # Non-randomness baseline
+    # ----------------------
+    rand_sil = []
+    rand_pur = []
+    rand_disp = []
+
+    for t in range(n_random):
+        rand_labels = _matched_random_reassignment(init_labels, final_labels, rng)
+        tm = tightness(emb, rand_labels)
+        rand_sil.append(tm["silhouette"])
+        rand_pur.append(tm["knn_purity"])
+        rand_disp.append(tm["median_dispersion"])
+
+    rand_sil = np.asarray(rand_sil, dtype=float)
+    rand_pur = np.asarray(rand_pur, dtype=float)
+    rand_disp = np.asarray(rand_disp, dtype=float)
+
+    # Percentile (how often CellSweep beats random)
+    # Higher is better for silhouette and purity; lower is better for dispersion.
+    def pct_higher(x, dist):
+        dist = dist[np.isfinite(dist)]
+        if dist.size == 0 or not np.isfinite(x):
+            return np.nan
+        return float(np.mean(x > dist))
+
+    def pct_lower(x, dist):
+        dist = dist[np.isfinite(dist)]
+        if dist.size == 0 or not np.isfinite(x):
+            return np.nan
+        return float(np.mean(x < dist))
+
+    nonrandom = {
+        "silhouette_beats_random_frac": pct_higher(tight_final["silhouette"], rand_sil),
+        "knn_purity_beats_random_frac": pct_higher(tight_final["knn_purity"], rand_pur),
+        "median_dispersion_beats_random_frac": pct_lower(tight_final["median_dispersion"], rand_disp),
+    }
+
+    # ----------------------
+    # Moved vs unmoved subset tightness (optional but useful)
+    # ----------------------
+    moved = (final_labels != init_labels)
+    if moved.any() and (~moved).any():
+        tight_moved_final = tightness(emb[moved], final_labels[moved])
+        tight_unmoved_final = tightness(emb[~moved], final_labels[~moved])
+    else:
+        tight_moved_final = {"silhouette": np.nan, "knn_purity": np.nan, "median_dispersion": np.nan}
+        tight_unmoved_final = {"silhouette": np.nan, "knn_purity": np.nan, "median_dispersion": np.nan}
+
+    out = {
+        # Change magnitude
+        "moved_frac": moved_frac,
+        "ARI": ari,
+        "NMI": nmi,
+
+        # Tightness (initial vs final)
+        "tightness_initial": tight_init,
+        "tightness_final": tight_final,
+
+        # Random baseline + nonrandomness test
+        "random_baseline": {
+            "silhouette": rand_sil,
+            "knn_purity": rand_pur,
+            "median_dispersion": rand_disp,
+        },
+        "nonrandomness": nonrandom,
+
+        # Diagnostics
+        "n_real": int(n_real),
+        "n_eval": int(emb.shape[0]),
+        "knn_k": int(knn_k),
+        "n_random": int(n_random),
+
+        # Moved/unmoved (final)
+        "tightness_final_moved": tight_moved_final,
+        "tightness_final_unmoved": tight_unmoved_final,
+        "moved_frac_in_eval": float(np.mean(moved)),
+    }
+
+    # ----------------------
+    # Pretty logging
+    # ----------------------
+    if logger is not None:
+        logger.info("CellSweep minimal dashboard (real cells):")
+        logger.info(f"  moved_frac={out['moved_frac']:.4f}  ARI={out['ARI']:.4f}  NMI={out['NMI']:.4f}")
+        logger.info("  Tightness (eval subset; higher silhouette/purity is better, lower dispersion is better):")
+        logger.info(
+            f"    initial: silhouette={tight_init['silhouette']:.4f}  "
+            f"knn_purity={tight_init['knn_purity']:.4f}  "
+            f"median_disp={tight_init['median_dispersion']:.4f}"
+        )
+        logger.info(
+            f"    final:   silhouette={tight_final['silhouette']:.4f}  "
+            f"knn_purity={tight_final['knn_purity']:.4f}  "
+            f"median_disp={tight_final['median_dispersion']:.4f}"
+        )
+        logger.info("  Non-randomness (fraction of matched-random trials CellSweep beats):")
+        logger.info(
+            f"    silhouette={nonrandom['silhouette_beats_random_frac']:.3f}  "
+            f"knn_purity={nonrandom['knn_purity_beats_random_frac']:.3f}  "
+            f"median_dispersion={nonrandom['median_dispersion_beats_random_frac']:.3f}"
+        )
+        logger.info("  Final tightness split:")
+        logger.info(
+            f"    moved:   silhouette={tight_moved_final['silhouette']:.4f}  "
+            f"knn_purity={tight_moved_final['knn_purity']:.4f}  "
+            f"median_disp={tight_moved_final['median_dispersion']:.4f}"
+        )
+        logger.info(
+            f"    unmoved: silhouette={tight_unmoved_final['silhouette']:.4f}  "
+            f"knn_purity={tight_unmoved_final['knn_purity']:.4f}  "
+            f"median_disp={tight_unmoved_final['median_dispersion']:.4f}"
+        )
+
+    return out
+
 @njit(parallel=True, nogil=True)
 def warm_up_e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                          gamma_idx, p, N, eps, freeze_empty_mask):
@@ -295,6 +783,9 @@ def warm_up_e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
         # this is safe because each row writes to a unique slice
 
         if freeze_empty_mask[n]:
+            #-----------------------------#
+            # Non-Cellular Barcode Update #
+            #-----------------------------#
             for jj in range(rs, re):
                 g = indices[jj]        # gene index
                 val = data[jj]
@@ -315,6 +806,10 @@ def warm_up_e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 # accumulate per-row totals
                 local_A += cA
         else:
+            #--------------------------------#
+            # Cell-Containing Barcode Update #
+            #--------------------------------#
+
             b = (1.0 - beta) * (1.0 - alpha[n])
             local_gamma = 0.0
             k = gamma_idx[n]   # int in [0, K) or -1
@@ -377,7 +872,7 @@ def warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N,
 @njit(parallel=True, nogil=True)
 def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                  gamma_idx, p, K, N, eps, log_eps, freeze_empty_mask,
-                 freeze_ambient_profile, fixed_celltype,
+                 freeze_ambient_profile,
                  exclude_from_p_update,
                  p_numer_tls, a_numer_tls, done):
     """
@@ -415,6 +910,9 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
         # this is safe because each row writes to a unique slice
 
         if freeze_empty_mask[n]:
+            #-----------------------------#
+            # Non-Cellular Barcode Update #
+            #-----------------------------#
             for jj in range(rs, re):
                 g = indices[jj]        # gene index
                 val = data[jj]
@@ -444,6 +942,9 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                 local_M += cM
                 local_ll += val * np.log(np.maximum(p_tot, log_eps))
         else:
+            #--------------------------------#
+            # Cell-Containing Barcode Update #
+            #--------------------------------#
             b = (1.0 - beta) * (1.0 - alpha[n])
             local_gamma = 0.0
             k = gamma_idx[n]   # int in [0, K) or -1
@@ -483,7 +984,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
             
             numer_gamma[n] = local_gamma
 
-            # ---------- HARD REASSIGNMENT (CEM) ----------
+            # ---------- HARD CELLTYPE REASSIGNMENT ----------#
             if not allow_p_update:
                 best_k = k
                 best_ll = -1e300
@@ -502,6 +1003,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                         best_ll = llk
                         best_k = kk
                 
+                # Reassign Cell-type
                 gamma_idx[n] = best_k
 
         # write back per-row numbers
@@ -516,7 +1018,7 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
     return ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row
 
 def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap, 
-              max_iter, tol, min_tol, tol_p, tol_f, freeze_empty, fixed_celltype, real_mask, 
+              max_iter, tol, min_tol, tol_p, tol_f, freeze_empty, real_mask, 
               eps, dirichlet_lambda, repulsion_strength, max_frac_gene_repulsion,
               log_eps, verbose, logger, freeze_ambient_profile, debug):
     
@@ -580,12 +1082,10 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         p_numer_tls = np.zeros((nthreads, K, G), dtype=np.float64)
         a_numer_tls = np.zeros((nthreads, G), dtype=np.float64)
 
-        fixed_celltype = not ll_converged
-
         ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row = e_step_numba(
             indptr=indptr, indices=indices, data=data, alpha=alpha, beta=beta, a=a, m_global=m_global,
             gamma_idx=gamma_idx, p=p, K=K, N=N, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask,
-            freeze_ambient_profile=freeze_ambient_profile, fixed_celltype=fixed_celltype,
+            freeze_ambient_profile=freeze_ambient_profile,
             exclude_from_p_update = exclude_from_p_update,
             p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, done=done
         )
@@ -617,7 +1117,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
             # Apply cap to all (non-empty) cells in stage 1
             alpha = np.minimum(alpha, alpha_cap)
         else:
-            # Stage 2: allow full alpha and allow everyone to update p_k
+            # Stage 2: allow full alpha
             exclude_from_p_update[:] = False
 
         # update beta
@@ -644,7 +1144,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
             repel_lambda_k = repulsion_strength * cluster_mass  # (K,) pseudo-counts per cluster
 
             sub = repel_lambda_k[:, None] * a[None, :]          # (K,G)
-            sub_cap = max_frac_gene_repulsion * p                         # (K,G), e.g. 0.2 * p
+            sub_cap = max_frac_gene_repulsion * p               # (K,G), e.g. 0.2 * p
             sub = np.minimum(sub, sub_cap)
 
             p = p - sub
@@ -762,7 +1262,6 @@ def denoise_count_matrix(
     max_frac_gene_repulsion: Annotated[float, Field(gt=0, le=1)] = 0.2,
     integer_out: bool = False,
     threads: Annotated[int, Field(gt=0)] = 1,
-    fixed_celltype: bool = True,
     freeze_empty: bool = True,
     freeze_ambient_profile: bool = True,
     empty_droplet_method: str = "threshold",
@@ -851,9 +1350,6 @@ def denoise_count_matrix(
 
     threads : int, default 1
         number of numba threads
-
-    fixed_celltype : bool, default False
-        If True, keeps cell-type assignments fixed during EM updates.
 
     freeze_empty : bool, default True
         If True, does not attempt to reestimate the percent contamination of empty droplets from 100%
@@ -1047,7 +1543,7 @@ def denoise_count_matrix(
 
     logger.info(f"Performing Sparse EM with {numba.get_num_threads()} Numba thread(s)")
     em_dict = sparse_em(C=C, alpha=alpha, beta=beta, a=a, u=u, m_global=m_global, gamma_idx=gamma_idx, p=p, K=K, N=N, G=G, alpha_cap=alpha_cap,
-                        max_iter=max_iter, tol=tol, min_tol=min_tol, tol_p=tol_p, tol_f=tol_f, freeze_empty=freeze_empty, fixed_celltype=fixed_celltype, 
+                        max_iter=max_iter, tol=tol, min_tol=min_tol, tol_p=tol_p, tol_f=tol_f, freeze_empty=freeze_empty,
                         real_mask=real_mask, eps=eps, dirichlet_lambda=dirichlet_lambda, repulsion_strength= repulsion_strength, max_frac_gene_repulsion=max_frac_gene_repulsion,
                         log_eps=log_eps, verbose=verbose, logger=logger, freeze_ambient_profile=freeze_ambient_profile, debug=debug)
 
@@ -1101,5 +1597,18 @@ def denoise_count_matrix(
         adata.write_h5ad(adata_out)
     else:
         logger.warning("adata_out not specified; not saving inferred adata to a file.")
+
+    report_cellsweep_dashboard_both(
+        adata,
+        initial_key="celltype",
+        final_key="z_hat",
+        empty_key="is_empty",
+        n_components=50,
+        sample_size=50000,
+        knn_k=30,
+        n_random=25,
+        random_state=random_state or 0,
+        logger=logger,
+    )
 
     return adata
