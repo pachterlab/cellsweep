@@ -69,14 +69,14 @@ for plate in plates:
 #     adata_raw_dict[plate] = ad.read_h5ad(os.path.join(data_dir, plate, "raw_counts.h5ad"))
 
 expected_cells = {
-    'igvf_003': 639885,
-    'igvf_004': 745458,
-    'igvf_005': 694748,
-    'igvf_007': 786528,
-    'igvf_008b': 504134,
-    'igvf_009': 641097,
-    'igvf_010': 659512,
-    'igvf_011': 721541
+    'igvf_003': 643226,
+    'igvf_004': 679838,
+    'igvf_005': 722870,
+    'igvf_007': 879650,
+    'igvf_008b': 606911,
+    'igvf_009': 772261,
+    'igvf_010': 844946,
+    'igvf_011': 806290
 }
 
 adata_cellsweep_dict = {}

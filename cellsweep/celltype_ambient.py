@@ -1,23 +1,24 @@
 """Denoising count matrices using a Multinomial Mixture Model."""
 
+import gc
 import os
+from datetime import datetime
+from typing import Annotated, Optional
+
+import anndata as ad
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import logging
-from datetime import datetime
-import anndata as ad
 import scipy.sparse as sp
-from pydantic import validate_call, Field, ConfigDict
-import numba
-from numba import njit, prange, get_num_threads, get_thread_id
-from typing import Annotated, Optional, Tuple
-from .utils import setup_logger, load_adata, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, determine_cell_types  # , plot_cellsweep_likelihood_over_epochs
-import matplotlib.pyplot as plt
 import seaborn as sns
-import gc
+from numba import get_num_threads, set_num_threads, get_thread_id, njit, prange
+from pydantic import ConfigDict, Field, validate_call
 from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, silhouette_score
 from sklearn.neighbors import NearestNeighbors
+
+from .utils import determine_cell_types, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, load_adata, plot_cellsweep_likelihood_over_epochs, setup_logger
+
 
 #* Take the mean expression of each gene across all cells of a given cell type, and normalize to sum to 1.
 def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
@@ -188,8 +189,8 @@ def plot_epoch(a_history, p_history, m, epoch, max_G_to_plot=1000):
 
 
 def interactive_distribution_viewer(a_history, p_history, m, max_G_to_plot=1000):
-    from ipywidgets import IntSlider, VBox, Output
     from IPython.display import display
+    from ipywidgets import IntSlider, Output, VBox
     """
     Create an interactive viewer that shows epoch slider and redraws plots into a single Output widget.
     """
@@ -1424,7 +1425,7 @@ def denoise_count_matrix(
     from cellsweep import __version__
 
     # set thread number
-    numba.set_num_threads(threads)
+    set_num_threads(threads)
     
     logger = setup_logger(log_file=log_file, verbose=verbose, quiet=quiet)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1548,7 +1549,7 @@ def denoise_count_matrix(
     p = p.astype(np.float32)
     C = C.astype(np.float32)
 
-    logger.info(f"Performing Sparse EM with {numba.get_num_threads()} Numba thread(s)")
+    logger.info(f"Performing Sparse EM with {get_num_threads()} Numba thread(s)")
     em_dict = sparse_em(C=C, alpha=alpha, beta=beta, a=a, u=u, m_global=m_global, gamma_idx=gamma_idx, p=p, K=K, N=N, G=G, alpha_cap=alpha_cap,
                         max_iter=max_iter, tol=tol, min_tol=min_tol, tol_p=tol_p, tol_f=tol_f, freeze_empty=freeze_empty,
                         real_mask=real_mask, eps=eps, dirichlet_lambda=dirichlet_lambda, repulsion_strength= repulsion_strength, max_frac_gene_repulsion=max_frac_gene_repulsion,
