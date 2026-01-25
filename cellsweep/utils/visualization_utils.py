@@ -15,6 +15,7 @@ from matplotlib.scale import SymmetricalLogScale
 import matplotlib.patheffects as pe
 import matplotlib.cm as cm
 from matplotlib.colors import LogNorm
+from matplotlib.lines import Line2D
 import seaborn as sns
 import scanpy as sc
 from sklearn.metrics.pairwise import cosine_similarity
@@ -742,7 +743,7 @@ def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, cl
     if os.path.exists("figures"):
         os.rmdir("figures")
 
-def plot_histogram(data, data_type="matrix", log_scale=False, title=None):
+def plot_histogram_simulation(data, data_type="matrix", log_scale=False, title=None):
     if sparse.issparse(data):
         if data_type == "matrix":
             # non-zero entries only
@@ -2468,7 +2469,7 @@ def subplot_section(ax, xx, yy, cc = None, val = None, cmap = None) :
     ax.set_xticks([])
     ax.set_yticks([])
 
-def plot_merfish(adata, example_section, cc = None, val = None, fig_width = 5, fig_height = 5, cmap = None, title = None, suptitle = None, out_path = None, show = True) :
+def plot_merfish(adata, example_section, cc = None, val = None, fig_width = 5, fig_height = 5, cmap = None, title = None, suptitle = None, value_to_color = None, out_path = None, show = True) :
     
     fig, ax = plt.subplots(1, 1)
     fig.set_size_inches(fig_width, fig_height)
@@ -2480,6 +2481,26 @@ def plot_merfish(adata, example_section, cc = None, val = None, fig_width = 5, f
         subplot_section(ax, section['x'], section['y'], val=section[val], cmap=cmap)
     elif cc is not None :
         subplot_section(ax, section['x'], section['y'], section[cc])
+        if value_to_color is not None:            
+            legend_elements = [
+                Line2D(
+                    [0], [0],
+                    marker='o',
+                    color='w',
+                    label=str(value),
+                    markerfacecolor=color,
+                    markersize=6
+                )
+                for value, color in value_to_color.items()
+            ]
+
+            ax.legend(
+                handles=legend_elements,
+                title=cc,                      # or something more descriptive
+                loc="center left",
+                bbox_to_anchor=(1.02, 0.5),
+                frameon=False
+            )
     if title is None:
         title = example_section
     ax.set_title(title)

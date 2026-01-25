@@ -1275,6 +1275,7 @@ def denoise_count_matrix(
     random_state: Optional[Annotated[int, Field(ge=0)]] = 42,
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
+    copy_anndata: bool = True,
     log_file: Optional[str] = None,
     cluster_dashboard: bool = False,
     debug: bool = False,
@@ -1389,6 +1390,9 @@ def denoise_count_matrix(
 
     quiet : bool, default False
         Suppresses most log output when True.
+    
+    copy_anndata : bool, default True
+        if adata is an Anndata object, then copy it to avoid modifying the input in-place.
 
     log_file : str | None, default None
         Optional path to save EM iteration logs.
@@ -1431,7 +1435,7 @@ def denoise_count_matrix(
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     logger.info(f"Starting cellsweep denoising at {timestamp}, cellsweep version {__version__}")
 
-    adata = load_adata(adata, logger=logger)
+    adata = load_adata(adata, logger=logger, copy_anndata=copy_anndata)
     if "celltype" not in adata.obs.columns:
         raise KeyError("adata.obs must have column celltype.")
 
@@ -1450,7 +1454,7 @@ def denoise_count_matrix(
                                        verbose=verbose, quiet=quiet, logger=logger)
             
     num_empty_droplets = adata.obs["is_empty"].sum()
-    RECOMMENDED_MIN_EMPTY_DROPLETS = 1000
+    RECOMMENDED_MIN_EMPTY_DROPLETS = 10_000
     if num_empty_droplets == 0:
         logger.warning("No empty droplets found. Setting freeze_ambient_profile=False. Ambient profile estimation may be unreliable.")
         freeze_ambient_profile = False
