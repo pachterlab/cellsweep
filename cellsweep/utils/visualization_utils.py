@@ -2428,11 +2428,18 @@ def plot_multiple_kdes(expr_list, labels=None, colors=None, gene_name=None, log=
     plt.show()
 
 
-def plot_histogram(adata, col, title=None, bins=100, filter_empty=True, ylog=False, out_path=None, show=True):
-    if filter_empty and "is_empty" in adata.obs.columns:
-        data = adata.obs.loc[~adata.obs["is_empty"], col]
+def plot_histogram(adata, col, adata_df="obs", title=None, bins=100, filter_empty=True, ylog=False, out_path=None, show=True):
+    if adata_df == "obs":
+        if filter_empty and "is_empty" in adata.obs.columns:
+            data = adata.obs.loc[~adata.obs["is_empty"], col]
+        else:
+            data = adata.obs[col]
+    elif adata_df == "var":
+        data = adata.var[col]
+    elif adata_df == "uns":
+        data = adata.uns[col]
     else:
-        data = adata.obs[col]
+        raise ValueError("adata_df argument not recognized. Valid values are obs, var, or uns.")
     plt.figure(figsize=(8,6))
     plt.hist(data, bins=bins, color='blue', alpha=0.7)
     if title:
