@@ -1096,6 +1096,8 @@ def plot_cross_species_histogram(adata, processed_name="processed", histogram_va
 
         mouse_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"], bins=100)
         human_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"], bins=100)
+
+        ax.set_title(f"Cross-species Gene Counts per Cell in {processed_name} Data")
     
     elif histogram_values == "genes":
         if "counts_in_human" not in adata.var.columns or "counts_in_mouse" not in adata.var.columns:
@@ -1134,6 +1136,8 @@ def plot_cross_species_histogram(adata, processed_name="processed", histogram_va
 
         mouse_auc = histogram_auc(adata.var.loc[is_human_gene, "counts_in_mouse"], bins=100)
         human_auc = histogram_auc(adata.var.loc[is_mouse_gene, "counts_in_human"], bins=100)
+
+        ax.set_title(f"Cross-species Cell Counts per Gene in {processed_name} Data")
     else:
         raise ValueError("histogram_values must be either 'cells' or 'genes'")
 
@@ -1143,7 +1147,6 @@ def plot_cross_species_histogram(adata, processed_name="processed", histogram_va
     ax.set_xlabel("Cross-species counts")
     ax.set_ylabel("Frequency")
     ax.set_yscale("log")
-    ax.set_title(f"Cross-species Gene Counts in {processed_name} Data")
     ax.legend(title="Genome", loc="upper right")
 
     if out_path:
