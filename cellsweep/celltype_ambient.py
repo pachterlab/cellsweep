@@ -1449,6 +1449,15 @@ def denoise_count_matrix(
                                        empty_droplet_method=empty_droplet_method,
                                        verbose=verbose, quiet=quiet, logger=logger)
             
+    num_empty_droplets = adata.obs["is_empty"].sum()
+    RECOMMENDED_MIN_EMPTY_DROPLETS = 1000
+    if num_empty_droplets == 0:
+        logger.warning("No empty droplets found. Setting freeze_ambient_profile=False. Ambient profile estimation may be unreliable.")
+        freeze_ambient_profile = False
+    elif num_empty_droplets < RECOMMENDED_MIN_EMPTY_DROPLETS:
+        logger.warning(f"Number of empty droplets ({num_empty_droplets}) is less than the recommended minimum ({RECOMMENDED_MIN_EMPTY_DROPLETS}). "
+                       "Ambient profile estimation may be unreliable.")
+    
     adata.layers["raw"] = adata.X
     C = adata.X
     N, G = C.shape

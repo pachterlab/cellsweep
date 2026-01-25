@@ -181,8 +181,8 @@ def load_adata(adata, multiple_anndatas=False, merge_multiple_adatas=False, back
         else:
             raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file, an .h5 file, a matrix-containing directory, or an AnnData object.")
     elif isinstance(adata, ad.AnnData):
-        pass
-        # adata = adata.copy()
+        # pass
+        adata = adata.copy()
     else:
         raise ValueError(f"Invalid adata input {adata!r}. Expected a path to an .h5ad file, an .h5 file, a matrix-containing directory, or an AnnData object.")
     return adata
