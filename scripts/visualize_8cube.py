@@ -99,6 +99,9 @@ try:
             print(f"  File {adata_cellbender_path} does not exist, skipping...")
             continue
         adata_cellbender = ad.read_h5ad(adata_cellbender_path)
+
+        if "Subpool" in adata_cellbender.obs_names[0]:
+            adata_cellbender.obs_names = adata_cellbender.obs_names.str.replace("Subpool", "Sublibrary", regex=False)
         
         if custom_markers is not None and len(custom_markers) > 0 and gene_name_to_id is None:
             if "gene_name" not in adata_cellbender.var.columns or "gene_id" not in adata_cellbender.var.columns or adata_cellbender.var["gene_name"].str.startswith("ENSMUSG").all() or not adata_cellbender.var["gene_id"].str.startswith("ENSMUSG").all():

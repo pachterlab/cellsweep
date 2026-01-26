@@ -716,6 +716,8 @@ def make_raw_and_processed_dotplots(adata_raw, adata_processed, marker_genes, cl
     if adata_raw is None or adata_processed is None:
         print("One of the adatas is None, skipping dotplot generation.")
         return
+    
+    adata_raw, adata_processed = adata_raw.copy(), adata_processed.copy()
 
     common_cells = adata_raw.obs_names.intersection(adata_processed.obs_names)
     adata_raw_only_cellbender_cells = adata_raw[common_cells].copy()
@@ -1848,6 +1850,7 @@ def plot_knee_multi(
 
     # ---- Generate curves ----
     for adata, label, color in zip(adata_list, labels, colors):
+        adata = adata.copy()
 
         if filter_empty:
             if "is_empty" in adata.obs.columns:

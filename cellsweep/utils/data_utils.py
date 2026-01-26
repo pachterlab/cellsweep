@@ -42,6 +42,8 @@ def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, 
     logger = setup_logger(verbose=verbose, quiet=quiet)
     logger.info(f"Adata initial shape: {adata.shape}")
 
+    adata = adata.copy()
+
     #* empty droplet filtering
     if filter_empty_droplets:
         logger.info(f"Filtering empty droplets using 'infer_empty_droplets' function with method 'threshold'. This is done by calculating the total UMI counts for each cell and removing those that fall below a certain threshold, which helps to eliminate empty droplets that do not contain any cells.")
