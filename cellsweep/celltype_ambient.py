@@ -1265,7 +1265,7 @@ def denoise_count_matrix(
     threads: Annotated[int, Field(gt=0)] = 1,
     freeze_empty: bool = True,
     freeze_ambient_profile: bool = True,
-    empty_droplet_method: str = "threshold",
+    empty_droplet_method: Optional[str] = "threshold",
     umi_cutoff: Optional[Annotated[int, Field(ge=0)]] = None,
     expected_cells: Optional[Annotated[int, Field(ge=0)]] = None,
     tol: Annotated[float, Field(gt=0)] = 1e-3,
@@ -1439,8 +1439,6 @@ def denoise_count_matrix(
     if "celltype" not in adata.obs.columns:
         raise KeyError("adata.obs must have column celltype.")
 
-    logger.info(f"Number of celltypes: {adata.obs['celltype'].nunique()}")
-
     # ensure empty droplets are present
     if "is_empty" not in adata.obs.columns:
         logger.info("Inferring empty droplets.")
@@ -1480,6 +1478,8 @@ def denoise_count_matrix(
     is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
     real_mask = ~is_empty
     Nr = real_mask.sum()
+
+    logger.info(f"Number of celltypes: {adata.obs.loc[real_mask, 'celltype'].nunique()}")
 
     # count parameters
     if freeze_ambient_profile:
