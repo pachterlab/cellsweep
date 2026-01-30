@@ -16,6 +16,7 @@ import matplotlib.patheffects as pe
 import matplotlib.cm as cm
 from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
+from scipy.ndimage import gaussian_filter1d
 import seaborn as sns
 import scanpy as sc
 from sklearn.metrics.pairwise import cosine_similarity
@@ -198,7 +199,7 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
     else:
         plt.close()
 
-def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", minimum=0.5, point_type="matrix", title=None, density_type="scatter_with_density", alpha=0.6, cmap='viridis', label_to_scatter_location_dict=None, x_axis='adata1', y_axis='adata2', calculate_mse_vertical=False, out_path=None, show=True):
+def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", minimum=0.5, point_type="matrix", title=None, density_type="scatter_with_density", alpha=0.6, cmap='viridis', label_to_scatter_location_dict=None, x_axis='adata1', y_axis='adata2', calculate_mse_vertical=False, tick_labelsize=None, out_path=None, show=True):
     # -------------------------
     # 1. Match cells + genes
     # -------------------------
@@ -406,6 +407,8 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", minimum
     ax.set_title(title, fontsize=14, fontweight='bold')
     ax.set_aspect('equal')
     ax.grid(True, alpha=0.3)
+    if tick_labelsize is not None:
+        ax.tick_params(axis='both', which='major', labelsize=tick_labelsize)
 
     plt.tight_layout()
     if out_path is not None:
@@ -1055,51 +1058,95 @@ def plot_multi_histogram(df1, df2, plotting_column, df1_name="df1", df2_name="df
     else:
         plt.show()
 
-def plot_cross_species_histogram(adata, processed_name="processed", histogram_values="cells", doublet_cell_set=None, human_prefix="hg19_", mouse_prefix="mm10_", out_path=None, show=True):
+def plot_cross_species_histogram(adata, adata_raw=None, processed_name="processed", histogram_values="cells", doublet_cell_set=None, human_prefix="hg19_", mouse_prefix="mm10_", xmax=None, kind="smooth", plot_legend=True, title=True, out_path=None, show=True):
     if adata is None:
         return
 
-    if "human_counts_total" not in adata.obs.columns or "mouse_counts_total" not in adata.obs.columns:
-        adata = identify_human_and_mouse_cells(adata, human_prefix=human_prefix, mouse_prefix=mouse_prefix)
+    adata = adata.copy()
+    if adata_raw is not None:
+        adata_raw = adata_raw.copy()
     
     if isinstance(doublet_cell_set, set):  # remove doublets if provided
         adata = adata[~adata.obs_names.isin(doublet_cell_set)].copy()
+        if adata_raw is not None:
+            adata_raw = adata_raw[~adata_raw.obs_names.isin(doublet_cell_set)].copy()
+
 
     fig, ax = plt.subplots(figsize=(6, 4))
 
+    def plot_histplot(data, x, color, label, kind):
+        if kind == "histogram":
+            sns.histplot(
+                data=data,
+                x=x,
+                bins=100,
+                alpha=0.6,
+                linewidth=1.5,
+                color=color,
+                element="step",
+                fill=False,
+                ax=ax,
+                label=label
+            )
+        elif kind == "smooth":
+            counts, bin_edges = np.histogram(data[x].dropna(), bins=100)
+            bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+            counts_smooth = gaussian_filter1d(counts, sigma=2)
+            ax.plot(bin_centers, counts_smooth, color=color, linewidth=2, label=label)
+        else:
+            raise ValueError("kind must be either 'histogram' or 'smooth'")
+
     if histogram_values == "cells":
-        # --- Mouse cells: plotting human_counts_total in blue ---
-        sns.histplot(
-            data=adata.obs[adata.obs["genome"] == "mm10"],
-            x="human_counts_total",
-            bins=100,
-            alpha=0.6,
-            linewidth=1.5,
-            color="#0047b3",
-            element="step",
-            fill=False,
-            ax=ax,
-            label="Mouse cell human gene contamination"
-        )
+        if adata_raw is not None:
+            if "human_counts_total" not in adata_raw.obs.columns or "mouse_counts_total" not in adata_raw.obs.columns:
+                adata_raw = identify_human_and_mouse_cells(adata_raw, human_prefix=human_prefix, mouse_prefix=mouse_prefix)
+            
+            # --- Human cells: plotting mouse_counts_total in gray ---
+            plot_histplot(
+                data=adata_raw.obs[adata_raw.obs["genome"] == "hg19"],
+                x="mouse_counts_total",
+                color="#ffd1a6",
+                label="mouse_raw",
+                kind=kind
+            )
+            
+            plot_histplot(
+                data=adata_raw.obs[adata_raw.obs["genome"] == "mm10"],
+                x="human_counts_total",
+                color="#a6c8ff",
+                label="human_raw",
+                kind=kind
+            )
+
+        if "human_counts_total" not in adata.obs.columns or "mouse_counts_total" not in adata.obs.columns:
+            adata = identify_human_and_mouse_cells(adata, human_prefix=human_prefix, mouse_prefix=mouse_prefix)
 
         # --- Human cells: plotting mouse_counts_total in gray ---
-        sns.histplot(
+        plot_histplot(
             data=adata.obs[adata.obs["genome"] == "hg19"],
             x="mouse_counts_total",
-            bins=100,
-            alpha=0.6,
-            linewidth=1.5,
             color="#cc5500",
-            element="step",
-            fill=False,
-            ax=ax,
-            label="Human cell mouse gene contamination"
+            label=f"mouse_{processed_name}",
+            kind=kind
         )
+
+        # --- Mouse cells: plotting human_counts_total in blue ---
+        plot_histplot(
+            data=adata.obs[adata.obs["genome"] == "mm10"],
+            x="human_counts_total",
+            color="#0047b3",
+            label=f"human_{processed_name}",
+            kind=kind
+        )
+
+        if xmax:
+            ax.set_xlim(0, xmax)
 
         mouse_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "mm10", "human_counts_total"], bins=100)
         human_auc = histogram_auc(adata.obs.loc[adata.obs["genome"] == "hg19", "mouse_counts_total"], bins=100)
 
-        ax.set_title(f"Cross-species Gene Counts per Cell in {processed_name} Data")
+        if title is True:
+            title = f"Cross-species Gene Counts per Cell in {processed_name} Data"
     
     elif histogram_values == "genes":
         if "counts_in_human" not in adata.var.columns or "counts_in_mouse" not in adata.var.columns:
@@ -1109,37 +1156,52 @@ def plot_cross_species_histogram(adata, processed_name="processed", histogram_va
         is_mouse_gene = adata.var_names.str.startswith(mouse_prefix)
 
         # --- Mouse cells: plotting human_counts_total in blue ---
-        sns.histplot(
+        plot_histplot(
             data=adata.var.loc[is_human_gene],
             x="counts_in_mouse",
-            bins=100,
-            alpha=0.6,
-            linewidth=1.5,
             color="#0047b3",
-            element="step",
-            fill=False,
-            ax=ax,
-            label="Human genes in mouse cells"
+            label=f"Human genes in mouse cells {processed_name}",
+            kind=kind
         )
 
         # --- Human cells: plotting mouse_counts_total in gray ---
-        sns.histplot(
+        plot_histplot(
             data=adata.var.loc[is_mouse_gene],
             x="counts_in_human",
-            bins=100,
-            alpha=0.6,
-            linewidth=1.5,
             color="#cc5500",
-            element="step",
-            fill=False,
-            ax=ax,
-            label="Mouse genes in human cells"
+            label=f"Mouse genes in human cells {processed_name}",
+            kind=kind
         )
+        
+        if adata_raw is not None:
+            if "counts_in_human" not in adata_raw.var.columns or "counts_in_mouse" not in adata_raw.var.columns:
+                adata_raw = identify_human_and_mouse_gene_counts(adata_raw)
+
+            plot_histplot(
+                data=adata_raw.var.loc[is_human_gene],
+                x="counts_in_mouse",
+                color="#a6c8ff",
+                label="Human genes in mouse cells raw",
+                kind=kind
+            )
+
+            # --- Human cells: plotting mouse_counts_total in gray ---
+            plot_histplot(
+                data=adata_raw.var.loc[is_mouse_gene],
+                x="counts_in_human",
+                color="#ffd1a6",
+                label="Mouse genes in human cells raw",
+                kind=kind
+            )
+
+        if xmax:
+            ax.set_xlim(0, xmax)
 
         mouse_auc = histogram_auc(adata.var.loc[is_human_gene, "counts_in_mouse"], bins=100)
         human_auc = histogram_auc(adata.var.loc[is_mouse_gene, "counts_in_human"], bins=100)
 
-        ax.set_title(f"Cross-species Cell Counts per Gene in {processed_name} Data")
+        if title is True:
+            title = f"Cross-species Cell Counts per Gene in {processed_name} Data"
     else:
         raise ValueError("histogram_values must be either 'cells' or 'genes'")
 
@@ -1149,7 +1211,10 @@ def plot_cross_species_histogram(adata, processed_name="processed", histogram_va
     ax.set_xlabel("Cross-species counts")
     ax.set_ylabel("Frequency")
     ax.set_yscale("log")
-    ax.legend(title="Genome", loc="upper right")
+    if title:
+        ax.set_title(title)
+    if plot_legend:
+        ax.legend(loc="upper right")
 
     if out_path:
         plt.savefig(out_path, dpi=300, bbox_inches="tight")
@@ -1198,11 +1263,11 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
         df = pd.DataFrame({
             "x": np.concatenate([human_raw, human_processed]),
             "y": np.concatenate([mouse_raw, mouse_processed]),
-            "group": (["raw"] * len(human_raw)) + (["processed"] * len(human_processed))
+            "group": (["raw"] * len(human_raw)) + ([processed_name] * len(human_processed))
         })
         palette = {
             "raw": "#a6c8ff",         # light blue
-            "processed": "#0047b3",   # dark blue
+            processed_name: "#0047b3",   # dark blue
         }
     elif marginal_color_number == 4:
         if genome_column not in adata_raw.obs.columns or genome_column not in adata_processed.obs.columns:
@@ -1211,7 +1276,7 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
         genomes_raw = adata_raw.obs[genome_column].values
         genomes_processed = adata_processed.obs[genome_column].values
         genomes = np.concatenate([genomes_raw, genomes_processed])
-        raw_processed = (["raw"] * len(human_raw) + ["processed"] * len(human_processed))
+        raw_processed = (["raw"] * len(human_raw) + [processed_name] * len(human_processed))
         
         if x_axis in {"human_counts_total", "mouse_counts_total"} and y_axis in {"human_counts_total", "mouse_counts_total"}:
             df = pd.DataFrame({
@@ -1229,9 +1294,9 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
 
         palette = {
             f"{x_name}_raw": "#a6c8ff",         # light blue
-            f"{x_name}_processed": "#0047b3",   # dark blue
+            f"{x_name}_{processed_name}": "#0047b3",   # dark blue
             f"{y_name}_raw": "#ffd1a6",         # light orange
-            f"{y_name}_processed": "#cc5500",   # dark orange
+            f"{y_name}_{processed_name}": "#cc5500",   # dark orange
         }
 
     else:
@@ -1271,8 +1336,8 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
             return "lower left"
     
     legend_loc = choose_legend_location(df["x"].values, df["y"].values)
-    if legend_title is None:
-        legend_title = processed_name
+    # if legend_title is None:
+    #     legend_title = processed_name
 
     # --- Create JointGrid ---
     g = sns.JointGrid(
@@ -2177,7 +2242,7 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     Yr_bin = (Yr > 0).astype(int).tocsr()
     Yt_bin = (Yt > 0).astype(int).tocsr()
 
-    def calculate_dataframes(Yt_bin, Yp_bin):
+    def calculate_dataframes(Yt_bin, Yp_bin, Yt=None, Yp=None, calculate_mse=True):
         n_cells, n_genes = Yp_bin.shape
 
         # ---------- Compute Confusion Components ----------
@@ -2245,11 +2310,11 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
 
         return per_cell_df, global_metrics
 
-    per_cell_df, global_metrics = calculate_dataframes(Yt_bin, Yp_bin)
+    per_cell_df, global_metrics = calculate_dataframes(Yt_bin, Yp_bin, Yt=Yt, Yp=Yp, calculate_mse=calculate_mse)
 
     per_cell_df_raw = None
     if tool != "raw":  # (Yr_bin != Yp_bin).nnz != 0:  # working with non-raw
-        per_cell_df_raw, _ = calculate_dataframes(Yt_bin, Yr_bin)
+        per_cell_df_raw, _ = calculate_dataframes(Yt_bin, Yr_bin, Yt=Yt, Yp=Yr, calculate_mse=calculate_mse)
 
     print(f"{tool} Global sensitivity: {global_metrics['sensitivity']:.4f}")
     plot_raw_and_processed_histogram(per_cell_df["sensitivity"], "sensitivity", raw_values=per_cell_df_raw["sensitivity"], tool=tool, hist_type=hist_type, out_path=f"{out_base}_sensitivity.png" if out_base else None, show=show)
@@ -2435,7 +2500,7 @@ def plot_multiple_kdes(expr_list, labels=None, colors=None, gene_name=None, log=
     plt.show()
 
 
-def plot_histogram(adata, col, adata_df="obs", title=None, bins=100, filter_empty=True, ylog=False, out_path=None, show=True):
+def plot_histogram(adata, col, adata_df="obs", title=None, bins=100, filter_empty=True, ylog=False, kind="pdf", yvals="count", out_path=None, show=True):
     if adata_df == "obs":
         if filter_empty and "is_empty" in adata.obs.columns:
             data = adata.obs.loc[~adata.obs["is_empty"], col]
@@ -2448,7 +2513,37 @@ def plot_histogram(adata, col, adata_df="obs", title=None, bins=100, filter_empt
     else:
         raise ValueError("adata_df argument not recognized. Valid values are obs, var, or uns.")
     plt.figure(figsize=(8,6))
-    plt.hist(data, bins=bins, color='blue', alpha=0.7)
+
+    if kind not in ("pdf", "cdf"):
+        raise ValueError("kind must be 'pdf' or 'cdf'")
+    if yvals not in ("count", "fraction"):
+        raise ValueError("yvals must be 'count' or 'fraction'")
+
+    if yvals == "fraction":
+        ylog = False
+    
+    if kind == "pdf":
+        density = True if yvals == "fraction" else False
+        plt.hist(
+            data,
+            bins=bins,
+            density=density,
+            cumulative=False,
+            color="blue",
+            alpha=0.7,
+        )
+        y_label = "Number of Cells" if yvals == "count" else "Fraction of Cells"
+    elif kind == "cdf":
+        x = np.sort(data.values)
+        if yvals == "fraction":
+            y = np.arange(1, len(x) + 1) / len(x)
+        else:  # count
+            y = np.arange(1, len(x) + 1)
+        plt.plot(x, y, color="blue")
+        y_label = "Cumulative Number of Cells" if yvals == "count" else "Cumulative Fraction of Cells"
+
+    plt.ylabel(y_label)
+
     if title:
         plt.title(title)
     if ylog:
@@ -2463,8 +2558,7 @@ def plot_histogram(adata, col, adata_df="obs", title=None, bins=100, filter_empt
     else:
         plt.close()
 
-def subplot_section(ax, xx, yy, cc = None, val = None, cmap = None) :
-    
+def subplot_section(ax, xx, yy, cc = None, val = None, cmap = None):
     if cmap is not None :
         ax.scatter(xx, yy, s=0.5, c=val, marker='.', cmap=cmap)
     elif cc is not None :
@@ -2611,8 +2705,8 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                                         x = x if x > 0.5 else 0.5
                                         y = y if y > 0.5 else 0.5
 
-                                        x = np.log2(x)
-                                        y = np.log2(y)
+                                        # x = np.log2(x)
+                                        # y = np.log2(y)
 
                                         if marker.startswith("ENSMUSG"):
                                             marker = gene_name_to_id[marker]  # gene ID --> symbol
@@ -2642,183 +2736,272 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                         if not os.path.exists(out_path) or overwrite:
                             plot_matrix_scatterplot(adata1=ad_proc_sub.var["total_counts"], adata2=ad_raw_sub.var["total_counts"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict, scale="log", point_type="custom", title=f"Gene counts", density_type="scatter_with_kde", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
 
-                    #* Unique tissue-leiden combinations in the raw AnnData
-                    for leiden in adata_raw_tissue.obs["leiden"].dropna().drop_duplicates().values:
-                        ad_raw_sub = adata_raw_tissue[(adata_raw_tissue.obs['leiden'] == leiden)].copy()
-                        ad_proc_sub = adata_processed_tissue[(adata_processed_tissue.obs['leiden'] == leiden)].copy()
-                        if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
-                            continue
+                    # #* Unique tissue-leiden combinations in the raw AnnData
+                    # for leiden in adata_raw_tissue.obs["leiden"].dropna().drop_duplicates().values:
+                    #     ad_raw_sub = adata_raw_tissue[(adata_raw_tissue.obs['leiden'] == leiden)].copy()
+                    #     ad_proc_sub = adata_processed_tissue[(adata_processed_tissue.obs['leiden'] == leiden)].copy()
+                    #     if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
+                    #         continue
 
-                        ad_proc_sub.var["total_counts"] = np.array(ad_proc_sub.X.sum(axis=0)).ravel()
-                        ad_raw_sub.var["total_counts"] = np.array(ad_raw_sub.X.sum(axis=0)).ravel()
-                        gene_to_scatter_location_dict = make_gene_to_scatter_location_dict(ad_raw_sub, ad_proc_sub, custom_markers)
+                    #     ad_proc_sub.var["total_counts"] = np.array(ad_proc_sub.X.sum(axis=0)).ravel()
+                    #     ad_raw_sub.var["total_counts"] = np.array(ad_raw_sub.X.sum(axis=0)).ravel()
+                    #     gene_to_scatter_location_dict = make_gene_to_scatter_location_dict(ad_raw_sub, ad_proc_sub, custom_markers)
 
-                        out_path = os.path.join(out_dir_plate, "tissue_cluster_gene_scatterplots", f"plate_{plate}_tissue_{tissue}_cluster_{leiden}_{tool}_gene_counts_scatterplot.png")
-                        os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                        if not os.path.exists(out_path) or overwrite:
-                            plot_matrix_scatterplot(adata1=ad_proc_sub.var["total_counts"], adata2=ad_raw_sub.var["total_counts"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict, scale="log", point_type="custom", title=f"Gene counts", density_type="scatter_with_kde", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
+                    #     out_path = os.path.join(out_dir_plate, "tissue_cluster_gene_scatterplots", f"plate_{plate}_tissue_{tissue}_cluster_{leiden}_{tool}_gene_counts_scatterplot.png")
+                    #     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                    #     if not os.path.exists(out_path) or overwrite:
+                    #         plot_matrix_scatterplot(adata1=ad_proc_sub.var["total_counts"], adata2=ad_raw_sub.var["total_counts"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict, scale="log", point_type="custom", title=f"Gene counts", density_type="scatter_with_kde", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
 
                 
-                #* Unique tissue-celltype combinations in the raw AnnData
-                pairs = (adata_raw.obs[['Tissue', 'celltype']].dropna().drop_duplicates().values)
+                # #* Unique tissue-celltype combinations in the raw AnnData
+                # pairs = (adata_raw.obs[['Tissue', 'celltype']].dropna().drop_duplicates().values)
 
-                print(f"Making joint scatterplots for tissue-celltype pairs in plate {plate} with tool {tool}...")
-                for tissue, celltype in pairs:
-                    # print(f"Processing pair: {tissue}, {celltype}")
+                # print(f"Making joint scatterplots for tissue-celltype pairs in plate {plate} with tool {tool}...")
+                # for tissue, celltype in pairs:
+                #     # print(f"Processing pair: {tissue}, {celltype}")
 
-                    # Subset both AnnData objects
-                    ad_raw_sub = adata_raw[(adata_raw.obs['Tissue'] == tissue) & (adata_raw.obs['celltype'] == celltype)].copy()
-                    ad_proc_sub = adata_processed[(adata_processed.obs['Tissue'] == tissue) & (adata_processed.obs['celltype'] == celltype)].copy()
+                #     # Subset both AnnData objects
+                #     ad_raw_sub = adata_raw[(adata_raw.obs['Tissue'] == tissue) & (adata_raw.obs['celltype'] == celltype)].copy()
+                #     ad_proc_sub = adata_processed[(adata_processed.obs['Tissue'] == tissue) & (adata_processed.obs['celltype'] == celltype)].copy()
 
-                    # Skip empty subsets
-                    if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
-                        print(f"Skipping empty subset: {tissue} / {celltype}")
-                        continue
+                #     # Skip empty subsets
+                #     if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
+                #         print(f"Skipping empty subset: {tissue} / {celltype}")
+                #         continue
 
-                    # Output filename tag
-                    out_path = os.path.join(out_dir_plate, "tissue_celltype_joint_scatterplots", f"plate_{plate}_tissue_{tissue}_celltype_{celltype}_{tool}_joint_scatterplot.png")
-                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                    if not os.path.exists(out_path) or overwrite:
-                        plot_cross_species_joint_scatterplot(ad_raw_sub, ad_proc_sub, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", legend_title=f"{tissue}, {celltype}", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=False)
+                #     # Output filename tag
+                #     out_path = os.path.join(out_dir_plate, "tissue_celltype_joint_scatterplots", f"plate_{plate}_tissue_{tissue}_celltype_{celltype}_{tool}_joint_scatterplot.png")
+                #     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                #     if not os.path.exists(out_path) or overwrite:
+                #         plot_cross_species_joint_scatterplot(ad_raw_sub, ad_proc_sub, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", legend_title=f"{tissue}, {celltype}", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=False)
                 
-                #* Unique tissue-leiden combinations in the raw AnnData
-                pairs = (adata_raw.obs[['Tissue', 'leiden']].dropna().drop_duplicates().values)
+                # #* Unique tissue-leiden combinations in the raw AnnData
+                # pairs = (adata_raw.obs[['Tissue', 'leiden']].dropna().drop_duplicates().values)
 
-                print(f"Making joint scatterplots for tissue-leiden pairs in plate {plate} with tool {tool}...")
-                for tissue, leiden in pairs:
-                    # print(f"Processing pair: {tissue}, {leiden}")
+                # print(f"Making joint scatterplots for tissue-leiden pairs in plate {plate} with tool {tool}...")
+                # for tissue, leiden in pairs:
+                #     # print(f"Processing pair: {tissue}, {leiden}")
 
-                    # Subset both AnnData objects
-                    ad_raw_sub = adata_raw[(adata_raw.obs['Tissue'] == tissue) & (adata_raw.obs['leiden'] == leiden)].copy()
-                    ad_proc_sub = adata_processed[(adata_processed.obs['Tissue'] == tissue) & (adata_processed.obs['leiden'] == leiden)].copy()
+                #     # Subset both AnnData objects
+                #     ad_raw_sub = adata_raw[(adata_raw.obs['Tissue'] == tissue) & (adata_raw.obs['leiden'] == leiden)].copy()
+                #     ad_proc_sub = adata_processed[(adata_processed.obs['Tissue'] == tissue) & (adata_processed.obs['leiden'] == leiden)].copy()
 
-                    # Skip empty subsets
-                    if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
-                        print(f"Skipping empty subset: {tissue} / {leiden}")
-                        continue
+                #     # Skip empty subsets
+                #     if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
+                #         print(f"Skipping empty subset: {tissue} / {leiden}")
+                #         continue
 
-                    # Output filename tag
-                    out_path = os.path.join(out_dir_plate, "tissue_cluster_joint_scatterplots", f"plate_{plate}_tissue_{tissue}_cluster_{leiden}_{tool}_joint_scatterplot.png")
-                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                    if not os.path.exists(out_path) or overwrite:
-                        plot_cross_species_joint_scatterplot(ad_raw_sub, ad_proc_sub, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", legend_title=f"{tissue}, cluster {leiden}", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=False)
+                #     # Output filename tag
+                #     out_path = os.path.join(out_dir_plate, "tissue_cluster_joint_scatterplots", f"plate_{plate}_tissue_{tissue}_cluster_{leiden}_{tool}_joint_scatterplot.png")
+                #     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                #     if not os.path.exists(out_path) or overwrite:
+                #         plot_cross_species_joint_scatterplot(ad_raw_sub, ad_proc_sub, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", legend_title=f"{tissue}, cluster {leiden}", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=False)
             else:
                 print(f"Warning: Missing count columns for tissues {tissues} in plate {plate}. Skipping joint scatterplot.")
 
-            # use custom markers if provided
-            if custom_markers is not None:
-                num_tissues_present = 0
-                for tissue in tissues:
-                    if tissue not in custom_markers or custom_markers[tissue] is None or len(custom_markers[tissue]) == 0:
-                        continue
+    #         # use custom markers if provided
+    #         if custom_markers is not None:
+    #             num_tissues_present = 0
+    #             for tissue in tissues:
+    #                 if tissue not in custom_markers or custom_markers[tissue] is None or len(custom_markers[tissue]) == 0:
+    #                     continue
 
-                    genes_in_adata = [g for g in custom_markers[tissue] if g in adata_processed.var_names]
-                    if len(genes_in_adata) == 0:
-                        print(f"Warning: No marker genes found for tissue {tissue} in plate {plate} from custom_markers. Skipping.")
-                        continue
-                    adata_processed.obs[f"{tissue}_counts_total_custom"] = (np.array(adata_processed[:, genes_in_adata].X.sum(axis=1)).ravel())
-                    adata_raw.obs[f"{tissue}_counts_total_custom"] = (np.array(adata_raw[:, genes_in_adata].X.sum(axis=1)).ravel())
-                    num_tissues_present += 1
+    #                 genes_in_adata = [g for g in custom_markers[tissue] if g in adata_processed.var_names]
+    #                 if len(genes_in_adata) == 0:
+    #                     print(f"Warning: No marker genes found for tissue {tissue} in plate {plate} from custom_markers. Skipping.")
+    #                     continue
+    #                 adata_processed.obs[f"{tissue}_counts_total_custom"] = (np.array(adata_processed[:, genes_in_adata].X.sum(axis=1)).ravel())
+    #                 adata_raw.obs[f"{tissue}_counts_total_custom"] = (np.array(adata_raw[:, genes_in_adata].X.sum(axis=1)).ravel())
+    #                 num_tissues_present += 1
                 
-                # make the plots
-                print(f"Making plots using custom markers for plate {plate} with tool {tool}...")
-                if num_tissues_present == 2:
-                    print(f"Making joint scatterplot for plate {plate} with tool {tool}...")
-                    out_path = os.path.join(out_dir_plate, f"plate_{plate}_{tissues[0]}_{tissues[1]}_{tool}_joint_scatterplot_tissue_markers.png")
-                    if not os.path.exists(out_path) or overwrite:
-                        plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total_custom", y_axis=f"{tissues[1]}_counts_total_custom", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=True)
-                if num_tissues_present >= 1:
-                    # raw vs processed scatterplot per tissue
-                    for marker_tissue in tissues:
-                        if f"{marker_tissue}_counts_total_custom" in adata_processed.obs.columns:
-                            custom_markers_print = "" if not print_custom_markers else f" ({','.join(custom_markers.get(marker_tissue, []))})"
-                            for cell_tissue in tissues:
-                                adata_raw_tissue = adata_raw[adata_raw.obs["Tissue"] == cell_tissue].copy()
-                                adata_processed_tissue = adata_processed[adata_processed.obs["Tissue"] == cell_tissue].copy()
-                                print(f"Making raw vs processed scatterplot for plate {plate} with tool {tool}, cell tissue {cell_tissue}, marker tissue {marker_tissue}...")
-                                out_path = os.path.join(out_dir_plate, f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_{tool}_scatterplot.png")
-                                if not os.path.exists(out_path) or overwrite:
-                                    plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers{custom_markers_print}", density_type="scatter_with_kde", x_axis=tool, y_axis='raw', out_path=out_path, show=False)  #? change to scatter_with_density if too large
+    #             # make the plots
+    #             print(f"Making plots using custom markers for plate {plate} with tool {tool}...")
+    #             if num_tissues_present == 2:
+    #                 print(f"Making joint scatterplot for plate {plate} with tool {tool}...")
+    #                 out_path = os.path.join(out_dir_plate, f"plate_{plate}_{tissues[0]}_{tissues[1]}_{tool}_joint_scatterplot_tissue_markers.png")
+    #                 if not os.path.exists(out_path) or overwrite:
+    #                     plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total_custom", y_axis=f"{tissues[1]}_counts_total_custom", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=True)
+    #             if num_tissues_present >= 1:
+    #                 # raw vs processed scatterplot per tissue
+    #                 for marker_tissue in tissues:
+    #                     if f"{marker_tissue}_counts_total_custom" in adata_processed.obs.columns:
+    #                         custom_markers_print = "" if not print_custom_markers else f" ({','.join(custom_markers.get(marker_tissue, []))})"
+    #                         for cell_tissue in tissues:
+    #                             adata_raw_tissue = adata_raw[adata_raw.obs["Tissue"] == cell_tissue].copy()
+    #                             adata_processed_tissue = adata_processed[adata_processed.obs["Tissue"] == cell_tissue].copy()
+    #                             print(f"Making raw vs processed scatterplot for plate {plate} with tool {tool}, cell tissue {cell_tissue}, marker tissue {marker_tissue}...")
+    #                             out_path = os.path.join(out_dir_plate, f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_{tool}_scatterplot.png")
+    #                             if not os.path.exists(out_path) or overwrite:
+    #                                 plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers{custom_markers_print}", density_type="scatter_with_kde", x_axis=tool, y_axis='raw', out_path=out_path, show=False)  #? change to scatter_with_density if too large
                     
-                                # stratified by celltype/leiden
-                                #* Unique tissue-celltype combinations in the raw AnnData
-                                for celltype in adata_raw_tissue.obs["celltype"].dropna().drop_duplicates().values:
-                                    ad_raw_sub = adata_raw_tissue[(adata_raw_tissue.obs['celltype'] == celltype)].copy()
-                                    ad_proc_sub = adata_processed_tissue[(adata_processed_tissue.obs['celltype'] == celltype)].copy()
-                                    if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
-                                        continue
+    #                             # stratified by celltype/leiden
+    #                             #* Unique tissue-celltype combinations in the raw AnnData
+    #                             for celltype in adata_raw_tissue.obs["celltype"].dropna().drop_duplicates().values:
+    #                                 ad_raw_sub = adata_raw_tissue[(adata_raw_tissue.obs['celltype'] == celltype)].copy()
+    #                                 ad_proc_sub = adata_processed_tissue[(adata_processed_tissue.obs['celltype'] == celltype)].copy()
+    #                                 if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
+    #                                     continue
 
-                                    out_path = os.path.join(out_dir_plate, "tissue_celltype_custom_marker_scatterplots", f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_celltype_{celltype}_{tool}_cell_scatterplot.png")
-                                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                                    if not os.path.exists(out_path) or overwrite:
-                                        plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers, celltype {celltype}{custom_markers_print}", density_type="scatter", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
+    #                                 out_path = os.path.join(out_dir_plate, "tissue_celltype_custom_marker_scatterplots", f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_celltype_{celltype}_{tool}_cell_scatterplot.png")
+    #                                 os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    #                                 if not os.path.exists(out_path) or overwrite:
+    #                                     plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers, celltype {celltype}{custom_markers_print}", density_type="scatter", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
 
-                                #* Unique tissue-leiden combinations in the raw AnnData
-                                for leiden in adata_raw_tissue.obs["leiden"].dropna().drop_duplicates().values:
-                                    ad_raw_sub = adata_raw_tissue[(adata_raw_tissue.obs['leiden'] == leiden)].copy()
-                                    ad_proc_sub = adata_processed_tissue[(adata_processed_tissue.obs['leiden'] == leiden)].copy()
-                                    if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
-                                        continue
+    #                             #* Unique tissue-leiden combinations in the raw AnnData
+    #                             for leiden in adata_raw_tissue.obs["leiden"].dropna().drop_duplicates().values:
+    #                                 ad_raw_sub = adata_raw_tissue[(adata_raw_tissue.obs['leiden'] == leiden)].copy()
+    #                                 ad_proc_sub = adata_processed_tissue[(adata_processed_tissue.obs['leiden'] == leiden)].copy()
+    #                                 if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
+    #                                     continue
 
-                                    out_path = os.path.join(out_dir_plate, "tissue_cluster_custom_marker_scatterplots", f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_cluster_{leiden}_{tool}_cell_scatterplot.png")
-                                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                                    if not os.path.exists(out_path) or overwrite:
-                                        plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers, cluster {leiden}", density_type="scatter", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
+    #                                 out_path = os.path.join(out_dir_plate, "tissue_cluster_custom_marker_scatterplots", f"plate_{plate}_{cell_tissue}_cells_{marker_tissue}_markers_cluster_{leiden}_{tool}_cell_scatterplot.png")
+    #                                 os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    #                                 if not os.path.exists(out_path) or overwrite:
+    #                                     plot_matrix_scatterplot(adata1=adata_processed_tissue.obs[f"{marker_tissue}_counts_total_custom"], adata2=adata_raw_tissue.obs[f"{marker_tissue}_counts_total_custom"], scale="log", point_type="custom", title=f"{cell_tissue} cells, {marker_tissue} markers, cluster {leiden}", density_type="scatter", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
 
-                    # dotplot
-                    custom_markers_filtered = {k: v for k, v in custom_markers.items() if k in tissues and v is not None and len(v) > 0}
+    #                 # dotplot
+    #                 custom_markers_filtered = {k: v for k, v in custom_markers.items() if k in tissues and v is not None and len(v) > 0}
                     
-                    def add_gene_name_column(adata, gene_id_to_name):
-                        if gene_id_to_name is None:
-                            raise ValueError("gene_id_to_name mapping is required to convert gene names to IDs in adata.var.")
-                        mapped = adata.var_names.to_series().map(gene_id_to_name)
-                        adata.var["gene_name"] = mapped.fillna(adata.var_names.to_series())
-                        return adata
+    #                 def add_gene_name_column(adata, gene_id_to_name):
+    #                     if gene_id_to_name is None:
+    #                         raise ValueError("gene_id_to_name mapping is required to convert gene names to IDs in adata.var.")
+    #                     mapped = adata.var_names.to_series().map(gene_id_to_name)
+    #                     adata.var["gene_name"] = mapped.fillna(adata.var_names.to_series())
+    #                     return adata
                         
-                    # map gene ID to name
-                    gene_id_to_name = {v: k for k, v in gene_name_to_id.items()}
-                    custom_markers_filtered = {k: [gene_id_to_name.get(gene_id, gene_id) for gene_id in v] for k, v in custom_markers_filtered.items()}
-                    if "gene_name" not in adata_raw.var.columns:
-                        adata_raw = add_gene_name_column(adata_raw, gene_id_to_name)
-                    if "gene_name" not in adata_processed.var.columns:
-                        adata_processed = add_gene_name_column(adata_processed, gene_id_to_name)
+    #                 # map gene ID to name
+    #                 gene_id_to_name = {v: k for k, v in gene_name_to_id.items()}
+    #                 custom_markers_filtered = {k: [gene_id_to_name.get(gene_id, gene_id) for gene_id in v] for k, v in custom_markers_filtered.items()}
+    #                 if "gene_name" not in adata_raw.var.columns:
+    #                     adata_raw = add_gene_name_column(adata_raw, gene_id_to_name)
+    #                 if "gene_name" not in adata_processed.var.columns:
+    #                     adata_processed = add_gene_name_column(adata_processed, gene_id_to_name)
 
-                    print(f"Making dotplot for plate {plate} with tool {tool}...")
-                    for tissue in tissues:
-                        # celltype
-                        adata_raw_tmp = adata_raw[adata_raw.obs["Tissue"] == tissue].copy()
-                        adata_processed_tmp = adata_processed[adata_processed.obs["Tissue"] == tissue].copy()
-                        out_path_raw = os.path.join(out_dir_plate, f"dotplot_raw_plate_{plate}_tissue_{tissue}_celltype.png")
-                        out_path_processed = os.path.join(out_dir_plate, f"dotplot_{tool}_plate_{plate}_tissue_{tissue}_celltype.png")
-                        if not os.path.exists(out_path_processed) or overwrite:
-                            make_raw_and_processed_dotplots(adata_raw_tmp, adata_processed_tmp, custom_markers_filtered, plot_raw=True, cluster_column="celltype", gene_symbols="gene_name", log_raw=False, log_processed=False, title_raw=f"Raw Data Dotplot, plate {plate}, tissue {tissue}", title_processed=f"{tool} Processed Data Dotplot, plate {plate}, tissue {tissue}", out_path_raw=out_path_raw, out_path_processed=out_path_processed)
+    #                 print(f"Making dotplot for plate {plate} with tool {tool}...")
+    #                 for tissue in tissues:
+    #                     # celltype
+    #                     adata_raw_tmp = adata_raw[adata_raw.obs["Tissue"] == tissue].copy()
+    #                     adata_processed_tmp = adata_processed[adata_processed.obs["Tissue"] == tissue].copy()
+    #                     out_path_raw = os.path.join(out_dir_plate, f"dotplot_raw_plate_{plate}_tissue_{tissue}_celltype.png")
+    #                     out_path_processed = os.path.join(out_dir_plate, f"dotplot_{tool}_plate_{plate}_tissue_{tissue}_celltype.png")
+    #                     if not os.path.exists(out_path_processed) or overwrite:
+    #                         make_raw_and_processed_dotplots(adata_raw_tmp, adata_processed_tmp, custom_markers_filtered, plot_raw=True, cluster_column="celltype", gene_symbols="gene_name", log_raw=False, log_processed=False, title_raw=f"Raw Data Dotplot, plate {plate}, tissue {tissue}", title_processed=f"{tool} Processed Data Dotplot, plate {plate}, tissue {tissue}", out_path_raw=out_path_raw, out_path_processed=out_path_processed)
                         
-                        # leiden
-                        out_path_raw = os.path.join(out_dir_plate, f"dotplot_raw_plate_{plate}_tissue_{tissue}_leiden.png")
-                        out_path_processed = os.path.join(out_dir_plate, f"dotplot_{tool}_plate_{plate}_tissue_{tissue}_leiden.png")
-                        if not os.path.exists(out_path_processed) or overwrite:
-                            make_raw_and_processed_dotplots(adata_raw_tmp, adata_processed_tmp, custom_markers_filtered, plot_raw=True, cluster_column="leiden", gene_symbols="gene_name", log_raw=False, log_processed=False, title_raw=f"Raw Data Dotplot, plate {plate}, tissue {tissue}", title_processed=f"{tool} Processed Data Dotplot, plate {plate}, tissue {tissue}", out_path_raw=out_path_raw, out_path_processed=out_path_processed)
+    #                     # leiden
+    #                     out_path_raw = os.path.join(out_dir_plate, f"dotplot_raw_plate_{plate}_tissue_{tissue}_leiden.png")
+    #                     out_path_processed = os.path.join(out_dir_plate, f"dotplot_{tool}_plate_{plate}_tissue_{tissue}_leiden.png")
+    #                     if not os.path.exists(out_path_processed) or overwrite:
+    #                         make_raw_and_processed_dotplots(adata_raw_tmp, adata_processed_tmp, custom_markers_filtered, plot_raw=True, cluster_column="leiden", gene_symbols="gene_name", log_raw=False, log_processed=False, title_raw=f"Raw Data Dotplot, plate {plate}, tissue {tissue}", title_processed=f"{tool} Processed Data Dotplot, plate {plate}, tissue {tissue}", out_path_raw=out_path_raw, out_path_processed=out_path_processed)
 
-    for (tool1, plate_to_adata_dict1), (tool2, plate_to_adata_dict2) in itertools.combinations(dict_of_adata_dicts.items(), 2):
-        if plate_to_adata_dict1 is None or plate_to_adata_dict2 is None:
-            continue
+    # for (tool1, plate_to_adata_dict1), (tool2, plate_to_adata_dict2) in itertools.combinations(dict_of_adata_dicts.items(), 2):
+    #     if plate_to_adata_dict1 is None or plate_to_adata_dict2 is None:
+    #         continue
 
-        for plate, adata1 in plate_to_adata_dict1.items():
-            adata2 = plate_to_adata_dict2.get(plate, None)
-            if adata1 is None or adata2 is None:
-                continue
+    #     for plate, adata1 in plate_to_adata_dict1.items():
+    #         adata2 = plate_to_adata_dict2.get(plate, None)
+    #         if adata1 is None or adata2 is None:
+    #             continue
 
-            show = False
-            # Scatterplot by matrix, cell, and gene
-            print(f"Making 8cubed scatterplots for plate {plate} between tools {tool1} and {tool2}...")
-            out_path = os.path.join(out_dir_plate, f"8cubed_{tool2}_vs_{tool1}_{plate}_matrix_expression_scatterplot.png")
-            if not os.path.exists(out_path) or overwrite:
-                plot_matrix_scatterplot(adata1, adata2, point_type="matrix", density_type="scatter_with_density", scale="log", x_axis=tool1, y_axis=tool2, title = f"{tool2} vs {tool1} {plate} matrix scatterplot", out_path=out_path, show=show)
+    #         show = False
+    #         # Scatterplot by matrix, cell, and gene
+    #         print(f"Making 8cubed scatterplots for plate {plate} between tools {tool1} and {tool2}...")
+    #         out_path = os.path.join(out_dir_plate, f"8cubed_{tool2}_vs_{tool1}_{plate}_matrix_expression_scatterplot.png")
+    #         if not os.path.exists(out_path) or overwrite:
+    #             plot_matrix_scatterplot(adata1, adata2, point_type="matrix", density_type="scatter_with_density", scale="log", x_axis=tool1, y_axis=tool2, title = f"{tool2} vs {tool1} {plate} matrix scatterplot", out_path=out_path, show=show)
             
-            out_path = os.path.join(out_dir_plate, f"8cubed_{tool2}_vs_{tool1}_{plate}_cell_expression_scatterplot.png")
-            if not os.path.exists(out_path) or overwrite:
-                plot_matrix_scatterplot(adata1, adata2, point_type="cell", density_type="scatter_with_density", scale="log", x_axis=tool1, y_axis=tool2, title = f"{tool2} vs {tool1} {plate} cell scatterplot", out_path=out_path, show=show)
+    #         out_path = os.path.join(out_dir_plate, f"8cubed_{tool2}_vs_{tool1}_{plate}_cell_expression_scatterplot.png")
+    #         if not os.path.exists(out_path) or overwrite:
+    #             plot_matrix_scatterplot(adata1, adata2, point_type="cell", density_type="scatter_with_density", scale="log", x_axis=tool1, y_axis=tool2, title = f"{tool2} vs {tool1} {plate} cell scatterplot", out_path=out_path, show=show)
             
-            out_path = os.path.join(out_dir_plate, f"8cubed_{tool2}_vs_{tool1}_{plate}_gene_expression_scatterplot.png")
-            if not os.path.exists(out_path) or overwrite:
-                plot_matrix_scatterplot(adata1, adata2, point_type="gene", density_type="scatter_with_density", scale="log", x_axis=tool1, y_axis=tool2, title = f"{tool2} vs {tool1} {plate} gene scatterplot", out_path=out_path, show=show)
+    #         out_path = os.path.join(out_dir_plate, f"8cubed_{tool2}_vs_{tool1}_{plate}_gene_expression_scatterplot.png")
+    #         if not os.path.exists(out_path) or overwrite:
+    #             plot_matrix_scatterplot(adata1, adata2, point_type="gene", density_type="scatter_with_density", scale="log", x_axis=tool1, y_axis=tool2, title = f"{tool2} vs {tool1} {plate} gene scatterplot", out_path=out_path, show=show)
+
+def make_8cube_scatterplot(adata, celltype1=None, celltype2=None, tissue1=None, tissue2=None, gene_name_to_marker_type=None, gene_name_to_id_dict=None, out_dir=".", overwrite=False):
+    print("Loading anndata...")
+    if isinstance(adata, str):
+        adata = ad.read_h5ad(adata)
+    elif isinstance(adata, ad.AnnData):
+        adata = adata.copy()
+    else:
+        raise ValueError("adata must be a file path or an AnnData object.")
+
+    if celltype1 is None and tissue1 is None:
+        raise ValueError("At least one of celltype1 or tissue1 must be provided.")
+    if celltype2 is None and tissue2 is None:
+        raise ValueError("At least one of celltype2 or tissue2 must be provided.")
+
+    if tissue1 is not None:
+        adata_tissue1 = adata[adata.obs["Tissue"] == tissue1].copy()
+    else:
+        adata_tissue1 = adata.copy()
+    if tissue2 is not None:
+        adata_tissue2 = adata[adata.obs["Tissue"] == tissue2].copy()
+    else:
+        adata_tissue2 = adata.copy()
+
+    print(f"Filtering for celltypes: {celltype1}, {celltype2}...")
+    if celltype1 is None:
+        adata_celltype1 = adata_tissue1.copy()
+    else:
+        adata_celltype1 = adata_tissue1[adata_tissue1.obs["celltype"] == celltype1].copy()
+    if celltype2 is None:
+        adata_celltype2 = adata_tissue2.copy()
+    else:
+        adata_celltype2 = adata_tissue2[adata_tissue2.obs["celltype"] == celltype2].copy()
+
+    print(f"Calculating total counts...")
+    adata_celltype1.var["total_counts_cellsweep"] = np.asarray(adata_celltype1.X.sum(axis=0)).ravel()
+    adata_celltype1.var["total_counts_raw"] = np.asarray(adata_celltype1.layers["raw"].sum(axis=0)).ravel()
+
+    adata_celltype2.var["total_counts_cellsweep"] = np.asarray(adata_celltype2.X.sum(axis=0)).ravel()
+    adata_celltype2.var["total_counts_raw"] = np.asarray(adata_celltype2.layers["raw"].sum(axis=0)).ravel()
+
+    gene_to_scatter_location_dict1, gene_to_scatter_location_dict2 = {}, {}
+    if gene_name_to_marker_type is not None:
+        for gene_name, marker_type in gene_name_to_marker_type.items():
+            gene_id = gene_name_to_id_dict.get(gene_name) if gene_name_to_id_dict is not None else gene_name
+            if gene_id is None:
+                print(f"Gene name {gene_name} not found in gene_name_to_id_dict.")
+
+            gene_to_scatter_location_dict_key = gene_name if marker_type is None else f"{gene_name} ({marker_type} marker)"
+
+            x1 = float(adata_celltype1.var.loc[gene_id, "total_counts_cellsweep"])
+            y1 = float(adata_celltype1.var.loc[gene_id, "total_counts_raw"])
+            x1 = x1 if x1 > 0.5 else 0.5
+            y1 = y1 if y1 > 0.5 else 0.5
+            gene_to_scatter_location_dict1[gene_to_scatter_location_dict_key] = (x1, y1)
+            print(f"Gene {gene_name} (ID: {gene_id}, marker: {marker_type}) - Celltype1 ({celltype1}): cellsweep={x1}, raw={y1}")
+
+            x2 = float(adata_celltype2.var.loc[gene_id, "total_counts_cellsweep"])
+            y2 = float(adata_celltype2.var.loc[gene_id, "total_counts_raw"])
+            x2 = x2 if x2 > 0.5 else 0.5
+            y2 = y2 if y2 > 0.5 else 0.5
+            gene_to_scatter_location_dict2[gene_to_scatter_location_dict_key] = (x2, y2)
+            print(f"Gene {gene_name} (ID: {gene_id}, marker: {marker_type}) - Celltype2 ({celltype2}): cellsweep={x2}, raw={y2}")
+
+    print("Plotting scatterplot1")
+    out_path = os.path.join(out_dir, f"{celltype1.replace(' ', '_')}_scatterplot.png")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    if not os.path.exists(out_path) or overwrite:
+        plot_matrix_scatterplot(adata1=adata_celltype1.var["total_counts_cellsweep"], adata2=adata_celltype1.var["total_counts_raw"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict1, scale="log", point_type="custom", title="Gene counts", density_type="scatter_with_kde", x_axis="cellsweep", y_axis='raw', out_path=out_path, show=True)
+    else:
+        print(f"Scatterplot for {celltype1} already exists at {out_path} and overwrite=False, skipping...")
+
+    print("Plotting scatterplot2")
+    out_path = os.path.join(out_dir, f"{celltype2.replace(' ', '_')}_scatterplot.png")
+    out_path_title = out_path.replace("_scatterplot.png", "_title.png")
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    if not os.path.exists(out_path) or overwrite:
+        plot_matrix_scatterplot(adata1=adata_celltype2.var["total_counts_cellsweep"], adata2=adata_celltype2.var["total_counts_raw"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict2, scale="log", point_type="custom", title="Gene counts", density_type="scatter_with_kde", x_axis="cellsweep", y_axis='raw', out_path=out_path, show=True)
+    else:
+        print(f"Scatterplot for {celltype2} already exists at {out_path} and overwrite=False, skipping...")
+
+def make_dummy_title(title, out_path=None):
+    fig, ax = plt.subplots()
+    ax.plot([0, 1], [0, 1])  # dummy data
+    ax.set_title(title, fontsize=14, fontweight='bold')
+    plt.tight_layout()
+    if out_path:
+        fig.savefig(out_path, bbox_inches="tight", dpi=300)
+    plt.show()

@@ -47,6 +47,11 @@ marker_genes: {
     "NK cells": ["NKG7", "GNLY", "PRF1", "KLRD1", "GZMB"],
     "B cells": ["MS4A1", "CD79A", "CD79B", "HLA-DRA", "CD19"]
 }
+marker_genes_cellbender_fig2: {
+    "Monocytes/neutrophils": ["S100A8", "S100A9"],
+    "Monocytes/pDCs": ["LYZ", "CST3"],
+    "(Broad expression)": ["PTPRC"]
+}
 
 # output file names
 adata_path_cellsweep_name: pbmc33k_output_cellsweep.h5ad
