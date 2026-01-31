@@ -27,13 +27,19 @@ CellSweep has a single function denoise_count_matrix that takes a raw count matr
 
 ### Python API
 ```python
-from cellsweep import denoise_count_matrix
-adata_cellsweep = denoise_count_matrix(adata_raw_path, adata_out=adata_cellsweep_path)  # assumes that adata_raw_path is an h5ad file or AnnData object with a column adata.obs['celltype'] indicating celltype
+import cellsweep
+adata_cellsweep = cellsweep.denoise_count_matrix(adata_raw_path, adata_out=adata_cellsweep_path)  # assumes that adata_raw_path is an h5ad file or AnnData object with a column adata.obs['celltype'] indicating celltype
+
+# for help
+help(cellsweep.denoise_count_matrix)
 ```
 
 ### Command line interface
 ```
 cellsweep denoise_count_matrix -o adata_cellsweep.h5ad adata_raw.h5ad  # assumes that adata_raw.h5ad is an h5ad file with a column adata.obs['celltype'] indicating celltype
+
+# for help
+cellsweep denoise_count_matrix --help
 ```
 
 There are many utility functions in the `cellsweep.utils` module for data processing, plotting, and analysis. See examples in our Jupyter Notebooks.
