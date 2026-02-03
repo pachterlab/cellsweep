@@ -91,7 +91,7 @@ def read_kb_mtx_as_adata(kb_count_counts_dir, use_gene_symbols=True):
     return adata
 
 # anndata object, h5 path, h5ad path, a 10x matrix directory (containing matrix.mtx, genes.tsv, barcodes.tsv), or an R matrix prefix ({prefix}.mtx, {prefix}_genes.csv, {prefix}_barcodes.csv)
-def load_adata(adata, multiple_anndatas=False, merge_multiple_adatas=False, backed=None, logger=None, verbose=0, quiet=False, copy_anndata=True):
+def load_adata(adata, multiple_anndatas=False, merge_multiple_adatas=False, gex_only = True, backed=None, logger=None, verbose=0, quiet=False, copy_anndata=True):
     if logger is None:
         logger = setup_logger(verbose=verbose, quiet=quiet)
     if isinstance(adata, str):
@@ -109,13 +109,13 @@ def load_adata(adata, multiple_anndatas=False, merge_multiple_adatas=False, back
             with h5py.File(adata, "r") as f:
                 genomes = list(f.keys())
             if len(genomes) == 1:
-                adata = sc.read_10x_h5(adata)
+                adata = sc.read_10x_h5(adata, gex_only=gex_only)
             else:
                 logger.info(f"Multiple genomes found in {adata!r}: {genomes}. Loading each separately.")
                 adatas = []
                 for genome in genomes:
                     logger.info(f"Loading genome {genome!r} from {adata!r}")
-                    adata_tmp = sc.read_10x_h5(adata, genome=genome)
+                    adata_tmp = sc.read_10x_h5(adata, genome=genome, gex_only=gex_only)
                     # adata_tmp.var_names = genome + "_" + adata_tmp.var_names  # at least for the sample hgmm12k dataset, gene names are already prepended with genome
                     adata_tmp.var_names_make_unique()
                     adata_tmp.var['genome'] = genome
