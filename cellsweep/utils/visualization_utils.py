@@ -2208,6 +2208,12 @@ def plot_raw_and_processed_histogram(processed_values, metric, raw_values=None, 
     else:
         plt.show()
 
+def round_sparse(X):
+    X = X.copy()
+    X.data = np.rint(X.data).astype(int)
+    X.eliminate_zeros()
+    return X
+
 def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", hist_type="kde", calculate_mse=True, out_base=None, show=True):
     """
     Evaluate denoising by comparing processed output (adata_processed) to ground-truth real counts (adata_real).
@@ -2226,10 +2232,8 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     # Ensure sparse for safe arithmetic
     if not sparse.issparse(adata_x_processed):
         adata_x_processed = sparse.csr_matrix(adata_x_processed)
-
     if not sparse.issparse(adata_x_raw):
         adata_x_raw = sparse.csr_matrix(adata_x_raw)
-
     if not sparse.issparse(adata_x_real):
         adata_x_real = sparse.csr_matrix(adata_x_real)
 
@@ -2237,96 +2241,124 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     Yr = adata_x_raw.tocsr()
     Yt = adata_x_real.tocsr()
 
-    # Binary presence matrices (gene detected or not)
-    Yp_bin = (Yp > 0).astype(int).tocsr()
-    Yr_bin = (Yr > 0).astype(int).tocsr()
-    Yt_bin = (Yt > 0).astype(int).tocsr()
+    # # Binary presence matrices (gene detected or not)
+    # Yp_bin = (Yp > 0).astype(int).tocsr()
+    # Yr_bin = (Yr > 0).astype(int).tocsr()
+    # Yt_bin = (Yt > 0).astype(int).tocsr()
 
-    def calculate_dataframes(Yt_bin, Yp_bin, Yt=None, Yp=None, calculate_mse=True):
-        n_cells, n_genes = Yp_bin.shape
+    Yp = round_sparse(Yp)
+    Yr = round_sparse(Yr)
+    Yt = round_sparse(Yt)
+
+    def calculate_dataframes(Yt, Yp, calculate_mse=True):
+        n_cells, n_genes = Yp.shape
 
         # ---------- Compute Confusion Components ----------
-        TP = (Yp_bin.multiply(Yt_bin)).sum(axis=1).A1
-        PP = Yp_bin.sum(axis=1).A1
-        FP = PP - TP
-        TT = Yt_bin.sum(axis=1).A1
-        FN = TT - TP
-        TN = n_genes - TP - FP - FN
+        TP = Yp.minimum(Yt).sum(axis=1).A1
+        FP = (Yp - Yt).maximum(0).sum(axis=1).A1
+        FN = (Yt - Yp).maximum(0).sum(axis=1).A1
+        PP = TP + FP
+        TT = TP + FN
 
         # ------------ Per-cell metrics ------------
-        sensitivity = TP / (TP + FN)
-        specificity = TN / (TN + FP)
-        ppv = TP / (TP + FP)
+        recall = TP / np.maximum(TT, 1)
+        ppv = TP / np.maximum(PP, 1)
 
-        sensitivity = np.nan_to_num(sensitivity)
-        specificity = np.nan_to_num(specificity)
+        recall = np.nan_to_num(recall)
         ppv = np.nan_to_num(ppv)
         
         if calculate_mse:
-            print("Calculating per-cell MSE - Densifies...")
-            Yp_dense = Yp.toarray() if hasattr(Yp, "toarray") else np.asarray(Yp)
-            Yt_dense = Yt.toarray() if hasattr(Yt, "toarray") else np.asarray(Yt)
+            print("Calculating per-cell MSE (densifying)...")
+            Yp_dense = Yp.toarray()
+            Yt_dense = Yt.toarray()
+
             mse = ((Yp_dense - Yt_dense) ** 2).mean(axis=1)
             mse = np.nan_to_num(mse)
             mse_global = ((Yp_dense - Yt_dense) ** 2).mean()
 
-            del Yp_dense
-            del Yt_dense
+            del Yp_dense, Yt_dense
         else:
             mse = np.zeros(n_cells)
+            mse_global = 0.0
 
-        # ------------ Global metrics ------------
+        # ---- Global metrics ----
         TP_total = TP.sum()
         FP_total = FP.sum()
         FN_total = FN.sum()
-        TN_total = TN.sum()
 
-        sensitivity_global = TP_total / (TP_total + FN_total)
-        specificity_global = TN_total / (TN_total + FP_total)
-        ppv_global = TP_total / (TP_total + FP_total)
+        print(f"TP_total: {TP_total}, FP_total: {FP_total}, FN_total: {FN_total}")
+
+        recall_global = TP_total / np.maximum(TP_total + FN_total, 1)
+        ppv_global = TP_total / np.maximum(TP_total + FP_total, 1)
 
         global_metrics = {
-            "sensitivity": sensitivity_global,
-            "specificity": specificity_global,
+            "recall": recall_global,
             "ppv": ppv_global,
             "mse": mse_global,
             "TP": TP_total,
             "FP": FP_total,
             "FN": FN_total,
-            "TN": TN_total,
         }
 
-        # ------------ Per-cell DataFrame ------------
-        per_cell_df = pd.DataFrame({
-            "sensitivity": sensitivity,
-            "specificity": specificity,
-            "PPV": ppv,
-            "MSE": mse,
-            "TP": TP,
-            "FP": FP,
-            "FN": FN,
-            "TN": TN,
-        })
+        per_cell_df = pd.DataFrame(
+            {
+                "Recall": recall,
+                "PPV": ppv,
+                "MSE": mse,
+                "TP": TP,
+                "FP": FP,
+                "FN": FN,
+            }
+        )
 
         return per_cell_df, global_metrics
 
-    per_cell_df, global_metrics = calculate_dataframes(Yt_bin, Yp_bin, Yt=Yt, Yp=Yp, calculate_mse=calculate_mse)
+    # ---------------- Run processed ----------------
+    per_cell_df, global_metrics = calculate_dataframes(
+        Yp=Yp, Yt=Yt, calculate_mse=calculate_mse
+    )
 
+    # ---------------- Run raw ----------------
     per_cell_df_raw = None
-    if tool != "raw":  # (Yr_bin != Yp_bin).nnz != 0:  # working with non-raw
-        per_cell_df_raw, _ = calculate_dataframes(Yt_bin, Yr_bin, Yt=Yt, Yp=Yr, calculate_mse=calculate_mse)
+    if tool != "raw":
+        per_cell_df_raw, _ = calculate_dataframes(
+            Yp=Yr, Yt=Yt, calculate_mse=calculate_mse
+        )
 
-    print(f"{tool} Global sensitivity: {global_metrics['sensitivity']:.4f}")
-    plot_raw_and_processed_histogram(per_cell_df["sensitivity"], "sensitivity", raw_values=per_cell_df_raw["sensitivity"], tool=tool, hist_type=hist_type, out_path=f"{out_base}_sensitivity.png" if out_base else None, show=show)
-    
-    print(f"{tool} Global specificity: {global_metrics['specificity']:.4f}")
-    plot_raw_and_processed_histogram(per_cell_df["specificity"], "specificity", raw_values=per_cell_df_raw["specificity"], tool=tool, hist_type=hist_type, out_path=f"{out_base}_specificity.png" if out_base else None, show=show)
+    # ---------------- Plotting ----------------
+    print(f"{tool} Global Recall: {global_metrics['recall']:.4f}")
+    plot_raw_and_processed_histogram(
+        per_cell_df["Recall"],
+        "Recall",
+        raw_values=None,  # per_cell_df_raw["Recall"],  # recall is meaningless with raw
+        tool=tool,
+        hist_type=hist_type,
+        out_path=f"{out_base}_recall.png" if out_base else None,
+        show=show,
+    )
 
     print(f"{tool} Global PPV: {global_metrics['ppv']:.4f}")
-    plot_raw_and_processed_histogram(per_cell_df["PPV"], "PPV", raw_values=per_cell_df_raw["PPV"], tool=tool, hist_type=hist_type, out_path=f"{out_base}_PPV.png" if out_base else None, show=show)
+    plot_raw_and_processed_histogram(
+        per_cell_df["PPV"],
+        "PPV",
+        raw_values=per_cell_df_raw["PPV"],
+        tool=tool,
+        hist_type=hist_type,
+        out_path=f"{out_base}_PPV.png" if out_base else None,
+        show=show,
+    )
 
-    print(f"{tool} Global MSE: {global_metrics['mse']:.4f}")
-    plot_raw_and_processed_histogram(per_cell_df["MSE"], "MSE", raw_values=per_cell_df_raw["MSE"], tool=tool, hist_type=hist_type, out_path=f"{out_base}_MSE.png" if out_base else None, show=show)
+    if calculate_mse:
+        print(f"{tool} Global MSE: {global_metrics['mse']:.4f}")
+        plot_raw_and_processed_histogram(
+            per_cell_df["MSE"],
+            "MSE",
+            raw_values=per_cell_df_raw["MSE"],
+            tool=tool,
+            hist_type=hist_type,
+            out_path=f"{out_base}_MSE.png" if out_base else None,
+            show=show,
+        )
 
     return per_cell_df, global_metrics
 
