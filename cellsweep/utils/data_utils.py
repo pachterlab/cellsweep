@@ -5,6 +5,7 @@ import numpy as np
 import urllib.request
 import tarfile
 from scipy import io, sparse
+from scipy.ndimage import gaussian_filter1d
 import anndata as ad
 import pandas as pd
 from .logger_utils import setup_logger
@@ -154,8 +155,11 @@ def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_ce
     if method == "threshold":
         if umi_cutoff is None:
             if expected_cells is None:
-                raise ValueError("For method 'threshold', either umi_cutoff or expected_cells must be provided.")
-            umi_cutoff = determine_cutoff_umi_for_expected_cells(adata, expected_cells)
+                # raise ValueError("For method 'threshold', either umi_cutoff or expected_cells must be provided.")
+                logger.info("expected cells and UMI cutoff being determined automatically. To determine manually, please provide either expected_cells or umi_cutoff as a parameter.")
+                expected_cells, umi_cutoff = automatic_umi_cutoff_detection(adata)
+            else:
+                umi_cutoff = determine_cutoff_umi_for_expected_cells(adata, expected_cells)
         adata.obs["is_empty"] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
     #!!! add more methods here
     else:
@@ -328,3 +332,23 @@ def matrices_equal(A, B):
 
     # Case 3: dense arrays
     return np.array_equal(A, B)
+
+def automatic_umi_cutoff_detection(adata, min_counts=10):
+    counts = np.sort(np.ravel(adata.X.sum(axis=1)))[::-1]
+    counts = counts[counts > min_counts]
+    ranks = np.arange(1, len(counts) + 1)
+
+    x = ranks  # np.log10(ranks)
+    y = np.log10(counts)
+
+    # smooth to reduce noise in tail
+    y_smooth = gaussian_filter1d(y, sigma=2)
+
+    # second derivative
+    d2 = np.gradient(np.gradient(y_smooth, x), x)
+
+    knee_idx = np.argmin(d2)   # most negative curvature
+    knee_rank_barcode = ranks[knee_idx]
+    knee_count_umi = counts[knee_idx]
+
+    return knee_rank_barcode, knee_count_umi

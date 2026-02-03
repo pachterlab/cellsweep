@@ -54,6 +54,7 @@ def main():  # noqa: C901
         help="Path to input AnnData file (.h5ad) containing raw count matrix in .X.",
     )
     parser_denoise_count_matrix.add_argument(
+        "-o",
         "--adata_out",
         type=str,
         default="adata_denoised.h5ad",
