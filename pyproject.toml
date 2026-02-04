@@ -58,7 +58,6 @@ analysis = [
     "celltypist",
     "mpl-scatter-density",
     "astropy",
-    "wompywompy @ git+https://github.com/pachterlab/wompywompy.git",
     "scikit-learn",
     "ipywidgets",
     "torch",

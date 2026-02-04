@@ -1406,16 +1406,15 @@ def denoise_count_matrix(
     Returns
     -------
     AnnData
-        Denoised AnnData object with updated `adata.X`, and
-        added fields:
+        Denoised AnnData object with updated `adata.X`, and added fields:
         - `adata.layers["raw"]` : raw count matrix
         - `adata.obs["cell_ambient_fraction"]` : estimated ambient fraction per cell
-        - `adata.uns["em_convergence"]` : diagnostics and log-likelihood trace
-        - `adata.obs["alpha_hat"]' : final optimized alpha values
+        - `adata.obs["alpha_hat"]` : final optimized alpha values
         - `adata.obs["z_hat"]` : final cell-type assignments (These should not change)
+        - `adata.var["ambient_hat"]` : final optimized ambient distribution
         - `adata.uns["p_hat"]` : final optimized matrix of cell-type profiles (K x G)
         - `adata.uns["beta_hat"]` : final optimized beta
-        - `adata.var["ambient_hat"]` : final optimized ambient distribution
+        - `adata.uns["em_convergence"]` : diagnostics and log-likelihood trace
         - `adata.uns["loglike"]` : final log-likelihood (note that this value is not the 
            complete log-likelihood, only the relative log-likelihood)
 
@@ -1610,7 +1609,8 @@ def denoise_count_matrix(
 
     if is_dense:
         logger.info("Re-densifying output.")
-        adata.X = np.asarray(adata.X)
+        # adata.X = np.asarray(adata.X)
+        adata.X = adata.X.toarray()
 
     if adata_out:
         logger.info(f"Saving inferred adata to {adata_out!r}")
