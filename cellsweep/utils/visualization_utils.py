@@ -1347,6 +1347,19 @@ def plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_n
         palette=palette,
         marginal_ticks=show_marginal_ticks
     )
+
+    stats = (
+        df
+        .groupby("group")
+        .agg(
+            x_mean=("x", "mean"),
+            x_median=("x", "median"),
+            y_mean=("y", "mean"),
+            y_median=("y", "median"),
+        )
+    )
+    print(f"Marginal distribution stats:\n{stats}")
+
     
     #? apologies for the massive blocks
     if marginal_type == "histogram" and fill_histogram == False:
