@@ -1069,8 +1069,11 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         if re > rs:
             row_of_entry[rs:re] = n
 
-    exclude_from_p_update = warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N, 
-                                    freeze_empty, freeze_empty_mask, real_mask, eps, alpha_cap)
+    if freeze_ambient_profile:
+        exclude_from_p_update = warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N, 
+                                        freeze_empty, freeze_empty_mask, real_mask, eps, alpha_cap)
+    else:
+        exclude_from_p_update[:] = False
 
     # EM loop
     for it in range(1, max_iter + 1):
@@ -1112,7 +1115,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         if freeze_empty:
             alpha[~real_mask] = 1.0
 
-        if not ll_converged:
+        if not ll_converged and freeze_ambient_profile:
             # Stage 1: Don't allow suspect cells to update p
             exclude_from_p_update = (alpha > alpha_cap + 1e-6) & (~freeze_empty_mask)
             # Apply cap to all (non-empty) cells in stage 1
@@ -1140,7 +1143,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         # update p (with repulsion)
         p = p_numer + dirichlet_lambda
 
-        if not ll_converged:
+        if not ll_converged and freeze_ambient_profile:
             cluster_mass = p_numer.sum(axis=1)  # (K,)
             repel_lambda_k = repulsion_strength * cluster_mass  # (K,) pseudo-counts per cluster
 
@@ -1176,7 +1179,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
 
             logger.info(f"EM Iter {it:3d}: ll={ll:.3f} log_delta_p={np.log(delta_p):.4f} min_alpha={alpha_min:.4f} mean_alpha={alpha_mean:.4f} median_alpha={alpha_median:.4f} max_alpha={alpha_max:.4f} beta={beta:.6f}")
             
-            if not ll_converged:
+            if not ll_converged and freeze_ambient_profile:
                 logger.debug(f"{exclude_from_p_update.sum()} cells want to exceed alpha_n > {alpha_cap}. They will be excluded from update of p_k and allowed cell-type reassignment")
 
             if converged:
