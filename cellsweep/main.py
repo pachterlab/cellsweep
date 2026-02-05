@@ -58,7 +58,7 @@ def main():  # noqa: C901
         "--adata_out",
         type=str,
         default="adata_denoised.h5ad",
-        help="Path to output AnnData file (.h5ad) to save denoised count matrix. (default: adata_denoised.h5ad)",
+        help="Path to output AnnData file (.h5ad) to save denoised count matrix.",
     )
     parser_denoise_count_matrix.add_argument(
         "--max_iter",
@@ -71,6 +71,12 @@ def main():  # noqa: C901
         type=float,
         default=0.9,
         help="Initial value of alpha_n for each cell. Works better when close to 1.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--alpha_cap",
+        type=float,
+        default=0.9,
+        help="alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold will be excluded from updating p_k and allowed to change cell-types.",
     )
     parser_denoise_count_matrix.add_argument(
         "--beta",
@@ -97,6 +103,30 @@ def main():  # noqa: C901
         help="Pseudocount. Sometimes used for clipping.",
     )
     parser_denoise_count_matrix.add_argument(
+        "--ambient_lambda",
+        type=float,
+        default=50,
+        help="Pseudocount for ambient profile update. Higher values lead to smoother ambient profiles.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--bulk_lambda",
+        type=float,
+        default=10,
+        help="Pseudocount for bulk profile update. Higher values lead to smoother bulk profiles.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--repulsion_strength",
+        type=float,
+        default=10,
+        help="Strength of repulsion between ambient and cell-type profiles during M-step. Higher values lead to greater separation between ambient and cell-type profiles.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--max_frac_gene_repulsion",
+        type=float,
+        default=10,
+        help="Maximum fraction of each p_k entry that can be subtracted during repulsion.",
+    )
+    parser_denoise_count_matrix.add_argument(
         "--integer_out",
         action="store_true",
         help="If True, rounds denoised counts to nearest integer before saving.",
@@ -106,11 +136,6 @@ def main():  # noqa: C901
         type=int,
         default=1,
         help="number of numba threads",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--disable_fixed_celltype",
-        action="store_false",
-        help="Use fixed cell type annotations from adata.obs['cell_type'] if available.",
     )
     parser_denoise_count_matrix.add_argument(
         "--disable_freeze_empty",
@@ -126,87 +151,82 @@ def main():  # noqa: C901
         "--empty_droplet_method",
         type=str,
         default="threshold",
-        help=(
-            "Strategy to infer empty droplets if `is_empty` is not present. "
-            "Options include: 'threshold', 'quantile', or model-based approaches. "
-            "(default: 'threshold')"
-        ),
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--ambient_threshold",
-        type=float,
-        default=0.0,
-        help=(
-            "Strategy to infer empty droplets if `is_empty` is not present. Options may include 'threshold', 'quantile', or model-based approaches."
-        ),
+        choices=["threshold"],
+        help="Strategy to infer empty droplets if `is_empty` is not present."
     )
     parser_denoise_count_matrix.add_argument(
         "--umi_cutoff",
         type=int,
         default=None,
-        help=(
-            "Optional absolute UMI count threshold for classifying droplets as empty. "
-            "(default: None)"
-        ),
+        help="Optional absolute UMI count threshold for classifying droplets as empty."
     )
     parser_denoise_count_matrix.add_argument(
         "--expected_cells",
         type=int,
         default=None,
-        help=(
-            "Expected number of real cells, used when estimating thresholds. "
-            "(default: None)"
-        ),
+        help="Expected number of real cells, used when estimating thresholds."
     )
     parser_denoise_count_matrix.add_argument(
         "--tol",
         type=float,
         default=1e-3,
-        help=(
-            "Relative change in likelihood below which training stops."
-            "(default: 1e-3)"
-        ),
+        help="Relative change in likelihood below which training stops."
     )
     parser_denoise_count_matrix.add_argument(
         "--min_tol",
         type=float,
         default=1e-6,
-        help=(
-            "The minimum absolute change in likelihood below which training is discontinued."
-            "(default: 1e-6)"
-        ),
+        help="The minimum absolute change in likelihood below which training is discontinued."
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--tol_p",
+        type=float,
+        default=1e-4,
+        help="The maximum change in p below which training is discontinued. This is in addition to the tol_f stopping criterion.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--tol_f",
+        type=float,
+        default=1e-4,
+        help="The maximum change in f = (1 - beta) * alpha + beta, below which training is discontinued. This is in addition to the tol_p stopping criterion.",
     )
     parser_denoise_count_matrix.add_argument(
         "--random_state",
         type=int,
         default=42,
-        help="Random seed. (default: 42)",
+        help="Random seed.",
     )
     parser_denoise_count_matrix.add_argument(
-        "--verbose",
-        type=int,
+        "-v", "--verbose",
+        action="count",
         default=0,
-        help=(
-            "Verbosity level: 2 debug, 1 info, 0 warning, -1 error, -2 critical. "
-            "(default: 0)"
-        ),
+        help="Verbosity level. Default logging.WARNING, -v logging.INFO, -vv for logging.DEBUG)"
     )
     parser_denoise_count_matrix.add_argument(
         "--quiet",
         action="store_true",
-        default=False,
-        help="Suppresses most log output when True. (default: False)",
+        help="Suppress all output (overrides any verbose flag)",
     )
+    # no need because adata is always a file path in CLI
+    # parser_denoise_count_matrix.add_argument(
+    #     "--disable_copy_anndata",
+    #     action="store_false",
+    #     help="If adata is an Anndata object, then copy it to avoid modifying the input in-place."
+    # )
     parser_denoise_count_matrix.add_argument(
         "--log_file",
         type=str,
         default=None,
-        help="Optional path to save EM iteration logs. (default: None)",
+        help="Optional path to save EM iteration logs.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--cluster_dashboard",
+        action="store_true",
+        help="Compares clustering before and after CellSweep.",
     )
     parser_denoise_count_matrix.add_argument(
         "--debug",
         action="store_true",
-        default=False,
         help="If True, return tracker objects",
     )
 
@@ -250,25 +270,31 @@ def main():  # noqa: C901
             adata_out=args.adata_out,
             max_iter=args.max_iter,
             init_alpha=args.init_alpha,
+            alpha_cap=args.alpha_cap,
             beta=args.beta,
             eps=args.eps,
             log_eps=args.log_eps,
             dirichlet_lambda=args.dirichlet_lambda,
+            ambient_lambda=args.ambient_lambda,
+            bulk_lambda=args.bulk_lambda,
+            repulsion_strength=args.repulsion_strength,
+            max_frac_gene_repulsion=args.max_frac_gene_repulsion,
             integer_out=args.integer_out,
             threads=args.threads,
-            fixed_celltype=args.disable_fixed_celltype,
             freeze_empty=args.disable_freeze_empty,
-            freeze_ambient_profile=args.disable_freeze_ambient_profile,
             empty_droplet_method=args.empty_droplet_method,
             ambient_threshold=args.ambient_threshold,
             umi_cutoff=args.umi_cutoff,
             expected_cells=args.expected_cells,
             tol=args.tol,
             min_tol=args.min_tol,
+            tol_p=args.tol_p,
+            tol_f=args.tol_f,
             random_state=args.random_state,
             verbose=args.verbose,
             quiet=args.quiet,
             log_file=args.log_file,
+            cluster_dashboard=args.cluster_dashboard,
             debug=args.debug,
         )
         

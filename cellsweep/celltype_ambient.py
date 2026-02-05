@@ -1395,13 +1395,13 @@ def denoise_count_matrix(
         Suppresses most log output when True.
     
     copy_anndata : bool, default True
-        if adata is an Anndata object, then copy it to avoid modifying the input in-place.
+        If adata is an Anndata object, then copy it to avoid modifying the input in-place.
 
     log_file : str | None, default None
         Optional path to save EM iteration logs.
 
     cluster_dashboard : bool, default False
-        Compares clustering before and after CellSweep
+        Compares clustering before and after CellSweep.
 
     debug: bool, default False
         Displays graphs showing the progress of the model parameters over each iteration
@@ -1409,16 +1409,15 @@ def denoise_count_matrix(
     Returns
     -------
     AnnData
-        Denoised AnnData object with updated `adata.X`, and
-        added fields:
+        Denoised AnnData object with updated `adata.X`, and added fields:
         - `adata.layers["raw"]` : raw count matrix
         - `adata.obs["cell_ambient_fraction"]` : estimated ambient fraction per cell
-        - `adata.uns["em_convergence"]` : diagnostics and log-likelihood trace
-        - `adata.obs["alpha_hat"]' : final optimized alpha values
+        - `adata.obs["alpha_hat"]` : final optimized alpha values
         - `adata.obs["z_hat"]` : final cell-type assignments (These should not change)
+        - `adata.var["ambient_hat"]` : final optimized ambient distribution
         - `adata.uns["p_hat"]` : final optimized matrix of cell-type profiles (K x G)
         - `adata.uns["beta_hat"]` : final optimized beta
-        - `adata.var["ambient_hat"]` : final optimized ambient distribution
+        - `adata.uns["em_convergence"]` : diagnostics and log-likelihood trace
         - `adata.uns["loglike"]` : final log-likelihood (note that this value is not the 
            complete log-likelihood, only the relative log-likelihood)
 
@@ -1456,12 +1455,13 @@ def denoise_count_matrix(
             
     num_empty_droplets = adata.obs["is_empty"].sum()
     RECOMMENDED_MIN_EMPTY_DROPLETS = 10_000
-    if num_empty_droplets == 0:
-        logger.warning("No empty droplets found. Setting freeze_ambient_profile=False. Ambient profile estimation may be unreliable.")
-        freeze_ambient_profile = False
-    elif num_empty_droplets < RECOMMENDED_MIN_EMPTY_DROPLETS:
-        logger.warning(f"Number of empty droplets ({num_empty_droplets}) is less than the recommended minimum ({RECOMMENDED_MIN_EMPTY_DROPLETS}). "
-                       "Ambient profile estimation may be unreliable.")
+    if freeze_ambient_profile:
+        if num_empty_droplets < 30:
+            logger.warning(f"{num_empty_droplets} empty barcodes found. Setting freeze_ambient_profile=False, as at least 30 empty barcodes are required to keep this setting True. Ambient profile estimation may be unreliable.")
+            freeze_ambient_profile = False
+        elif num_empty_droplets < RECOMMENDED_MIN_EMPTY_DROPLETS:
+            logger.warning(f"Number of empty droplets ({num_empty_droplets}) is less than the recommended minimum ({RECOMMENDED_MIN_EMPTY_DROPLETS}). "
+                        "Ambient profile estimation may be unreliable.")
     
     adata.layers["raw"] = adata.X
     C = adata.X
@@ -1612,7 +1612,8 @@ def denoise_count_matrix(
 
     if is_dense:
         logger.info("Re-densifying output.")
-        adata.X = np.asarray(adata.X)
+        # adata.X = np.asarray(adata.X)
+        adata.X = adata.X.toarray()
 
     if adata_out:
         logger.info(f"Saving inferred adata to {adata_out!r}")
