@@ -47,6 +47,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
         X = X.tocsr()  # efficient row access
 
     celltypes = adata.obs.loc[~is_empty, celltype_key].astype("category")
+    celltypes = celltypes.cat.remove_unused_categories()
     unique_cts = celltypes.cat.categories
 
     # Preallocate array
