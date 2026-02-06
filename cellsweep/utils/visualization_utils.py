@@ -20,14 +20,12 @@ from scipy.ndimage import gaussian_filter1d
 import seaborn as sns
 import scanpy as sc
 from sklearn.metrics.pairwise import cosine_similarity
-import logging
-from scipy import io, sparse
-from datetime import datetime
+from scipy import sparse
 import anndata as ad
 # from scipy.stats import pearsonr
 import torch
 import tarfile
-from cellsweep.constants import CellBender_Fig2_to_Immune_All_High_celltype_mapping, CellBender_Fig2_to_Immune_All_Low_celltype_mapping, CellTypistHigh_to_ImmuneMajor, CellTypistLow_to_ImmuneMajor, immune_markers
+from cellsweep.constants import CellTypistHigh_to_ImmuneMajor, CellTypistLow_to_ImmuneMajor, immune_markers
 from upsetplot import from_contents, UpSet
 from .data_utils import take_adata_cell_gene_intersection, infer_empty_droplets, determine_cell_types
 from .logger_utils import setup_logger

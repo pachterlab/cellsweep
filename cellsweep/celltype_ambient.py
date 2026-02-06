@@ -3,7 +3,7 @@
 import gc
 import os
 from datetime import datetime
-from typing import Annotated, Optional
+from typing import Annotated, Optional, Union
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -17,7 +17,7 @@ from sklearn.decomposition import PCA, TruncatedSVD
 from sklearn.metrics import adjusted_rand_score, normalized_mutual_info_score, silhouette_score
 from sklearn.neighbors import NearestNeighbors
 
-from .utils import determine_cell_types, determine_cutoff_umi_for_expected_cells, infer_empty_droplets, load_adata, plot_cellsweep_likelihood_over_epochs, setup_logger
+from .utils import infer_empty_droplets, load_adata, setup_logger
 
 
 #* Take the mean expression of each gene across all cells of a given cell type, and normalize to sum to 1.
@@ -1252,7 +1252,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
 
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def denoise_count_matrix(
-    adata: str | ad.AnnData,
+    adata: Union[str, ad.AnnData],
     adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = "adata_denoised.h5ad",
     max_iter: Annotated[int, Field(gt=1)] = 1000,
     init_alpha: Annotated[float, Field(ge=0, le=1)] = 0.9,
