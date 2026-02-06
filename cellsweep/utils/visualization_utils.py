@@ -1070,11 +1070,13 @@ def plot_cross_species_histogram(adata, adata_raw=None, processed_name="processe
         adata = adata[~adata.obs_names.isin(doublet_cell_set)].copy()
         if adata_raw is not None:
             adata_raw = adata_raw[~adata_raw.obs_names.isin(doublet_cell_set)].copy()
-
+    
+    if adata_raw is not None:
+        adata_raw, adata = take_adata_cell_gene_intersection(adata_raw, adata)
 
     fig, ax = plt.subplots(figsize=(6, 4))
 
-    def plot_histplot(data, x, color, label, kind):
+    def plot_histplot(data, x, color, label, kind, max_x=None):
         if kind == "histogram":
             sns.histplot(
                 data=data,
@@ -1089,7 +1091,8 @@ def plot_cross_species_histogram(adata, adata_raw=None, processed_name="processe
                 label=label
             )
         elif kind == "smooth":
-            counts, bin_edges = np.histogram(data[x].dropna(), bins=100)
+            hist_range = (0, max_x) if max_x is not None else None
+            counts, bin_edges = np.histogram(data[x].dropna(), bins=100, range=hist_range)
             bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
             counts_smooth = gaussian_filter1d(counts, sigma=2)
             ax.plot(bin_centers, counts_smooth, color=color, linewidth=2, label=label)
@@ -1097,46 +1100,57 @@ def plot_cross_species_histogram(adata, adata_raw=None, processed_name="processe
             raise ValueError("kind must be either 'histogram' or 'smooth'")
 
     if histogram_values == "cells":
+        if "human_counts_total" not in adata.obs.columns or "mouse_counts_total" not in adata.obs.columns:
+            adata = identify_human_and_mouse_cells(adata, human_prefix=human_prefix, mouse_prefix=mouse_prefix)
+        
         if adata_raw is not None:
             if "human_counts_total" not in adata_raw.obs.columns or "mouse_counts_total" not in adata_raw.obs.columns:
                 adata_raw = identify_human_and_mouse_cells(adata_raw, human_prefix=human_prefix, mouse_prefix=mouse_prefix)
-            
-            # --- Human cells: plotting mouse_counts_total in gray ---
-            plot_histplot(
-                data=adata_raw.obs[adata_raw.obs["genome"] == "hg19"],
-                x="mouse_counts_total",
-                color="#ffd1a6",
-                label="mouse_raw",
-                kind=kind
-            )
-            
+            if xmax is None:
+                xmax = max(adata_raw.obs["human_counts_total"].max(), adata_raw.obs["mouse_counts_total"].max(), adata.obs["human_counts_total"].max(), adata.obs["mouse_counts_total"].max())
+        else:
+            if xmax is None:
+                xmax = max(adata.obs["human_counts_total"].max(), adata.obs["mouse_counts_total"].max())
+        
+        if adata_raw is not None:
+            # --- Mouse cells, human_counts_total ---
             plot_histplot(
                 data=adata_raw.obs[adata_raw.obs["genome"] == "mm10"],
                 x="human_counts_total",
-                color="#a6c8ff",
-                label="human_raw",
-                kind=kind
+                color="#ffd1a6",
+                label="mouse_raw",  # mouse CELLS
+                kind=kind,
+                max_x=xmax
             )
 
-        if "human_counts_total" not in adata.obs.columns or "mouse_counts_total" not in adata.obs.columns:
-            adata = identify_human_and_mouse_cells(adata, human_prefix=human_prefix, mouse_prefix=mouse_prefix)
-
-        # --- Human cells: plotting mouse_counts_total in gray ---
-        plot_histplot(
-            data=adata.obs[adata.obs["genome"] == "hg19"],
-            x="mouse_counts_total",
-            color="#cc5500",
-            label=f"mouse_{processed_name}",
-            kind=kind
-        )
-
-        # --- Mouse cells: plotting human_counts_total in blue ---
+            # --- Human cells, mouse_counts_total ---
+            plot_histplot(
+                data=adata_raw.obs[adata_raw.obs["genome"] == "hg19"],
+                x="mouse_counts_total",
+                color="#a6c8ff",
+                label="human_raw",  # human CELLS
+                kind=kind,
+                max_x=xmax
+            )
+        
+        # --- Mouse cells, human_counts_total ---
         plot_histplot(
             data=adata.obs[adata.obs["genome"] == "mm10"],
             x="human_counts_total",
+            color="#cc5500",
+            label=f"mouse_{processed_name}",  # mouse CELLS
+            kind=kind,
+            max_x=xmax
+        )
+
+        # --- Human cells, mouse_counts_total ---
+        plot_histplot(
+            data=adata.obs[adata.obs["genome"] == "hg19"],
+            x="mouse_counts_total",
             color="#0047b3",
-            label=f"human_{processed_name}",
-            kind=kind
+            label=f"human_{processed_name}",  # human CELLS
+            kind=kind,
+            max_x=xmax
         )
 
         if xmax:
@@ -1148,60 +1162,60 @@ def plot_cross_species_histogram(adata, adata_raw=None, processed_name="processe
         if title is True:
             title = f"Cross-species Gene Counts per Cell in {processed_name} Data"
     
-    elif histogram_values == "genes":
-        if "counts_in_human" not in adata.var.columns or "counts_in_mouse" not in adata.var.columns:
-            adata = identify_human_and_mouse_gene_counts(adata)
+    # elif histogram_values == "genes":
+    #     if "counts_in_human" not in adata.var.columns or "counts_in_mouse" not in adata.var.columns:
+    #         adata = identify_human_and_mouse_gene_counts(adata)
 
-        is_human_gene = adata.var_names.str.startswith(human_prefix)
-        is_mouse_gene = adata.var_names.str.startswith(mouse_prefix)
+    #     is_human_gene = adata.var_names.str.startswith(human_prefix)
+    #     is_mouse_gene = adata.var_names.str.startswith(mouse_prefix)
 
-        # --- Mouse cells: plotting human_counts_total in blue ---
-        plot_histplot(
-            data=adata.var.loc[is_human_gene],
-            x="counts_in_mouse",
-            color="#0047b3",
-            label=f"Human genes in mouse cells {processed_name}",
-            kind=kind
-        )
+    #     # --- Mouse cells: plotting human_counts_total in blue ---
+    #     plot_histplot(
+    #         data=adata.var.loc[is_human_gene],
+    #         x="counts_in_mouse",
+    #         color="#0047b3",
+    #         label=f"Human genes in mouse cells {processed_name}",
+    #         kind=kind
+    #     )
 
-        # --- Human cells: plotting mouse_counts_total in gray ---
-        plot_histplot(
-            data=adata.var.loc[is_mouse_gene],
-            x="counts_in_human",
-            color="#cc5500",
-            label=f"Mouse genes in human cells {processed_name}",
-            kind=kind
-        )
+    #     # --- Human cells: plotting mouse_counts_total in gray ---
+    #     plot_histplot(
+    #         data=adata.var.loc[is_mouse_gene],
+    #         x="counts_in_human",
+    #         color="#cc5500",
+    #         label=f"Mouse genes in human cells {processed_name}",
+    #         kind=kind
+    #     )
         
-        if adata_raw is not None:
-            if "counts_in_human" not in adata_raw.var.columns or "counts_in_mouse" not in adata_raw.var.columns:
-                adata_raw = identify_human_and_mouse_gene_counts(adata_raw)
+    #     if adata_raw is not None:
+    #         if "counts_in_human" not in adata_raw.var.columns or "counts_in_mouse" not in adata_raw.var.columns:
+    #             adata_raw = identify_human_and_mouse_gene_counts(adata_raw)
 
-            plot_histplot(
-                data=adata_raw.var.loc[is_human_gene],
-                x="counts_in_mouse",
-                color="#a6c8ff",
-                label="Human genes in mouse cells raw",
-                kind=kind
-            )
+    #         plot_histplot(
+    #             data=adata_raw.var.loc[is_human_gene],
+    #             x="counts_in_mouse",
+    #             color="#a6c8ff",
+    #             label="Human genes in mouse cells raw",
+    #             kind=kind
+    #         )
 
-            # --- Human cells: plotting mouse_counts_total in gray ---
-            plot_histplot(
-                data=adata_raw.var.loc[is_mouse_gene],
-                x="counts_in_human",
-                color="#ffd1a6",
-                label="Mouse genes in human cells raw",
-                kind=kind
-            )
+    #         # --- Human cells: plotting mouse_counts_total in gray ---
+    #         plot_histplot(
+    #             data=adata_raw.var.loc[is_mouse_gene],
+    #             x="counts_in_human",
+    #             color="#ffd1a6",
+    #             label="Mouse genes in human cells raw",
+    #             kind=kind
+    #         )
 
-        if xmax:
-            ax.set_xlim(0, xmax)
+    #     if xmax:
+    #         ax.set_xlim(0, xmax)
 
-        mouse_auc = histogram_auc(adata.var.loc[is_human_gene, "counts_in_mouse"], bins=100)
-        human_auc = histogram_auc(adata.var.loc[is_mouse_gene, "counts_in_human"], bins=100)
+    #     mouse_auc = histogram_auc(adata.var.loc[is_human_gene, "counts_in_mouse"], bins=100)
+    #     human_auc = histogram_auc(adata.var.loc[is_mouse_gene, "counts_in_human"], bins=100)
 
-        if title is True:
-            title = f"Cross-species Cell Counts per Gene in {processed_name} Data"
+    #     if title is True:
+    #         title = f"Cross-species Cell Counts per Gene in {processed_name} Data"
     else:
         raise ValueError("histogram_values must be either 'cells' or 'genes'")
 

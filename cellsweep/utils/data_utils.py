@@ -156,7 +156,7 @@ def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_ce
         if umi_cutoff is None:
             if expected_cells is None:
                 # raise ValueError("For method 'threshold', either umi_cutoff or expected_cells must be provided.")
-                logger.info("expected cells and UMI cutoff being determined automatically. To determine manually, please provide either expected_cells or umi_cutoff as a parameter.")
+                logger.warning("Expected cells and UMI cutoff being determined automatically. This is still experimental. To determine manually, please provide either expected_cells or umi_cutoff as a parameter.")
                 expected_cells, umi_cutoff = automatic_umi_cutoff_detection(adata)
             else:
                 umi_cutoff = determine_cutoff_umi_for_expected_cells(adata, expected_cells)
