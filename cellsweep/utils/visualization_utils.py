@@ -1111,6 +1111,9 @@ def plot_cross_species_histogram(adata, adata_raw=None, processed_name="processe
                 xmax = max(adata.obs["human_counts_total"].max(), adata.obs["mouse_counts_total"].max())
         
         if adata_raw is not None:
+            if len(adata_raw.obs[adata_raw.obs["genome"] == "mm10"]) == 0 or len(adata_raw.obs[adata_raw.obs["genome"] == "hg19"]) == 0:
+                print("Warning: adata_raw does not contain both human and mouse cells. Skipping raw data plotting.")
+
             # --- Mouse cells, human_counts_total ---
             plot_histplot(
                 data=adata_raw.obs[adata_raw.obs["genome"] == "mm10"],
@@ -1130,6 +1133,9 @@ def plot_cross_species_histogram(adata, adata_raw=None, processed_name="processe
                 kind=kind,
                 max_x=xmax
             )
+        
+        if len(adata.obs[adata.obs["genome"] == "mm10"]) == 0 or len(adata.obs[adata.obs["genome"] == "hg19"]) == 0:
+                print("Warning: adata does not contain both human and mouse cells. Skipping raw data plotting.")
         
         # --- Mouse cells, human_counts_total ---
         plot_histplot(
