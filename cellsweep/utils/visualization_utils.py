@@ -8,7 +8,7 @@ import re
 import requests
 import matplotlib
 import numpy as np
-from scipy.stats import gaussian_kde
+from scipy.stats import gaussian_kde, spearmanr
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.scale import SymmetricalLogScale
@@ -22,7 +22,6 @@ import scanpy as sc
 from sklearn.metrics.pairwise import cosine_similarity
 from scipy import sparse
 import anndata as ad
-# from scipy.stats import pearsonr
 import torch
 import tarfile
 from cellsweep.constants import CellTypistHigh_to_ImmuneMajor, CellTypistLow_to_ImmuneMajor, immune_markers
@@ -2453,6 +2452,86 @@ def compute_pbmc_correlations(adata_dict, immune_markers_dict=None, CellTypist_t
             correlation_average_values[adata_name][celltype] = np.nanmean(corr_vals[mask])
     
     return correlation_results, correlation_average_values
+
+def plot_cell_spearman_histogram(adata_raw, adata_processed, raw_name="Raw", processed_name="Processed", metric="spearman", rbo_p=0.9, bins=50, xlim=None, title=True, ylog=True, out_path=None, show=True):
+    # --- ensure same cells and genes in both adatas ---
+    adata_raw, adata_processed = adata_raw.copy(), adata_processed.copy()
+
+    adata_raw, adata_processed = take_adata_cell_gene_intersection(adata_raw, adata_processed)
+
+    # --- extract matrices ---
+    X1 = adata_raw.X
+    X2 = adata_processed.X
+
+    # convert sparse → dense if needed
+    if hasattr(X1, "toarray"):
+        X1 = X1.toarray()
+    if hasattr(X2, "toarray"):
+        X2 = X2.toarray()
+
+    if metric == "spearman":
+        # --- compute per-cell Spearman correlations ---
+        scores = np.array([
+            spearmanr(X1[i, :], X2[i, :]).correlation
+            for i in range(X1.shape[0])
+        ])
+        score_name = "Spearman correlation"
+        # default_xlim = (-1, 1)
+
+    elif metric == "rbo":
+        from rbo import RankingSimilarity
+
+        #!!! erase
+        X1 = X1[:100]
+        X2 = X2[:100]
+
+        def rank_genes_desc(x):
+            # highest expression first
+            return list(np.argsort(-x))
+
+        scores = []
+        for i in range(X1.shape[0]):
+            raw_rank = rank_genes_desc(X1[i, :])
+            proc_rank = rank_genes_desc(X2[i, :])
+            rbo_score = RankingSimilarity(raw_rank, proc_rank).rbo(p=rbo_p)
+            scores.append(rbo_score)
+
+        scores = np.array(scores)
+
+        score_name = f"RBO (p={rbo_p})"
+        # default_xlim = (0, 1)
+
+    else:
+        raise ValueError("Unsupported metric. Use 'spearman' or 'rbo'.")
+
+    # print summary stats
+    print(f"Per-cell {score_name} between {raw_name} and {processed_name}:")
+    print(f"  Mean: {np.mean(scores):.4f}")
+    print(f"  Median: {np.median(scores):.4f}")
+    print(f"  Std: {np.std(scores):.4f}")
+    print(f"  Min: {np.min(scores):.4f}")
+    print(f"  Max: {np.max(scores):.4f}")
+
+    # --- plot histogram ---
+    plt.figure(figsize=(6, 4))
+    plt.hist(scores, bins=bins, range=xlim, edgecolor="black")
+    if xlim is not None:
+        plt.xlim(xlim)
+    plt.xlabel(f"{score_name} (gene expression per cell)")
+    plt.ylabel("Number of cells")
+    if ylog:
+        plt.yscale("log")
+    if title is True:
+        title = f"Per-cell {score_name} between {raw_name} and {processed_name} data"
+    if title:
+        plt.title(title)
+    plt.tight_layout()
+    if out_path:
+        plt.savefig(out_path)
+    if show:
+        plt.show()
+    else:
+        plt.close()
 
 def plot_pbmc_correlation_scatterplot(correlation_average_values, tool_name, out_path=None, show=True):
     if "raw" not in correlation_average_values:

@@ -27,6 +27,9 @@ def take_adata_cell_gene_intersection(adata1, adata2):
     adata1_sub = adata1_sub[common_cells, common_genes].copy()
     adata2_sub = adata2_sub[common_cells, common_genes].copy()
 
+    # assert np.array_equal(adata1_sub.obs_names, adata2_sub.obs_names)
+    # assert np.array_equal(adata1_sub.var_names, adata2_sub.var_names)
+
     return adata1_sub, adata2_sub
 
 def determine_cutoff_umi_for_expected_cells(adata, expected_cells):

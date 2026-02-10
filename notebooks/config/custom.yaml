@@ -25,6 +25,7 @@ cellbender_total_droplets: null
 scar_epochs: null
 scar_prob: null
 expected_cells: null
+remove_empties: False
 min_genes: null
 min_cells: null
 umi_top_percentile_to_remove: null

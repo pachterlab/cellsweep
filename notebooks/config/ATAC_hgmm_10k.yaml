@@ -25,6 +25,7 @@ cellbender_total_droplets: null
 scar_epochs: 200
 scar_prob: 0.995
 expected_cells: 10609
+remove_empties: False
 min_genes: 0
 min_cells: 0
 umi_top_percentile_to_remove: 0
@@ -45,10 +46,10 @@ soupx_out_prefix_name: ATAC_hgmm_10k_output_soupx
 decontx_out_prefix_name: ATAC_hgmm_10k_output_decontx
 adata_path_scar_name: ATAC_hgmm_10k_output_scar.h5ad
 
-# # output file URLs from manuscript
-# cellsweep_matrix_url: https://caltech.box.com/shared/static/asrt7vgt7lnhazcjujkil1ak1v9y6qo5.h5ad
-# cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/0dma5qrc94tbi07pic0w8c0b50jxmach.h5
-# cellbender_ckpt_url: https://caltech.box.com/shared/static/esz6du1ti0wakqc1j2y1gzg445zllcw5.gz
-# soupx_matrix_url: https://caltech.box.com/shared/static/mt9us648ol61hdol3mohrpg1t658quqv.gz
-# decontx_matrix_url: https://caltech.box.com/shared/static/2hrjra6dcw92om90wgz4vwbkcebtt5r8.gz
-# scar_matrix_url: https://caltech.box.com/shared/static/8m3zmvqajy4tpui5c2jhxjr8q6pfoqg7.h5ad
+# output file URLs from manuscript
+cellsweep_matrix_url: null
+cellbender_matrix_filtered_url: null
+cellbender_ckpt_url: null
+soupx_matrix_url: null
+decontx_matrix_url: null
+scar_matrix_url: null
