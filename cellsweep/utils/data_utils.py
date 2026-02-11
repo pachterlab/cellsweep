@@ -37,7 +37,7 @@ def determine_cutoff_umi_for_expected_cells(adata, expected_cells):
     cutoff_umi = knee[expected_cells - 1]
     return cutoff_umi
 
-def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, min_genes=100, min_counts=None, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, hvg_flavor="seurat_v3", n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
+def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, umi_cutoff=None, expected_cells=None, min_genes=100, min_counts=None, min_cells=3, umi_top_percentile_to_remove=None, unique_genes_top_percentile_to_remove=None, mt_gene_percentile_to_remove=None, max_mt_percentage=25, n_top_genes=2000, hvg_flavor="seurat_v3", n_pcs=50, n_neighbors=15, leiden_resolution=1.0, seed=42, verbose=0, quiet=False):
     try:
         import scanpy as sc
     except ImportError:
@@ -51,9 +51,9 @@ def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, 
     #* empty droplet filtering
     if filter_empty_droplets:
         logger.info(f"Filtering empty droplets using 'infer_empty_droplets' function with method 'threshold'. This is done by calculating the total UMI counts for each cell and removing those that fall below a certain threshold, which helps to eliminate empty droplets that do not contain any cells.")
-        if "is_empty" in adata.obs.columns:
-            logger.info(f"'is_empty' column found in adata.obs. Using this column to filter empty droplets.")
-            adata = infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, verbose=verbose, quiet=quiet, logger=logger)
+        if "is_empty" not in adata.obs.columns:
+            logger.info(f"'is_empty' column not found in adata.obs. Using 'infer_empty_droplets' function to identify empty droplets.")
+            adata = infer_empty_droplets(adata, method="threshold", umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet, logger=logger)
         adata = adata[~adata.obs["is_empty"]].copy()
         logger.info(f"After filtering empty droplets, adata shape: {adata.shape}")
     
@@ -355,3 +355,87 @@ def automatic_umi_cutoff_detection(adata, min_counts=10):
     knee_count_umi = counts[knee_idx]
 
     return knee_rank_barcode, knee_count_umi
+
+
+def normalize_by_median_gene_expression(adata, layer=None, min_genes=None, min_cells=None, normalize=True, nonzero=True):
+    try:
+        import scanpy as sc
+    except ImportError:
+        raise ImportError("scanpy is required for this function. Please install scanpy, or reinstall cellsweep with pip install cellsweep[analysis].")
+
+    adata = adata.copy()
+    
+    if min_genes:
+        sc.pp.filter_cells(adata, min_genes=min_genes)
+    if min_cells:
+        sc.pp.filter_genes(adata, min_cells=min_cells)
+    
+    revert_to_raw = False
+    if normalize:
+        if "counts" in adata.layers:
+            print("Data already normalized")
+        else:
+            adata.layers["counts"] = adata.X.copy()
+            sc.pp.normalize_total(adata, target_sum=1e4, layer="counts", inplace=True)
+            revert_to_raw = True
+    else:
+        if "counts" in adata.layers and layer != "counts":
+            print("normalize=True, but 'counts' layer already exists. Setting layer to 'counts'.")
+            layer = "counts"
+
+    if layer and layer not in adata.layers:
+        raise ValueError(f"Layer '{layer}' not found in adata.layers. Available layers: {list(adata.layers.keys())}")
+    
+    X = adata.layers[layer] if layer is not None else adata.X
+
+    if sparse.issparse(X):
+        X = X.tocsc()
+
+    gene_medians = np.zeros(adata.n_vars)
+
+    for j in range(adata.n_vars):
+        col = X[:, j]
+        if sparse.issparse(col):
+            vals = col.data
+        else:
+            vals = col
+
+        if nonzero:
+            vals = vals[vals > 0]
+        gene_medians[j] = np.median(vals) if len(vals) > 0 else np.nan
+
+    adata.var["nonzero_median_norm_total"] = gene_medians
+
+    med = adata.var["nonzero_median_norm_total"].values
+
+    if normalize:
+        X = adata.layers["counts"] if layer is None else adata.layers[layer]  # use original counts for normalization to avoid dividing already normalized values by the median
+
+    if sparse.issparse(X):
+        X = X.tocsr()
+        X_gene = X.multiply(1.0 / med)
+    else:
+        X_gene = X / med
+
+    # clean up infinities / NaNs
+    if sparse.issparse(X_gene):
+        X_gene.data[~np.isfinite(X_gene.data)] = 0
+    else:
+        X_gene[~np.isfinite(X_gene)] = 0
+
+    
+    if sparse.issparse(X_gene):
+        X_gene = X_gene.tocsr()
+
+    adata.layers["norm_total_gene_median"] = X_gene
+
+    if revert_to_raw:
+        adata.X = adata.layers["counts"]
+        del adata.layers["counts"]
+    
+    # ensure adata.X is sparse
+    if not sparse.issparse(adata.X):
+        adata.X = sparse.csr_matrix(adata.X)
+
+    return adata
+

@@ -3,19 +3,19 @@
 import os
 import shutil
 import subprocess
-import itertools
 import re
-import requests
-import matplotlib
 import numpy as np
 from scipy.stats import gaussian_kde, spearmanr
 import pandas as pd
+from tqdm import tqdm
 import matplotlib.pyplot as plt
-from matplotlib.scale import SymmetricalLogScale
 import matplotlib.patheffects as pe
 import matplotlib.cm as cm
 from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
+import matplotlib.patches as mpatches
+from collections import OrderedDict
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 from scipy.ndimage import gaussian_filter1d
 import seaborn as sns
 import scanpy as sc
@@ -2481,16 +2481,12 @@ def plot_cell_spearman_histogram(adata_raw, adata_processed, raw_name="Raw", pro
     elif metric == "rbo":
         from rbo import RankingSimilarity
 
-        #!!! erase
-        X1 = X1[:100]
-        X2 = X2[:100]
-
         def rank_genes_desc(x):
             # highest expression first
             return list(np.argsort(-x))
 
         scores = []
-        for i in range(X1.shape[0]):
+        for i in tqdm(range(X1.shape[0]), desc="Computing RBO scores"):
             raw_rank = rank_genes_desc(X1[i, :])
             proc_rank = rank_genes_desc(X2[i, :])
             rbo_score = RankingSimilarity(raw_rank, proc_rank).rbo(p=rbo_p)
@@ -3146,4 +3142,147 @@ def make_dummy_title(title, out_path=None):
     plt.tight_layout()
     if out_path:
         fig.savefig(out_path, bbox_inches="tight", dpi=300)
+    plt.show()
+
+
+def plot_legend_only(bar_color_prefix_color_map, out_path, title=None, ncol=1):
+    fig, ax = plt.subplots(figsize=(2.5, 0.4 * len(bar_color_prefix_color_map)))
+    ax.axis("off")
+
+    handles = [
+        mpatches.Patch(color=color, label=label)
+        for label, color in bar_color_prefix_color_map.items()
+    ]
+
+    ax.legend(
+        handles=handles,
+        title=title,
+        loc="center",
+        ncol=ncol,
+    )
+
+    plt.savefig(out_path, bbox_inches="tight", dpi=300)
+    plt.show()
+
+def sort_dict(d, order=None):
+    if order is None:
+        return d
+    elif order == "alphabetical":
+        return OrderedDict(sorted(d.items(), key=lambda kv: kv[0]))
+    elif order == "ascending":
+        return OrderedDict(sorted(d.items(), key=lambda kv: kv[1]))
+    elif order == "descending":
+        return OrderedDict(sorted(d.items(), key=lambda kv: kv[1], reverse=True))
+    else:
+        raise ValueError(f"Order {order} not recognized.")
+
+def plot_runtime_comparison(
+    tool_to_runtime_minutes_dict,
+    order=None,
+    bar_color_prefix_color_map=None,
+    log=False,
+    plot_log_inset=True,
+    inset_limit=10,
+    out_path=None,
+):
+    tool_to_runtime_minutes_dict = sort_dict(tool_to_runtime_minutes_dict, order=order)
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    tools = list(tool_to_runtime_minutes_dict.keys())
+    runtimes = list(tool_to_runtime_minutes_dict.values())
+
+    # ---- MAIN BARPLOT (linear) ----
+    if bar_color_prefix_color_map is not None:
+        prefixes = [tool.split("_", 1)[0] for tool in tools]
+        df = pd.DataFrame({
+            "tool": tools,
+            "runtime": runtimes,
+            "prefix": prefixes,
+        })
+
+        if bar_color_prefix_color_map is True:
+            unique_prefixes = df["prefix"].unique()
+            palette = sns.color_palette("tab10", len(unique_prefixes))
+            bar_color_prefix_color_map = dict(zip(unique_prefixes, palette))
+        else:
+            if not all(p in bar_color_prefix_color_map for p in df["prefix"].unique()):
+                raise ValueError("Not all prefixes have colors.")
+
+        sns.barplot(
+            data=df,
+            x="tool",
+            y="runtime",
+            hue="prefix",
+            palette=bar_color_prefix_color_map,
+            dodge=False,
+            ax=ax,
+        )
+    else:
+        sns.barplot(x=tools, y=runtimes, color="gray", ax=ax)
+
+    ax.set_ylabel("Runtime (minutes)")
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=90)
+    inset_ax = None
+    if log:
+        ax.set_ylim(0.1, max(runtimes) * 1.2)
+        ax.set_yscale("log")
+    else:
+        if plot_log_inset:
+            # ---- INSET: LOG SCALE FOR runtime < 10 ----
+            inset_ax = inset_axes(
+                ax,
+                width="45%",   # relative to parent
+                height="45%",
+                loc="upper left",
+                bbox_to_anchor=(0.055, 0.00, 1, 1),  # (x, y, w, h) in axes coords
+                bbox_transform=ax.transAxes,
+            )
+
+            mask = np.array(runtimes) <= inset_limit
+            inset_tools = np.array(tools)[mask]
+            inset_runtimes = np.array(runtimes)[mask]
+
+            if bar_color_prefix_color_map is not None:
+                prefixes = [tool.split("_", 1)[0] for tool in inset_tools]
+                df_inset = pd.DataFrame({
+                    "tool": inset_tools,
+                    "runtime": inset_runtimes,
+                    "prefix": prefixes,
+                })
+                sns.barplot(
+                    data=df_inset,
+                    x="tool",
+                    y="runtime",
+                    hue="prefix",
+                    palette=bar_color_prefix_color_map,
+                    dodge=False,
+                    ax=inset_ax,
+                )
+            else:
+                sns.barplot(
+                    x=inset_tools,
+                    y=inset_runtimes,
+                    color="gray",
+                    ax=inset_ax,
+                )
+
+            inset_ax.set_yscale("log")
+            inset_ax.set_ylim(0.1, inset_limit * 1.2)
+            # inset_ax.set_title("Runtime < 10 min (log)", fontsize=9)
+            inset_ax.tick_params(axis="x", rotation=90, labelsize=8)
+            inset_ax.tick_params(axis="y", labelsize=8)
+            inset_ax.set_xlabel("")
+            inset_ax.set_ylabel("")
+
+    if not log and plot_log_inset and bar_color_prefix_color_map is not None:
+        if ax.get_legend() is not None:
+            ax.get_legend().remove()
+        if inset_ax is not None and inset_ax.get_legend() is not None:
+            inset_ax.get_legend().remove()
+        
+    # ---- SAVE / SHOW ----
+    if out_path:
+        plt.savefig(out_path, bbox_inches="tight", dpi=300)
+
     plt.show()

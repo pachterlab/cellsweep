@@ -64,7 +64,8 @@ analysis = [
     "torch",
     "scikit-misc",
     "adjustText",
-    "squidpy"
+    "squidpy",
+    "tqdm"
 ]
 
 [project.urls]
