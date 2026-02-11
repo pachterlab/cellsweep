@@ -63,14 +63,14 @@ def main():  # noqa: C901
     parser_denoise_count_matrix.add_argument(
         "--max_iter",
         type=int,
-        default=500,
+        default=2000,
         help="Maximum number of EM iterations.",
     )
     parser_denoise_count_matrix.add_argument(
         "--init_alpha",
         type=float,
         default=0.9,
-        help="Initial value of alpha_n for each cell. Works better when close to 1.",
+        help="Initial value of alpha_n for each cell.",
     )
     parser_denoise_count_matrix.add_argument(
         "--alpha_cap",
@@ -79,55 +79,55 @@ def main():  # noqa: C901
         help="alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold will be excluded from updating p_k and allowed to change cell-types.",
     )
     parser_denoise_count_matrix.add_argument(
-        "--beta",
+        "--init_beta",
         type=float,
         default=0.1,
-        help="Initial beta (percent bulk contamination) value for each cell. Works better when set to a higher number than expected (expected is around 0.05).",
+        help="Initial beta (percent bulk contamination) value for each cell.",
     )
     parser_denoise_count_matrix.add_argument(
         "--eps",
         type=float,
         default=1e-12,
-        help="Numerical stability constant to prevent division by zero or log(0).",
+        help="Numerical stability constant to prevent division by zero).",
     )
     parser_denoise_count_matrix.add_argument(
         "--log_eps",
         type=float,
         default=1e-300,
-        help="Numerical stability constant to prevent division by zero or log(0). Lower than eps for log values.",
+        help="Numerical stability constant to prevent log(0).",
     )
     parser_denoise_count_matrix.add_argument(
-        "--dirichlet_lambda",
+        "--celltype_lambda",
         type=float,
         default=10,
-        help="Pseudocount. Sometimes used for clipping.",
+        help="Pseudocount for celltype profile update. Higher values lead to smoother celltype profiles",
     )
     parser_denoise_count_matrix.add_argument(
         "--ambient_lambda",
         type=float,
         default=50,
-        help="Pseudocount for ambient profile update. Higher values lead to smoother ambient profiles.",
+        help="Pseudocount for ambient profile update. Higher values lead to a smoother ambient profile.",
     )
     parser_denoise_count_matrix.add_argument(
         "--bulk_lambda",
         type=float,
         default=10,
-        help="Pseudocount for bulk profile update. Higher values lead to smoother bulk profiles.",
+        help="Pseudocount for bulk profile update. Higher values lead to a smoother bulk profile.",
     )
     parser_denoise_count_matrix.add_argument(
         "--repulsion_strength",
         type=float,
-        default=10,
+        default=1e-4,
         help="Strength of repulsion between ambient and cell-type profiles during M-step. Higher values lead to greater separation between ambient and cell-type profiles.",
     )
     parser_denoise_count_matrix.add_argument(
         "--max_frac_gene_repulsion",
         type=float,
-        default=10,
+        default=0.2,
         help="Maximum fraction of each p_k entry that can be subtracted during repulsion.",
     )
     parser_denoise_count_matrix.add_argument(
-        "--integer_out",
+        "--round_X",
         action="store_true",
         help="If True, rounds denoised counts to nearest integer before saving.",
     )
@@ -167,16 +167,16 @@ def main():  # noqa: C901
         help="Expected number of real cells, used when estimating thresholds."
     )
     parser_denoise_count_matrix.add_argument(
-        "--tol",
+        "--del0_ll_tol",
         type=float,
         default=1e-3,
-        help="Relative change in likelihood below which training stops."
+        help="The change in likelihood, relative to the first likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked."
     )
     parser_denoise_count_matrix.add_argument(
-        "--min_tol",
+        "--min_ll_tol",
         type=float,
         default=1e-6,
-        help="The minimum absolute change in likelihood below which training is discontinued."
+        help="The change in likelihood, relative to the current likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked. This is intended to cap `del0_ll_tol` at the edge of floating-point precision."
     )
     parser_denoise_count_matrix.add_argument(
         "--tol_p",
@@ -218,16 +218,6 @@ def main():  # noqa: C901
         type=str,
         default=None,
         help="Optional path to save EM iteration logs.",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--cluster_dashboard",
-        action="store_true",
-        help="Compares clustering before and after CellSweep.",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--debug",
-        action="store_true",
-        help="If True, return tracker objects",
     )
 
     args, unknown_args = parent_parser.parse_known_args()
@@ -271,19 +261,18 @@ def main():  # noqa: C901
             max_iter=args.max_iter,
             init_alpha=args.init_alpha,
             alpha_cap=args.alpha_cap,
-            beta=args.beta,
+            beta=args.int_beta,
             eps=args.eps,
             log_eps=args.log_eps,
-            dirichlet_lambda=args.dirichlet_lambda,
+            celltype_lambda=args.celltype_lambda,
             ambient_lambda=args.ambient_lambda,
             bulk_lambda=args.bulk_lambda,
             repulsion_strength=args.repulsion_strength,
             max_frac_gene_repulsion=args.max_frac_gene_repulsion,
-            integer_out=args.integer_out,
+            round_X=args.round_X,
             threads=args.threads,
             freeze_empty=args.disable_freeze_empty,
             empty_droplet_method=args.empty_droplet_method,
-            ambient_threshold=args.ambient_threshold,
             umi_cutoff=args.umi_cutoff,
             expected_cells=args.expected_cells,
             tol=args.tol,
@@ -294,7 +283,5 @@ def main():  # noqa: C901
             verbose=args.verbose,
             quiet=args.quiet,
             log_file=args.log_file,
-            cluster_dashboard=args.cluster_dashboard,
-            debug=args.debug,
         )
         
