@@ -660,7 +660,7 @@ def denoise_count_matrix(
 
     empty_droplet_method : str, default "threshold"
         Strategy to infer non-cellular barcodes if `is_empty` is not present.
-        Options may include "threshold", "quantile", or model-based approaches.
+        Options include "threshold" or "mx_filter".
 
     umi_cutoff : int | None, default None
         Optional absolute UMI count threshold for classifying droplets as empty.

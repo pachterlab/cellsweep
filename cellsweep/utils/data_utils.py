@@ -6,6 +6,7 @@ import urllib.request
 import tarfile
 from scipy import io, sparse
 from scipy.ndimage import gaussian_filter1d
+from scipy.stats import entropy
 import anndata as ad
 import pandas as pd
 from .logger_utils import setup_logger
@@ -145,7 +146,7 @@ def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, 
     logger.info(f"Done!")
     return adata
 
-valid_empty_droplet_methods = {"threshold"}
+valid_empty_droplet_methods = {"threshold", "mx_filter"}
 def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
     """
     input: adata
@@ -163,6 +164,11 @@ def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_ce
                 expected_cells, umi_cutoff = automatic_umi_cutoff_detection(adata)
             else:
                 umi_cutoff = determine_cutoff_umi_for_expected_cells(adata, expected_cells)
+        adata.obs["is_empty"] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
+    elif method == "mx_filter":
+        if umi_cutoff is None:
+            logger.warning("UMI cutoff being determined automatically using mx_filter method. To determine manually, please provide umi_cutoff as a parameter.")
+            umi_cutoff = get_umi_cutoff_from_adata(adata, sum_axis=1, comps=[2], select_axis=None)
         adata.obs["is_empty"] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
     #!!! add more methods here
     else:
@@ -439,3 +445,139 @@ def normalize_by_median_gene_expression(adata, layer=None, min_genes=None, min_c
 
     return adata
 
+
+#* from mx_filter: https://github.com/cellatlas/mx/blob/master/mx/utils.py
+# def nd(arr):
+#     return np.asarray(arr).reshape(-1)
+
+# def write_list(fname, lst=list):
+#     with open(fname, "w") as f:
+#         for idx, ele in enumerate(lst):
+#             f.write(f"{ele}\n")
+
+# def knee(mtx, sum_axis):
+#     u = nd(mtx.sum(sum_axis))  # counts per barcode
+#     x = np.sort(u)[::-1]  # sorted
+#     v = np.log1p(x).reshape(-1, 1)  # log1p and reshaped for gmm
+#     return (u, x, v)
+
+
+# def knee_select(mtx, select_axis):
+#     u = nd(mtx[:, select_axis])  # counts per barcode
+#     x = np.sort(u)[::-1]  # sorted
+#     v = np.log1p(x).reshape(-1, 1)  # log1p and reshaped for gmm
+#     return (u, x, v)
+
+
+def gmm(x, v, comps):
+    from sklearn.mixture import GaussianMixture
+    n_comps = comps.pop(0)
+
+    gm = GaussianMixture(n_components=n_comps, random_state=42)
+    labels = gm.fit_predict(v)
+    prob = gm.predict_proba(v)
+    ent = entropy(prob, axis=1)
+
+    # index of v where low count cell is
+    cutoff = 0
+    if n_comps == 2:
+        ind = np.argmax(ent)
+        # log1p_cutoff = v[ind][0]
+        cutoff = x[ind]
+    elif n_comps > 2:
+        # sort means, and pick the range of the top two
+        means = np.sort((np.exp(gm.means_) - 1).flatten())
+        r = np.logical_and(x > means[-2], x < means[-1])  # make ranage
+        df = pd.DataFrame({"ent": ent, "idx": np.arange(ent.shape[0]).astype(int)})[r]
+        # get the index (of x) where the entropy is the max (in range r)
+        amax = df["ent"].argmax()
+        idx = df.iloc[amax]["idx"].astype(int)
+        cutoff = x[idx]
+
+    # n_iter -= 1
+    n_iter = len(comps)
+    if n_iter <= 0:
+        return (cutoff, (x > cutoff).sum())
+    return gmm(x[x > cutoff], v[x > cutoff], comps)  # , n_comps, n_iter)
+
+
+# def run_mx_filter(
+#     matrix_fn,
+#     axis_data_fn,
+#     matrix_fn_out,
+#     axis_data_out_fn,
+#     sum_axis=1,
+#     comps=[2],
+#     select_axis=None,  # if you want to do the knee only on certain columns
+# ):
+#     # read matrix
+#     mtx = io.mmread(matrix_fn).toarray()
+
+#     # read barcodes
+#     axis_data = []
+#     # read_str_list(axis_data_fn, axis_data)
+#     if axis_data_fn.split(".")[-1] == "gz":
+#         axis_data = pd.read_csv(axis_data_fn, header=None, compression="gzip").values.flatten()
+
+#     else:
+#         axis_data = pd.read_csv(axis_data_fn, header=None).values.flatten()
+
+#     (mtx_f, axis_data_f) = mx_filter(mtx, axis_data, sum_axis, comps, select_axis)
+
+#     # save filtered matrix
+#     io.mmwrite(matrix_fn_out, sparse.csr_matrix(mtx_f))
+
+#     # save filtered metadata
+#     write_list(axis_data_out_fn, axis_data_f)
+
+# def mx_filter(mtx, axis_data, sum_axis, comps, select_axis):
+#     # find knee
+#     # check this, do it twice?
+#     u, x, v = knee(mtx, sum_axis)
+#     if select_axis:
+#         u, x, v = knee_select(mtx, select_axis)
+
+#     (cutoff, ncells) = gmm(x, v, comps=comps)
+
+#     print(f"Filtered to {ncells:,.0f} cells with at least {cutoff:,.0f} UMIs.")
+
+#     # mask matrix and netadata
+#     mask = u > cutoff
+#     mtx_f = mtx[mask]
+#     axis_data_f = np.array(axis_data)[mask]
+#     return (mtx_f, axis_data_f)
+
+def get_umi_cutoff_from_adata(
+    adata,
+    sum_axis=1,
+    comps=[2],
+    select_axis=None,
+):
+    """
+    Compute UMI cutoff from AnnData using knee + GMM logic.
+    Returns only the cutoff.
+    """
+
+    # ---- Step 1: compute UMI totals safely ----
+    X = adata.X
+
+    if select_axis is not None:
+        # selecting specific columns (genes)
+        if sparse.issparse(X):
+            u = np.asarray(X[:, select_axis].sum(axis=1)).ravel()
+        else:
+            u = X[:, select_axis].sum(axis=1)
+    else:
+        if sparse.issparse(X):
+            u = np.asarray(X.sum(axis=sum_axis)).ravel()
+        else:
+            u = X.sum(axis=sum_axis)
+
+    # ---- Step 2: sort ----
+    x = np.sort(u)[::-1]
+    v = np.log1p(x).reshape(-1, 1)
+
+    # ---- Step 3: run GMM (avoid mutating comps) ----
+    cutoff, ncells = gmm(x, v, comps=comps.copy())
+
+    return cutoff
