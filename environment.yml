@@ -16,4 +16,3 @@ dependencies:
       - scanpy==1.11.5
       - scipy==1.15.3
       - seaborn==0.13.2
-      - .[analysis]

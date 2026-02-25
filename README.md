@@ -7,19 +7,20 @@ Sweep out noisy counts from single-cell RNA-seq data with CellSweep!
 ## Install
 ### Basic use
 ```
-pip install cellsweep  #!!! not yet uploaded on pypi - see below
+pip install cellsweep
 ```
 
 ### To run notebooks:
 ```
-pip install cellsweep[analysis]  # pip install cellsweep["analysis"] for Mac users  #!!! not yet uploaded on pypi - see below
+pip install cellsweep[analysis]
 ```
 
 ### To remake figures from the paper:
 ```
 git clone https://github.com/pachterlab/cellsweep.git
 cd cellsweep
-conda env create -f environment.yml  #!!! until on pypi, in environment.yml replace cellsweep[analysis]==0.1.0 with .[analysis]
+conda env create -f environment.yml
+pip install cellsweep[analysis]==0.1.0
 ```
 
 ## Quickstart

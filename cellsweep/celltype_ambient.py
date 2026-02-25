@@ -932,6 +932,8 @@ def denoise_count_matrix(
         adata.X = C_integer
     else:
         adata.X = C_denoised
+    
+    # adata.layers["noise"] = adata.layers["raw"] - adata.X
 
     if is_dense:
         logger.info("Re-densifying output.")

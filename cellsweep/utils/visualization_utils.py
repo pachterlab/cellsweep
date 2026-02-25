@@ -3286,3 +3286,26 @@ def plot_runtime_comparison(
         plt.savefig(out_path, bbox_inches="tight", dpi=300)
 
     plt.show()
+
+
+def print_top_ambient_genes(adata, top_n=10, out_path=None):
+    if "ambient_hat" not in adata.var.columns:
+        raise ValueError("adata.var must contain 'ambient_hat' column.")
+    
+    values = adata.var["ambient_hat"].values
+    
+    # Sort descending
+    idx = np.argsort(values)[::-1]
+    
+    top_genes = adata.var_names[idx[:top_n]]
+    top_vals  = values[idx[:top_n]]
+    
+    for gene, val in zip(top_genes, top_vals):
+        print(f"{gene}: {val}")
+    
+    if out_path:
+        df = pd.DataFrame({
+            "gene": adata.var_names[idx],
+            "ambient_hat": values[idx]
+        })
+        df.to_csv(out_path, index=False)
