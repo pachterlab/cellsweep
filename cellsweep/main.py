@@ -3,7 +3,7 @@
 import argparse
 import sys
 from .__init__ import __version__
-from .celltype_ambient import denoise_count_matrix
+from .model import denoise_count_matrix
 
 # Custom formatter for help messages that preserved the text formatting and adds the default value to the end of the help message
 class CustomHelpFormatter(argparse.RawTextHelpFormatter):

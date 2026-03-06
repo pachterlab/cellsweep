@@ -4,7 +4,7 @@ import pandas as pd
 import anndata as ad
 import scipy.sparse as sp
 from cellsweep import denoise_count_matrix
-from cellsweep.celltype_ambient import infer_celltype_profile
+from cellsweep.model import infer_celltype_profile
 
 # -----------------------
 # Fixtures
