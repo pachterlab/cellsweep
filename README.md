@@ -20,7 +20,7 @@ pip install cellsweep[analysis]
 git clone https://github.com/pachterlab/cellsweep.git
 cd cellsweep
 conda env create -f environment.yml
-pip install cellsweep[analysis]==0.1.0
+pip install cellsweep[analysis]==0.1.1
 ```
 
 ## Quickstart

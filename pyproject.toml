@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cellsweep"
-version = "0.1.0"
+version = "0.1.1"
 description = "Denoising scRNA-seq in a smart and efficient way."
 readme = {file = "README.md", content-type = "text/markdown"}
 license = {file = "LICENSE"}
@@ -65,7 +65,8 @@ analysis = [
     "scikit-misc",
     "adjustText",
     "squidpy",
-    "tqdm"
+    "tqdm",
+    "requests"
 ]
 
 [project.urls]

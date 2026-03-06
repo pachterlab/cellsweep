@@ -1,12 +1,8 @@
 """Logger Utils"""
 
 import os
-import shutil
-import requests
-import subprocess
 import logging
 from datetime import datetime
-from scipy import io, sparse
 
 def my_hello_world():
     print("Hello, world!")
@@ -72,6 +68,7 @@ def load_dataset_yaml(yaml_file=None):
     If missing (e.g., running in Colab), download from GitHub.
     """
     import yaml
+    import requests
 
     dataset_name = os.path.splitext(os.path.basename(yaml_file))[0]
 
@@ -116,6 +113,8 @@ def load_dataset_yaml(yaml_file=None):
 
 def list_github_yaml_files():
     import yaml
+    import requests
+
     api_url = "https://api.github.com/repos/pachterlab/cellsweep/contents/notebooks/config"
 
     r = requests.get(api_url)

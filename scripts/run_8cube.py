@@ -1,15 +1,6 @@
 import os
 import sys
-import numpy as np
-import pandas as pd
-import itertools
-import yaml
-import requests
-import matplotlib.pyplot as plt
 import anndata as ad
-from collections import OrderedDict
-import seaborn as sns
-import scanpy as sc
 from cellsweep import denoise_count_matrix
 import cellsweep.utils as cs_utils
 
