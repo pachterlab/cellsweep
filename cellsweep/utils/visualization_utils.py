@@ -3104,15 +3104,16 @@ def make_8cube_scatterplot(adata, celltype1=None, celltype2=None, tissue1=None, 
 
             gene_to_scatter_location_dict_key = gene_name if marker_type is None else f"{gene_name} ({marker_type} marker)"
 
-            x1 = float(adata_celltype1.var.loc[gene_id, "total_counts_cellsweep"])
-            y1 = float(adata_celltype1.var.loc[gene_id, "total_counts_raw"])
+            x1 = float(adata_celltype1.var.loc[gene_id, "total_counts_raw"])
+            y1 = float(adata_celltype1.var.loc[gene_id, "total_counts_cellsweep"])
+            
             x1 = x1 if x1 > 0.5 else 0.5
             y1 = y1 if y1 > 0.5 else 0.5
             gene_to_scatter_location_dict1[gene_to_scatter_location_dict_key] = (x1, y1)
             print(f"Gene {gene_name} (ID: {gene_id}, marker: {marker_type}) - Celltype1 ({celltype1}): cellsweep={x1}, raw={y1}")
 
-            x2 = float(adata_celltype2.var.loc[gene_id, "total_counts_cellsweep"])
-            y2 = float(adata_celltype2.var.loc[gene_id, "total_counts_raw"])
+            x2 = float(adata_celltype2.var.loc[gene_id, "total_counts_raw"])
+            y2 = float(adata_celltype2.var.loc[gene_id, "total_counts_cellsweep"])
             x2 = x2 if x2 > 0.5 else 0.5
             y2 = y2 if y2 > 0.5 else 0.5
             gene_to_scatter_location_dict2[gene_to_scatter_location_dict_key] = (x2, y2)
@@ -3122,16 +3123,15 @@ def make_8cube_scatterplot(adata, celltype1=None, celltype2=None, tissue1=None, 
     out_path = os.path.join(out_dir, f"{celltype1.replace(' ', '_')}_scatterplot.png")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     if not os.path.exists(out_path) or overwrite:
-        plot_matrix_scatterplot(adata1=adata_celltype1.var["total_counts_cellsweep"], adata2=adata_celltype1.var["total_counts_raw"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict1, scale="log", point_type="custom", title="Gene counts", density_type="scatter_with_kde", x_axis="cellsweep", y_axis='raw', out_path=out_path, show=True)
+        plot_matrix_scatterplot(adata1=adata_celltype1.var["total_counts_raw"], adata2=adata_celltype1.var["total_counts_cellsweep"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict1, scale="log", point_type="custom", title="Gene counts", density_type="scatter_with_kde", x_axis="raw", y_axis='cellsweep', out_path=out_path, show=True)
     else:
         print(f"Scatterplot for {celltype1} already exists at {out_path} and overwrite=False, skipping...")
 
     print("Plotting scatterplot2")
     out_path = os.path.join(out_dir, f"{celltype2.replace(' ', '_')}_scatterplot.png")
-    out_path_title = out_path.replace("_scatterplot.png", "_title.png")
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     if not os.path.exists(out_path) or overwrite:
-        plot_matrix_scatterplot(adata1=adata_celltype2.var["total_counts_cellsweep"], adata2=adata_celltype2.var["total_counts_raw"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict2, scale="log", point_type="custom", title="Gene counts", density_type="scatter_with_kde", x_axis="cellsweep", y_axis='raw', out_path=out_path, show=True)
+        plot_matrix_scatterplot(adata1=adata_celltype2.var["total_counts_raw"], adata2=adata_celltype2.var["total_counts_cellsweep"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict2, scale="log", point_type="custom", title="Gene counts", density_type="scatter_with_kde", x_axis="raw", y_axis='cellsweep', out_path=out_path, show=True)
     else:
         print(f"Scatterplot for {celltype2} already exists at {out_path} and overwrite=False, skipping...")
 
