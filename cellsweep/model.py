@@ -743,11 +743,10 @@ def denoise_count_matrix(
         Denoised AnnData object with updated `adata.X`, and added fields:
         - `adata.layers["raw"]` : raw count matrix
         - `adata.obs["alpha_hat"]` : final optimized alpha values
-        - `adata.obs["celltype_hat"]` : final cell-type assignments (These should not change)
+        - `adata.obs["z_hat"]` : final cell-type assignments 
         - `adata.var["ambient_hat"]` : final optimized ambient distribution
         - `adata.uns["p_hat"]` : final optimized matrix of cell-type profiles (K x G)
         - `adata.uns["beta_hat"]` : final optimized beta
-        - `adata.uns["em_convergence"]` : diagnostics and log-likelihood trace
         - `adata.uns["loglike"]` : final log-likelihood (note that this value is not the 
            complete log-likelihood, only the relative log-likelihood)
 
@@ -921,7 +920,7 @@ def denoise_count_matrix(
     z_hat[real_mask] = gamma_idx[real_mask] + 1
     adata.obs["z_hat"] = z_hat
     adata.uns["p_hat"] = p
-    adata.uns["init_beta_hat"] = beta
+    adata.uns["beta_hat"] = beta
     adata.var["ambient_hat"] = a
     adata.uns["loglike"] = ll
 
