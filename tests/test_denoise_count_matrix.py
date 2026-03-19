@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import anndata as ad
 import scipy.sparse as sp
+import sys
 from cellsweep import denoise_count_matrix
 from cellsweep.model import infer_celltype_profile
 
@@ -76,3 +77,42 @@ def test_no_celltype_column_raises(small_adata):
     del small_adata.obs["celltype"]
     with pytest.raises(KeyError):
         infer_celltype_profile(small_adata)
+
+
+def test_cli_denoise_count_matrix_runs(tmp_path, small_adata, monkeypatch):
+    """Smoke test: ensure CLI command dispatches without error."""
+    from cellsweep.main import main
+
+    in_path = tmp_path / "input.h5ad"
+    out_path = tmp_path / "denoised_cli.h5ad"
+    small_adata.write_h5ad(in_path)
+
+    calls = {}
+
+    def fake_denoise_count_matrix(**kwargs):
+        calls["kwargs"] = kwargs
+        small_adata.write_h5ad(kwargs["adata_out"])
+        return small_adata
+
+    monkeypatch.setattr("cellsweep.main.denoise_count_matrix", fake_denoise_count_matrix)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "cellsweep",
+            "denoise_count_matrix",
+            str(in_path),
+            "-o",
+            str(out_path),
+            "--quiet",
+            "--max_iter",
+            "2",
+        ],
+    )
+
+    main()
+
+    assert "kwargs" in calls
+    assert calls["kwargs"]["adata"] == str(in_path)
+    assert calls["kwargs"]["adata_out"] == str(out_path)
+    assert out_path.exists()

@@ -61,72 +61,6 @@ def main():  # noqa: C901
         help="Path to output AnnData file (.h5ad) to save denoised count matrix.",
     )
     parser_denoise_count_matrix.add_argument(
-        "--max_iter",
-        type=int,
-        default=2000,
-        help="Maximum number of EM iterations.",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--init_alpha",
-        type=float,
-        default=0.9,
-        help="Initial value of alpha_n for each cell.",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--alpha_cap",
-        type=float,
-        default=0.9,
-        help="alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold will be excluded from updating p_k and allowed to change cell-types.",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--init_beta",
-        type=float,
-        default=0.1,
-        help="Initial beta (percent bulk contamination) value for each cell.",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--eps",
-        type=float,
-        default=1e-12,
-        help="Numerical stability constant to prevent division by zero).",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--log_eps",
-        type=float,
-        default=1e-300,
-        help="Numerical stability constant to prevent log(0).",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--celltype_lambda",
-        type=float,
-        default=10,
-        help="Pseudocount for celltype profile update. Higher values lead to smoother celltype profiles",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--ambient_lambda",
-        type=float,
-        default=50,
-        help="Pseudocount for ambient profile update. Higher values lead to a smoother ambient profile.",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--bulk_lambda",
-        type=float,
-        default=10,
-        help="Pseudocount for bulk profile update. Higher values lead to a smoother bulk profile.",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--repulsion_strength",
-        type=float,
-        default=1e-4,
-        help="Strength of repulsion between ambient and cell-type profiles during M-step. Higher values lead to greater separation between ambient and cell-type profiles.",
-    )
-    parser_denoise_count_matrix.add_argument(
-        "--max_frac_gene_repulsion",
-        type=float,
-        default=0.2,
-        help="Maximum fraction of each p_k entry that can be subtracted during repulsion.",
-    )
-    parser_denoise_count_matrix.add_argument(
         "--round_X",
         action="store_true",
         help="If True, rounds denoised counts to nearest integer before saving.",
@@ -138,7 +72,7 @@ def main():  # noqa: C901
         help="number of numba threads",
     )
     parser_denoise_count_matrix.add_argument(
-        "--disable_freeze_empty",
+        "--disable_freeze_empties",
         action="store_false",
         help="If True, does not attempt to reestimate empty droplets."
     )
@@ -165,6 +99,72 @@ def main():  # noqa: C901
         type=int,
         default=None,
         help="Expected number of real cells, used when estimating thresholds."
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--init_alpha",
+        type=float,
+        default=0.9,
+        help="Initial value of alpha_n for each cell.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--init_beta",
+        type=float,
+        default=0.1,
+        help="Initial beta (percent bulk contamination) value for each cell.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--alpha_cap",
+        type=float,
+        default=0.9,
+        help="alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold will be excluded from updating p_k and allowed to change cell-types.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--repulsion_strength",
+        type=float,
+        default=1e-4,
+        help="Strength of repulsion between ambient and cell-type profiles during M-step. Higher values lead to greater separation between ambient and cell-type profiles.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--max_frac_gene_repulsion",
+        type=float,
+        default=0.2,
+        help="Maximum fraction of each p_k entry that can be subtracted during repulsion.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--celltype_lambda",
+        type=float,
+        default=10,
+        help="Pseudocount for celltype profile update. Higher values lead to smoother celltype profiles",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--ambient_lambda",
+        type=float,
+        default=50,
+        help="Pseudocount for ambient profile update. Higher values lead to a smoother ambient profile.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--bulk_lambda",
+        type=float,
+        default=10,
+        help="Pseudocount for bulk profile update. Higher values lead to a smoother bulk profile.",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--eps",
+        type=float,
+        default=1e-12,
+        help="Numerical stability constant to prevent division by zero).",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--log_eps",
+        type=float,
+        default=1e-300,
+        help="Numerical stability constant to prevent log(0).",
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--max_iter",
+        type=int,
+        default=2000,
+        help="Maximum number of EM iterations.",
     )
     parser_denoise_count_matrix.add_argument(
         "--del0_ll_tol",
@@ -203,16 +203,10 @@ def main():  # noqa: C901
         help="Verbosity level. Default logging.WARNING, -v logging.INFO, -vv for logging.DEBUG)"
     )
     parser_denoise_count_matrix.add_argument(
-        "--quiet",
+        "-q", "--quiet",
         action="store_true",
         help="Suppress all output (overrides any verbose flag)",
     )
-    # no need because adata is always a file path in CLI
-    # parser_denoise_count_matrix.add_argument(
-    #     "--disable_copy_anndata",
-    #     action="store_false",
-    #     help="If adata is an Anndata object, then copy it to avoid modifying the input in-place."
-    # )
     parser_denoise_count_matrix.add_argument(
         "--log_file",
         type=str,
@@ -258,30 +252,32 @@ def main():  # noqa: C901
         denoise_count_matrix(
             adata=args.adata,
             adata_out=args.adata_out,
-            max_iter=args.max_iter,
-            init_alpha=args.init_alpha,
-            alpha_cap=args.alpha_cap,
-            beta=args.int_beta,
-            eps=args.eps,
-            log_eps=args.log_eps,
-            celltype_lambda=args.celltype_lambda,
-            ambient_lambda=args.ambient_lambda,
-            bulk_lambda=args.bulk_lambda,
-            repulsion_strength=args.repulsion_strength,
-            max_frac_gene_repulsion=args.max_frac_gene_repulsion,
             round_X=args.round_X,
             threads=args.threads,
-            freeze_empty=args.disable_freeze_empty,
+            freeze_empties=args.disable_freeze_empties,
+            freeze_ambient_profile=args.disable_freeze_ambient_profile,
             empty_droplet_method=args.empty_droplet_method,
             umi_cutoff=args.umi_cutoff,
             expected_cells=args.expected_cells,
-            tol=args.tol,
-            min_tol=args.min_tol,
+            init_alpha=args.init_alpha,
+            init_beta=args.init_beta,
+            alpha_cap=args.alpha_cap,
+            repulsion_strength=args.repulsion_strength,
+            max_frac_gene_repulsion=args.max_frac_gene_repulsion,
+            celltype_lambda=args.celltype_lambda,
+            ambient_lambda=args.ambient_lambda,
+            bulk_lambda=args.bulk_lambda,
+            eps=args.eps,
+            log_eps=args.log_eps,
+            max_iter=args.max_iter,
+            del0_ll_tol=args.del0_ll_tol,
+            min_ll_tol=args.min_ll_tol,
             tol_p=args.tol_p,
             tol_f=args.tol_f,
             random_state=args.random_state,
+            inplace=False,  # No need to copy adata because we are loading it from a file path and saving to a new file path, so there is no risk of modifying the input in-place.
             verbose=args.verbose,
             quiet=args.quiet,
-            log_file=args.log_file,
+            log_file=args.log_file,            
         )
         
