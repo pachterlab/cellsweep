@@ -1,11 +1,13 @@
 import os
 import sys
+import subprocess
 import anndata as ad
+import numpy as np
+import argparse
 from cellsweep import denoise_count_matrix
 import cellsweep.utils as cs_utils
 
 import resource
-import sys
 
 # Set max RAM usage in bytes
 max_ram_gb = 500  # 300 GB
@@ -42,6 +44,20 @@ cellsweep_max_iter = 1000
 cellsweep_beta = 0.1
 cellsweep_init_alpha = 0.9
 
+# Docker/Podman settings for the R-based alternate tools (SoupX, DecontX).
+# Mirrors the configuration used in notebooks/benchmarking.ipynb.
+docker = "podman"  # "docker" or "podman" - if podman and SELinux is enforcing, run `sudo setenforce 0` first
+rver_docker_workspace = "/home/ruser/work/cellsweep"
+soupx_image = "josephrich98/cellsweep_tutorials:soupx.0.1.0"
+decontx_image = "josephrich98/cellsweep_tutorials:decontx.0.1.0"
+
+parser = argparse.ArgumentParser(description="Run plates processing pipeline.")
+parser.add_argument("--plates", nargs="+", default=["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"], help="List of plate names (default: all plates)",)
+parser.add_argument("--tools", nargs="+", default=["cellsweep"], choices=["cellsweep", "soupx", "decontx"], help="Denoising tools to run (default: cellsweep). Alternate tools: soupx, decontx.",)
+args = parser.parse_args()
+plates = args.plates
+tools = args.tools
+
 if not os.path.exists(adata_raw_parent_dir):
     raise ValueError(f"adata_raw_parent_dir {adata_raw_parent_dir} does not exist.")
 if not os.path.exists(adata_filtered_dir):
@@ -49,15 +65,9 @@ if not os.path.exists(adata_filtered_dir):
 
 
 plate_to_tissues = {}
-plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]
 for plate in plates:
     plate_dir = os.path.join(adata_raw_parent_dir, plate)
     plate_to_tissues[plate] = [tissue for tissue in os.listdir(plate_dir)]
-        
-# plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]
-# adata_raw_dict = {}
-# for plate in plates:
-#     adata_raw_dict[plate] = ad.read_h5ad(os.path.join(data_dir, plate, "raw_counts.h5ad"))
 
 expected_cells = {
     'igvf_003': 643226,
@@ -70,29 +80,134 @@ expected_cells = {
     'igvf_011': 806290
 }
 
-adata_cellsweep_dict = {}
-# for plate, adata_raw in adata_raw_dict.items():
+
+def _to_container(path):
+    """Map a host path under cellsweep_dir to its mounted location inside the container."""
+    return path.replace(cellsweep_dir, rver_docker_workspace)
+
+
+def _write_10x_for_plate(plate):
+    """Write 10x-like raw/filtered matrices (and leiden clusters.csv) for a plate.
+
+    Returns the paths dict from cs_utils.write_10x_like. The raw_counts.h5ad for the
+    8cube already carries the `is_empty` and `leiden` obs columns the alternate tools need.
+    """
+    matrix_dir = os.path.join(data_dir, plate, "matrix_tar_files")
+    adata_raw_path = os.path.join(data_dir, plate, "raw_counts.h5ad")
+    if not os.path.exists(adata_raw_path):
+        raise FileNotFoundError(f"Raw counts for plate {plate} not found at {adata_raw_path}")
+    print(f"  Writing 10x-like matrices for plate {plate} to {matrix_dir}...")
+    adata_raw = ad.read_h5ad(adata_raw_path)
+    adata_raw.var_names_make_unique()
+    paths = cs_utils.write_10x_like(
+        adata_raw,
+        matrix_dir,
+        gzip_output=False,
+        is_empty_col="is_empty",
+        cluster_col="leiden",
+        write_raw=True,
+        write_filtered=True,
+    )
+    paths["matrix_dir"] = matrix_dir
+
+    # Upper UMI bound for SoupX's soup/background estimation. The 8cube raw matrices are
+    # pre-filtered (empty droplets sit well above SoupX's default (0,100] range), so estimate
+    # the soup from the actual empty droplets. estimateSoup selects droplets with UMIs strictly
+    # below this bound, so use (max empty-droplet UMI + 1): includes every empty droplet while
+    # still excluding all real cells (which have strictly more UMIs than any empty droplet).
+    is_empty = adata_raw.obs["is_empty"].astype(bool).values
+    if "n_counts" in adata_raw.obs.columns:
+        empty_counts = adata_raw.obs["n_counts"].values[is_empty]
+    else:
+        empty_counts = np.asarray(adata_raw.X.sum(axis=1)).ravel()[is_empty]
+    paths["soup_range_max"] = float(empty_counts.max()) + 1.0 if empty_counts.size else 100.0
+
+    del adata_raw  # memory management
+    return paths
+
+
+def run_soupx(plate):
+    out_path = os.path.join(data_dir, plate, "soupx.h5ad")
+    if os.path.exists(out_path) and not overwrite:
+        print(f"SoupX output for plate {plate} already exists at {out_path}, skipping...")
+        return
+    print(f"Processing SoupX for plate {plate}...")
+    paths = _write_10x_for_plate(plate)
+    soupx_out_prefix = os.path.join(data_dir, plate, "soupx_out")
+    cmd = [
+        docker, "run", "--rm", "--security-opt", "label=disable",
+        "-w", "/home/ruser/work",
+        "-v", f"{cellsweep_dir}:{rver_docker_workspace}",
+        soupx_image,
+        "Rscript", _to_container(os.path.join(cellsweep_dir, "scripts", "run_soupx.R")),
+        _to_container(paths["matrix_dir"]),
+        _to_container(paths["clusters"]),
+        _to_container(soupx_out_prefix),
+        "leiden",
+        str(paths["soup_range_max"]),
+    ]
+    print("  " + " ".join(cmd))
+    subprocess.run(cmd, check=True)
+    adata_soupx = cs_utils.load_adata(soupx_out_prefix)
+    adata_soupx.var_names_make_unique()
+    print(f"  Counts less-than-or-equal check for SoupX: not run (raw freed); writing {out_path}")
+    adata_soupx.write_h5ad(out_path)
+    del adata_soupx  # memory management
+
+
+def run_decontx(plate):
+    out_path = os.path.join(data_dir, plate, "decontx.h5ad")
+    if os.path.exists(out_path) and not overwrite:
+        print(f"DecontX output for plate {plate} already exists at {out_path}, skipping...")
+        return
+    print(f"Processing DecontX for plate {plate}...")
+    paths = _write_10x_for_plate(plate)
+    decontx_out_prefix = os.path.join(data_dir, plate, "decontx_out")
+    cmd = [
+        docker, "run", "--rm", "--security-opt", "label=disable",
+        "-w", "/home/ruser/work",
+        "-v", f"{cellsweep_dir}:{rver_docker_workspace}",
+        decontx_image,
+        "Rscript", _to_container(os.path.join(cellsweep_dir, "scripts", "run_decontx.R")),
+        _to_container(paths["raw"]),
+        _to_container(paths["filtered"]),
+        paths["technology"],
+        _to_container(decontx_out_prefix),
+        "--dont_prepend_sample_to_barcodes",
+    ]
+    print("  " + " ".join(cmd))
+    subprocess.run(cmd, check=True)
+    adata_decontx = cs_utils.load_adata(decontx_out_prefix)
+    adata_decontx.var_names_make_unique()
+    adata_decontx.write_h5ad(out_path)
+    del adata_decontx  # memory management
+
+
+def run_cellsweep(plate):
+    adata_path_cellsweep = os.path.join(data_dir, plate, "cellsweep.h5ad")
+    if os.path.exists(adata_path_cellsweep) and not overwrite:
+        print(f"Cellsweep output for plate {plate} already exists at {adata_path_cellsweep}, skipping...")
+        return
+    print(f"Processing Cellsweep for plate {plate}...")
+    adata_raw = ad.read_h5ad(os.path.join(data_dir, plate, "raw_counts.h5ad"))
+    cellsweep_log_path = os.path.join(data_dir, plate, "cellsweep.log")
+
+    adata_cellsweep = denoise_count_matrix(adata_raw, adata_out=adata_path_cellsweep, beta=cellsweep_beta, freeze_ambient_profile=True, init_alpha=cellsweep_init_alpha, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells[plate], threads=threads, verbose=verbose, log_file=cellsweep_log_path)
+
+    adata_cellsweep = None  # memory management
+    del adata_raw   # memory management
+
+
+tool_runners = {
+    "cellsweep": run_cellsweep,
+    "soupx": run_soupx,
+    "decontx": run_decontx,
+}
+
 try:
     for plate in plates:
-        adata_path_cellsweep = os.path.join(data_dir, plate, "cellsweep.h5ad")
-        if os.path.exists(adata_path_cellsweep) and not overwrite:
-            print(f"Cellsweep output for plate {plate} already exists at {adata_path_cellsweep}, skipping...")
-            continue
-        print(f"Processing Cellsweep for plate {plate}...")
-        adata_raw = ad.read_h5ad(os.path.join(data_dir, plate, "raw_counts.h5ad"))
-        cellsweep_log_path = os.path.join(data_dir, plate, "cellsweep.log")
-        
-        adata_cellsweep = denoise_count_matrix(adata_raw, adata_out=adata_path_cellsweep, beta=cellsweep_beta, freeze_ambient_profile=True, init_alpha=cellsweep_init_alpha, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells[plate], threads=threads, verbose=verbose, log_file=cellsweep_log_path)
-        # adata_cellsweep = adata_cellsweep[~adata_cellsweep.obs["is_empty"]].copy()
-        # adata_cellsweep.var_names_make_unique()
-        # adata_filtered_path_cellsweep = os.path.join(data_dir, plate, "cellsweep_filtered.h5ad")
-        # if not os.path.exists(adata_filtered_path_cellsweep) or overwrite:
-        #     adata_cellsweep.write_h5ad(adata_filtered_path_cellsweep)
-        # adata_cellsweep_dict[plate] = adata_cellsweep
-
-        adata_cellsweep = None  #? memory management
-        del adata_raw   #? memory management
+        for tool in tools:
+            tool_runners[tool](plate)
 except MemoryError:
     print("❌ Memory limit exceeded — exiting")  # might just print 'Segmentation fault (core dumped)' rather than this
     sys.exit(1)
-

@@ -1830,6 +1830,8 @@ def plot_per_cell_difference_multi(
     plot_type="cell",
     colors=None,
     bins=100,
+    logx=False,
+    xmax=None,
     title="Per-cell Difference Distribution: raw − denoised",
     out_path=None,
     show=True
@@ -1865,8 +1867,10 @@ def plot_per_cell_difference_multi(
     plt.figure(figsize=(8, 6))
 
     for values, label, color in zip(diff_sets, labels, colors):
+        # On a log x-scale, map exact-zero differences to 0.1 so they stay visible (no symlog).
+        values_plot = np.where(values == 0, 0.1, values) if logx else values
         sns.histplot(
-            values,
+            values_plot,
             bins=bins,
             element="step",
             fill=False,
@@ -1876,6 +1880,10 @@ def plot_per_cell_difference_multi(
         )
 
     plt.yscale("log")
+    if logx:
+        plt.xscale("log")
+    if xmax is not None:
+        plt.xlim(right=xmax)
     plt.xlabel("Per-cell difference sum: raw − denoised")
     plt.ylabel("Number of cells (log)")
     plt.title(title)
@@ -2009,9 +2017,12 @@ def plot_iterative_difference_counts(
     adatas_dict,
     threshold=0.0,
     metric="cells",   # "cells" or "counts"
+    mode="sum",       # "sum" or "AUC" (applies to metric="counts")
+    auc_bins=100,
     expected_cells=None,
     colors=None,
     title="Difference per Iteration",
+    logy=True,
     out_path=None,
     show=True
 ):
@@ -2026,7 +2037,16 @@ def plot_iterative_difference_counts(
 
     metric : {"cells", "counts"}
         "cells"  -> count rows where |row_sum| > threshold
-        "counts" -> sum of absolute row differences
+        "counts" -> reduce the per-cell absolute row differences (see mode)
+
+    mode : {"sum", "AUC"}
+        Only applies to metric="counts".
+        "sum" -> sum of absolute row differences (default)
+        "AUC" -> area under the histogram of the per-cell absolute row differences
+                 (histogram_auc), instead of their sum.
+
+    auc_bins : int
+        Number of histogram bins used when mode="AUC".
 
     Returns
     -------
@@ -2036,6 +2056,8 @@ def plot_iterative_difference_counts(
 
     if metric not in ("cells", "counts", "number_of_cells"):
         raise ValueError('metric must be "cells", "counts", or "number_of_cells"')
+    if mode not in ("sum", "AUC"):
+        raise ValueError('mode must be "sum" or "AUC"')
 
     keys = list(adatas_dict.keys())
 
@@ -2076,9 +2098,13 @@ def plot_iterative_difference_counts(
                 result = int(np.sum(np.abs(row_sums) > threshold))
 
             elif metric == "counts":
-                # Total absolute difference
-                result = float(np.sum(np.abs(row_sums)))
-            
+                if mode == "AUC":
+                    # Area under the histogram of per-cell absolute differences
+                    result = float(histogram_auc(np.abs(row_sums), bins=auc_bins))
+                else:
+                    # Total absolute difference
+                    result = float(np.sum(np.abs(row_sums)))
+
             elif metric == "number_of_cells":
                 result = X_A.shape[0]
 
@@ -2090,8 +2116,11 @@ def plot_iterative_difference_counts(
         x = np.arange(len(results))
         max_iter_count = max(max_iter_count, len(results))
 
+        # On a log y-scale, map exact-zero values to 0.1 so they stay visible (no symlog).
+        y_plot = [(0.1 if v == 0 else v) for v in results] if logy else results
+
         plt.plot(
-            x, results,
+            x, y_plot,
             marker='o',
             color=colors[key],
             label=key
@@ -2108,7 +2137,7 @@ def plot_iterative_difference_counts(
     if metric == "cells":
         ylabel = f"# Cells With |Difference| > {threshold}"
     elif metric == "counts":
-        ylabel = "Total Absolute Row-Sum Difference"
+        ylabel = "AUC of |Row-Sum Difference| Histogram" if mode == "AUC" else "Total Absolute Row-Sum Difference"
     elif metric == "number_of_cells":
         ylabel = "Total Number of Cells"
     
@@ -2119,7 +2148,12 @@ def plot_iterative_difference_counts(
 
     plt.xlabel("Iteration Comparison (i → i+1)", fontsize=12)
     plt.ylabel(ylabel, fontsize=12)
-    plt.ylim(bottom=0)
+    if logy:
+        # zeros were mapped to 0.1 above so they show on a plain log scale (no symlog)
+        plt.yscale("log")
+        plt.ylim(bottom=0.1)
+    else:
+        plt.ylim(bottom=0)
     plt.title(title, fontsize=14)
     plt.legend()
     plt.grid(alpha=0.3)
@@ -2350,10 +2384,35 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
 
     # ---------------- Run raw ----------------
     per_cell_df_raw = None
+    global_metrics_raw = None
     if tool != "raw":
-        per_cell_df_raw, _ = calculate_dataframes(
+        per_cell_df_raw, global_metrics_raw = calculate_dataframes(
             Yp=Yr, Yt=Yt, calculate_mse=calculate_mse
         )
+
+    # ---- Analogous fraction-signal-retained / fraction-noise-removed metrics ----
+    # Signal retained = of the true signal counts (Yt), the fraction kept = TP / (TP + FN) = recall.
+    # Noise removed   = 1 - residual noise left in the output (processed FP, i.e. counts above truth)
+    #                   / noise present in the raw input (raw FP vs truth). Both reuse the confusion
+    #                   components already computed, and are the simulation analog of the
+    #                   signal-retained / noise-removed fractions used for pbmc8k, hgmm12k and 8cube.
+    per_cell_df["SignalRetained"] = per_cell_df["Recall"]
+    global_metrics["signal_retained"] = global_metrics["recall"]
+    if global_metrics_raw is not None:
+        raw_noise_total = max(global_metrics_raw["FP"], 1)
+        global_metrics["noise_removed"] = 1.0 - global_metrics["FP"] / raw_noise_total
+        per_cell_df["NoiseRemoved"] = 1.0 - per_cell_df["FP"] / np.maximum(per_cell_df_raw["FP"], 1)
+    else:
+        global_metrics["noise_removed"] = np.nan
+        per_cell_df["NoiseRemoved"] = np.nan
+
+    # Per-cell noise (FP) histogram AUC = area under the residual-noise-per-cell histogram, the
+    # simulation analog of the hgmm12k cross-species contamination AUC (both via histogram_auc).
+    # Lower is better (less residual noise spread); raw is the un-denoised baseline.
+    global_metrics["noise_auc"] = histogram_auc(per_cell_df["FP"].values, bins=100)
+    global_metrics["raw_noise_auc"] = (
+        histogram_auc(per_cell_df_raw["FP"].values, bins=100) if per_cell_df_raw is not None else np.nan
+    )
 
     # ---------------- Plotting ----------------
     print(f"{tool} Global Recall: {global_metrics['recall']:.4f}")
@@ -2375,6 +2434,24 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
         tool=tool,
         hist_type=hist_type,
         out_path=f"{out_base}_PPV.png" if out_base else None,
+        show=show,
+    )
+
+    # Fraction signal retained equals the Recall histogram above (raw retains 100% of signal by
+    # construction), so it is reported as a number rather than a duplicate plot. Fraction noise
+    # removed is genuinely new and gets its own histogram.
+    print(f"{tool} Global Fraction Signal Retained (= Recall): {global_metrics['signal_retained']:.4f}")
+    print(f"{tool} Global Fraction Noise Removed: {global_metrics['noise_removed']:.4f}")
+    print(f"{tool} per-cell noise (FP) histogram AUC: {global_metrics['noise_auc']:.4f}")
+    if not np.isnan(global_metrics["raw_noise_auc"]):
+        print(f"raw per-cell noise (FP) histogram AUC: {global_metrics['raw_noise_auc']:.4f}")
+    plot_raw_and_processed_histogram(
+        per_cell_df["NoiseRemoved"],
+        "Fraction Noise Removed",
+        raw_values=None,  # raw vs raw noise is trivially 0; not informative
+        tool=tool,
+        hist_type=hist_type,
+        out_path=f"{out_base}_noise_removed.png" if out_base else None,
         show=show,
     )
 
