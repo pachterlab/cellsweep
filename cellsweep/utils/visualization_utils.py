@@ -1861,14 +1861,16 @@ def plot_per_cell_difference_multi(
         elif plot_type == "gene":
             sums = np.array(D.sum(axis=0)).ravel()
         elif plot_type == "matrix":
-            sums = np.array(D.sum()).ravel()
+            D = D.tocsr()
+            D.eliminate_zeros()
+            sums = D.data  # per-count (per-element) nonzero differences
         diff_sets.append(sums)
 
     plt.figure(figsize=(8, 6))
 
     for values, label, color in zip(diff_sets, labels, colors):
-        # On a log x-scale, map exact-zero differences to 0.1 so they stay visible (no symlog).
-        values_plot = np.where(values == 0, 0.1, values) if logx else values
+        # On a log x-scale, map exact-zero differences to 0.9 so they stay visible at the axis floor (no symlog).
+        values_plot = np.where(values == 0, 0.9, values) if logx else values
         sns.histplot(
             values_plot,
             bins=bins,
@@ -1882,10 +1884,13 @@ def plot_per_cell_difference_multi(
     plt.yscale("log")
     if logx:
         plt.xscale("log")
+        plt.xlim(left=0.9)  # zeros mapped to 0.9; stop the axis here
     if xmax is not None:
         plt.xlim(right=xmax)
-    plt.xlabel("Per-cell difference sum: raw − denoised")
-    plt.ylabel("Number of cells (log)")
+    unit = {"cell": "cell", "gene": "gene", "matrix": "count"}.get(plot_type, plot_type)
+    agg = "difference" if plot_type == "matrix" else "difference sum"
+    plt.xlabel(f"Per-{unit} {agg}: raw − denoised")
+    plt.ylabel(f"Number of {unit}s (log)")
     plt.title(title)
     plt.legend()
     plt.tight_layout()
@@ -2116,8 +2121,8 @@ def plot_iterative_difference_counts(
         x = np.arange(len(results))
         max_iter_count = max(max_iter_count, len(results))
 
-        # On a log y-scale, map exact-zero values to 0.1 so they stay visible (no symlog).
-        y_plot = [(0.1 if v == 0 else v) for v in results] if logy else results
+        # On a log y-scale, map exact-zero values to 0.9 so they stay visible at the axis floor (no symlog).
+        y_plot = [(0.9 if v == 0 else v) for v in results] if logy else results
 
         plt.plot(
             x, y_plot,
@@ -2149,9 +2154,9 @@ def plot_iterative_difference_counts(
     plt.xlabel("Iteration Comparison (i → i+1)", fontsize=12)
     plt.ylabel(ylabel, fontsize=12)
     if logy:
-        # zeros were mapped to 0.1 above so they show on a plain log scale (no symlog)
+        # zeros were mapped to 0.9 above so they show on a plain log scale (no symlog); axis stops at 0.9
         plt.yscale("log")
-        plt.ylim(bottom=0.1)
+        plt.ylim(bottom=0.9)
     else:
         plt.ylim(bottom=0)
     plt.title(title, fontsize=14)

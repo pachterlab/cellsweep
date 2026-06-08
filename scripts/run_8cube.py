@@ -99,6 +99,13 @@ def _write_10x_for_plate(plate):
     print(f"  Writing 10x-like matrices for plate {plate} to {matrix_dir}...")
     adata_raw = ad.read_h5ad(adata_raw_path)
     adata_raw.var_names_make_unique()
+    is_empty = adata_raw.obs["is_empty"].astype(bool).values
+    # Write the "raw" matrix from empty droplets only. SoupX and DecontX only use the empty
+    # droplets from the raw matrix (SoupX estimates the soup from them; DecontX uses them as the
+    # ambient background), and the full all-droplet matrix can exceed R's Matrix-package 2^31-1
+    # non-zero limit (R's readMM then fails to parse it). Empties-only keeps it readable, gives an
+    # identical soup profile for SoupX (cells are excluded from soup estimation regardless), and is
+    # the recommended ambient background for DecontX.
     paths = cs_utils.write_10x_like(
         adata_raw,
         matrix_dir,
@@ -107,6 +114,7 @@ def _write_10x_for_plate(plate):
         cluster_col="leiden",
         write_raw=True,
         write_filtered=True,
+        raw_mask=is_empty,
     )
     paths["matrix_dir"] = matrix_dir
 
@@ -115,7 +123,6 @@ def _write_10x_for_plate(plate):
     # the soup from the actual empty droplets. estimateSoup selects droplets with UMIs strictly
     # below this bound, so use (max empty-droplet UMI + 1): includes every empty droplet while
     # still excluding all real cells (which have strictly more UMIs than any empty droplet).
-    is_empty = adata_raw.obs["is_empty"].astype(bool).values
     if "n_counts" in adata_raw.obs.columns:
         empty_counts = adata_raw.obs["n_counts"].values[is_empty]
     else:
@@ -148,11 +155,37 @@ def run_soupx(plate):
     ]
     print("  " + " ".join(cmd))
     subprocess.run(cmd, check=True)
-    adata_soupx = cs_utils.load_adata(soupx_out_prefix)
+    adata_soupx = _load_soupx_output(soupx_out_prefix)
     adata_soupx.var_names_make_unique()
-    print(f"  Counts less-than-or-equal check for SoupX: not run (raw freed); writing {out_path}")
+    print(f"  Writing {out_path}...")
     adata_soupx.write_h5ad(out_path)
     del adata_soupx  # memory management
+
+
+def _load_soupx_output(soupx_out_prefix):
+    """Load SoupX output into an AnnData (cells x genes).
+
+    run_soupx.R writes either a single soupx_out.mtx (small datasets) or, for matrices too large
+    for R's Matrix package, per-cluster-batch files (soupx_out_batch{N}.mtx). Batches are combined
+    here with scipy, which handles >2^31 non-zeros via 64-bit indices.
+    """
+    if os.path.exists(soupx_out_prefix + ".mtx"):
+        return cs_utils.load_adata(soupx_out_prefix)
+
+    from scipy import io as scio, sparse as sp
+    import pandas as pd
+
+    genes = pd.read_csv(soupx_out_prefix + "_genes.csv", header=None)[0].astype(str).values
+    n_batches = int(open(soupx_out_prefix + "_nbatches.txt").read().strip())
+    print(f"  Combining {n_batches} SoupX cluster-batch outputs...")
+    mats, barcodes = [], []
+    for b in range(1, n_batches + 1):
+        mats.append(scio.mmread(f"{soupx_out_prefix}_batch{b}.mtx").tocsc())  # genes x cells
+        barcodes.append(pd.read_csv(f"{soupx_out_prefix}_batch{b}_barcodes.csv", header=None)[0].astype(str).values)
+    X = sp.hstack(mats).T.tocsr()  # cells x genes
+    obs = pd.DataFrame(index=np.concatenate(barcodes))
+    var = pd.DataFrame(index=genes)
+    return ad.AnnData(X=X, obs=obs, var=var)
 
 
 def run_decontx(plate):

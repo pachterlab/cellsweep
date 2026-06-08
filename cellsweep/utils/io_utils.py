@@ -193,7 +193,8 @@ def write_10x_like(
     cluster_col="leiden",
     write_raw=True,
     write_filtered=True,
-    transpose_matrix=True
+    transpose_matrix=True,
+    raw_mask=None
 ):
     """
     Write an AnnData object to a 10x-like directory structure.
@@ -284,9 +285,16 @@ def write_10x_like(
 
         return subdir  # {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
 
-    # Raw matrix (all cells)
+    # Raw matrix (all droplets by default, or the subset given by raw_mask). Passing raw_mask is
+    # useful for very large datasets: tools (e.g. SoupX, DecontX) only need the empty droplets from
+    # the "raw" matrix, and restricting to them keeps the non-zero count under R's Matrix-package
+    # 2^31-1 MatrixMarket limit (R's readMM cannot parse an nnz header value exceeding that).
     if write_raw:
-        paths["raw"] = _write_10x_subdir("raw_gene_bc_matrices", mask=np.ones(adata.n_obs, dtype=bool))
+        if raw_mask is None:
+            raw_mask = np.ones(adata.n_obs, dtype=bool)
+        else:
+            raw_mask = np.asarray(raw_mask, dtype=bool)
+        paths["raw"] = _write_10x_subdir("raw_gene_bc_matrices", mask=raw_mask)
 
     clusters_path = os.path.join(parent_dir, "clusters.csv")
     paths["clusters"] = clusters_path
