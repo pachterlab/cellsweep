@@ -63,6 +63,7 @@ analysis = [
     "ipywidgets",
     "torch",
     "scikit-misc",
+    "leidenalg",
     "adjustText",
     "squidpy",
     "tqdm",

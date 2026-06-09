@@ -196,7 +196,7 @@ def plot_difference_heatmap(adata1, adata2, cell_subset=200, gene_subset=200, sh
     else:
         plt.close()
 
-def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", minimum=0.5, point_type="matrix", title=None, density_type="scatter_with_density", alpha=0.6, cmap='viridis', label_to_scatter_location_dict=None, x_axis='adata1', y_axis='adata2', calculate_mse_vertical=False, tick_labelsize=None, out_path=None, show=True):
+def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", minimum=0.5, point_type="matrix", title=None, density_type="scatter_with_density", alpha=0.6, cmap='viridis', label_to_scatter_location_dict=None, label_to_color=None, label_to_marker=None, x_axis='adata1', y_axis='adata2', calculate_mse_vertical=False, tick_labelsize=None, out_path=None, show=True):
     # -------------------------
     # 1. Match cells + genes
     # -------------------------
@@ -305,17 +305,23 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", minimum
         labels = list(label_to_scatter_location_dict.keys())
         n = len(labels)
 
-        # Use a dark-orange colormap range
-        cmap = cm.get_cmap("Oranges")
-        colors = cmap(np.linspace(0.55, 0.95, n))  # darker oranges only
+        # Default colors: dark-orange colormap range. If an explicit per-label color map is
+        # supplied (e.g. orange for tissue1 markers, green for tissue2 markers), use it instead.
+        if label_to_color is None:
+            cmap = cm.get_cmap("Oranges")
+            palette = cmap(np.linspace(0.55, 0.95, n))  # darker oranges only
+            label_to_color = {label: palette[i] for i, label in enumerate(labels)}
 
         handles = []
-        for (label, (xg, yg)), color in zip(label_to_scatter_location_dict.items(), colors):
+        for label, (xg, yg) in label_to_scatter_location_dict.items():
+            color = label_to_color.get(label, "darkorange")
+            shape = label_to_marker.get(label, "o") if label_to_marker is not None else "o"
             sc = ax.scatter(
                 xg,
                 yg,
                 s=50,
                 color=color,
+                marker=shape,
                 edgecolor="black",
                 linewidth=0.5,
                 zorder=10,
@@ -325,7 +331,7 @@ def plot_matrix_scatterplot(adata1, adata2, figsize=(8, 8), scale="log", minimum
             handles.append(
                 plt.Line2D(
                     [0], [0],
-                    marker="o",
+                    marker=shape,
                     linestyle="",
                     markerfacecolor=color,
                     markeredgecolor="black",
@@ -2283,17 +2289,32 @@ def round_sparse(X):
     X.eliminate_zeros()
     return X
 
-def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", hist_type="kde", calculate_mse=True, out_base=None, show=True):
+def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", hist_type="kde", calculate_mse=True, markers_only=True, out_base=None, show=True):
     """
     Evaluate denoising by comparing processed output (adata_processed) to ground-truth real counts (adata_real).
 
     Computes TP, FP, FN, TN for each cell, and
     returns per-cell sensitivity, specificity, PPV, and global metrics.
+
+    If ``markers_only`` is True (default), all metrics are restricted to the marker genes
+    flagged in ``adata_real.var["is_marker"]``; otherwise they are computed over all genes.
     """
     if 'layers' not in dir(adata_real) or 'real' not in adata_real.layers:
         raise ValueError("adata_real must contain a 'real' layer with ground-truth counts.")
 
     adata_processed, adata_real = take_adata_cell_gene_intersection(adata_processed, adata_real)
+
+    if markers_only:
+        if "is_marker" not in adata_real.var.columns:
+            raise ValueError("markers_only=True requires an 'is_marker' boolean column in adata_real.var.")
+        marker_mask = adata_real.var["is_marker"].to_numpy().astype(bool)
+        n_markers = int(marker_mask.sum())
+        if n_markers == 0:
+            raise ValueError("markers_only=True but no genes are flagged in adata_real.var['is_marker'].")
+        print(f"Restricting metrics to {n_markers} marker genes (of {adata_real.n_vars} total).")
+        adata_processed = adata_processed[:, marker_mask].copy()
+        adata_real = adata_real[:, marker_mask].copy()
+
     adata_x_processed = adata_processed.X
     adata_x_raw = adata_real.X
     adata_x_real = adata_real.layers['real']
@@ -2319,22 +2340,33 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     Yr = round_sparse(Yr)
     Yt = round_sparse(Yt)
 
-    def calculate_dataframes(Yt, Yp, calculate_mse=True):
+    def calculate_dataframes(Yt, Yp, Yr, calculate_mse=True):
         n_cells, n_genes = Yp.shape
 
         # ---------- Compute Confusion Components ----------
-        TP = Yp.minimum(Yt).sum(axis=1).A1
-        FP = (Yp - Yt).maximum(0).sum(axis=1).A1
-        FN = (Yt - Yp).maximum(0).sum(axis=1).A1
+        # All defined element-wise, then summed (per cell here, globally below):
+        #   TP = min(Yp, Yt)        FP = max(0, Yp - Yt)
+        #   FN = max(0, Yt - Yp)    TN = max(0, Yr - TP - FP - FN)
+        TP_mat = Yp.minimum(Yt)
+        FP_mat = (Yp - Yt).maximum(0)
+        FN_mat = (Yt - Yp).maximum(0)
+        TN_mat = (Yr - TP_mat - FP_mat - FN_mat).maximum(0)
+
+        TP = np.asarray(TP_mat.sum(axis=1)).ravel()
+        FP = np.asarray(FP_mat.sum(axis=1)).ravel()
+        FN = np.asarray(FN_mat.sum(axis=1)).ravel()
+        TN = np.asarray(TN_mat.sum(axis=1)).ravel()
         PP = TP + FP
         TT = TP + FN
 
         # ------------ Per-cell metrics ------------
-        recall = TP / np.maximum(TT, 1)
-        ppv = TP / np.maximum(PP, 1)
+        recall = TP / np.maximum(TT, 1)  # sensitivity
+        ppv = TP / np.maximum(PP, 1)  # precision
+        specificity = TN / np.maximum(TN + FP, 1)
 
         recall = np.nan_to_num(recall)
         ppv = np.nan_to_num(ppv)
+        specificity = np.nan_to_num(specificity)
         
         if calculate_mse:
             print("Calculating per-cell MSE (densifying)...")
@@ -2350,33 +2382,39 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
             mse = np.zeros(n_cells)
             mse_global = 0.0
 
-        # ---- Global metrics ----
+        # ---- Global metrics (element-wise components summed across the whole matrix) ----
         TP_total = TP.sum()
         FP_total = FP.sum()
         FN_total = FN.sum()
+        TN_total = TN.sum()
 
-        print(f"TP_total: {TP_total}, FP_total: {FP_total}, FN_total: {FN_total}")
+        print(f"TP_total: {TP_total}, FP_total: {FP_total}, FN_total: {FN_total}, TN_total: {TN_total}")
 
         recall_global = TP_total / np.maximum(TP_total + FN_total, 1)
+        specificity_global = TN_total / np.maximum(TN_total + FP_total, 1)
         ppv_global = TP_total / np.maximum(TP_total + FP_total, 1)
 
         global_metrics = {
             "recall": recall_global,
+            "specificity": specificity_global,
             "ppv": ppv_global,
             "mse": mse_global,
             "TP": TP_total,
             "FP": FP_total,
             "FN": FN_total,
+            "TN": TN_total,
         }
 
         per_cell_df = pd.DataFrame(
             {
                 "Recall": recall,
+                "Specificity": specificity,
                 "PPV": ppv,
                 "MSE": mse,
                 "TP": TP,
                 "FP": FP,
                 "FN": FN,
+                "TN": TN,
             }
         )
 
@@ -2384,7 +2422,7 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
 
     # ---------------- Run processed ----------------
     per_cell_df, global_metrics = calculate_dataframes(
-        Yp=Yp, Yt=Yt, calculate_mse=calculate_mse
+        Yp=Yp, Yt=Yt, Yr=Yr, calculate_mse=calculate_mse
     )
 
     # ---------------- Run raw ----------------
@@ -2392,7 +2430,7 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     global_metrics_raw = None
     if tool != "raw":
         per_cell_df_raw, global_metrics_raw = calculate_dataframes(
-            Yp=Yr, Yt=Yt, calculate_mse=calculate_mse
+            Yp=Yr, Yt=Yt, Yr=Yr, calculate_mse=calculate_mse
         )
 
     # ---- Analogous fraction-signal-retained / fraction-noise-removed metrics ----
@@ -2445,8 +2483,9 @@ def evaluate_simulation_denoising(adata_processed, adata_real, tool="Denoised", 
     # Fraction signal retained equals the Recall histogram above (raw retains 100% of signal by
     # construction), so it is reported as a number rather than a duplicate plot. Fraction noise
     # removed is genuinely new and gets its own histogram.
-    print(f"{tool} Global Fraction Signal Retained (= Recall): {global_metrics['signal_retained']:.4f}")
-    print(f"{tool} Global Fraction Noise Removed: {global_metrics['noise_removed']:.4f}")
+    # print(f"{tool} Global Fraction Signal Retained (= Recall): {global_metrics['signal_retained']:.4f}")
+    print(f"{tool} Global Fraction Noise Removed: {global_metrics['specificity']:.4f}")
+    # print(f"{tool} Global Fraction Noise Removed: {global_metrics['noise_removed']:.4f}")
     print(f"{tool} per-cell noise (FP) histogram AUC: {global_metrics['noise_auc']:.4f}")
     if not np.isnan(global_metrics["raw_noise_auc"]):
         print(f"raw per-cell noise (FP) histogram AUC: {global_metrics['raw_noise_auc']:.4f}")
@@ -2837,9 +2876,27 @@ def plot_merfish(adata, example_section, cc = None, val = None, fig_width = 5, f
     return fig, ax
 
 
-def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=None, gene_name_to_id=None, print_custom_markers=False, out_dir=None, overwrite=False):
+def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=None, gene_name_to_id=None, print_custom_markers=False, out_dir=None, overwrite=False, celltypes=None, plot_types=None):
     # plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]
     # total_tissues = ["CortexHippocampus", "Heart", "Liver", "HypothalamusPituitary", "Gonads", "Adrenal", "Kidney", "Gastrocnemius"]
+
+    # Optional filters:
+    #   celltypes  -> only produce per-celltype gene-count plots for these celltypes (case-insensitive).
+    #   plot_types -> only produce these plot families. Supported keys:
+    #                   "joint"              -> per-plate joint (cross-tissue) scatterplot
+    #                   "gene_counts"        -> per-celltype gene-count scatterplots
+    #                   "gene_counts_tissue" -> tissue-aggregate gene-count scatterplot
+    #                 None means make all plot families (backwards compatible).
+    celltypes_lower = {c.lower() for c in celltypes} if celltypes else None
+    plot_types_set = set(plot_types) if plot_types else None
+    def _want(plot_type):
+        return plot_types_set is None or plot_type in plot_types_set
+
+    # Styling for the highlighted marker genes in the gene-count scatterplots:
+    # tissue1 (tissues[0]) markers -> orange, tissue2 (tissues[1]) markers -> green; within a
+    # tissue each marker gene gets a distinct shape so individual genes stay distinguishable.
+    _TISSUE_HIGHLIGHT_COLORS = ["darkorange", "green"]
+    _MARKER_SHAPE_CYCLE = ["o", "s", "^", "D", "v", "P", "X", "*", "<", ">", "p", "h"]
 
     eight_cubed_markers_df = pd.read_csv(eight_cubed_markers_path, usecols=["gene_id", "Tissue"])
     tissue_to_marker_gene_dict = eight_cubed_markers_df.groupby("Tissue")["gene_id"].apply(list).to_dict()
@@ -2897,9 +2954,10 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
             print(f"Making joint scatterplot for plate {plate} with tool {tool}...")
             # check if all {tissues}_counts_total columns exist
             if all(f"{tissue}_counts_total" in adata_processed.obs.columns for tissue in tissues):
-                out_path = os.path.join(out_dir_plate, f"plate_{plate}_{tissues[0]}_{tissues[1]}_{tool}_joint_scatterplot.png")
-                if not os.path.exists(out_path) or overwrite:
-                    plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=True)
+                if _want("joint"):
+                    out_path = os.path.join(out_dir_plate, f"plate_{plate}_{tissues[0]}_{tissues[1]}_{tool}_joint_scatterplot.png")
+                    if not os.path.exists(out_path) or overwrite:
+                        plot_cross_species_joint_scatterplot(adata_raw, adata_processed, processed_name=tool, x_name=tissues[0], y_name=tissues[1], x_axis=f"{tissues[0]}_counts_total", y_axis=f"{tissues[1]}_counts_total", genome_column="Tissue", marginal_type="histogram", fill_histogram=False, show_marginal_ticks=True, show_point_movement=True, out_path=out_path, show=True)
                 
                 # gene plots
                 for tissue in tissues:
@@ -2909,17 +2967,21 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
                     adata_processed_tissue.var["total_counts"] = np.array(adata_processed_tissue.X.sum(axis=0)).ravel()
                     adata_raw_tissue.var["total_counts"] = np.array(adata_raw_tissue.X.sum(axis=0)).ravel()
 
-                    # get genes to label
+                    # get genes to label, with a per-marker scatter location, color (by tissue) and shape
                     def make_gene_to_scatter_location_dict(adata_raw_tissue, adata_processed_tissue, custom_markers):
-                        gene_to_scatter_location_dict = {}
+                        gene_to_loc, gene_to_color, gene_to_shape = {}, {}, {}
                         if custom_markers is not None:
                             for marker_tissue, marker_genes in custom_markers.items():
                                 if marker_tissue not in tissues:
                                     continue
+                                # tissue1 -> orange, tissue2 -> green (by position in `tissues`)
+                                color = _TISSUE_HIGHLIGHT_COLORS[tissues.index(marker_tissue) % len(_TISSUE_HIGHLIGHT_COLORS)]
+                                shape_i = 0  # distinct shape per marker gene within this tissue
                                 for marker in marker_genes:
                                     if marker in adata_processed_tissue.var_names and marker in adata_raw_tissue.var_names:
-                                        x = adata_processed_tissue.var.loc[marker, "total_counts"]
-                                        y = adata_raw_tissue.var.loc[marker, "total_counts"]
+                                        # x axis = raw, y axis = tool (matches the flipped plot_matrix_scatterplot calls below)
+                                        x = adata_raw_tissue.var.loc[marker, "total_counts"]
+                                        y = adata_processed_tissue.var.loc[marker, "total_counts"]
 
                                         # match plotting logic exactly
                                         x = x if x > 0.5 else 0.5
@@ -2930,31 +2992,38 @@ def make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_mark
 
                                         if marker.startswith("ENSMUSG"):
                                             marker = gene_name_to_id[marker]  # gene ID --> symbol
-                                        gene_to_scatter_location_dict[marker] = (x, y)
-                        return gene_to_scatter_location_dict
-                    
-                    gene_to_scatter_location_dict = make_gene_to_scatter_location_dict(adata_raw_tissue, adata_processed_tissue, custom_markers)
+                                        gene_to_loc[marker] = (x, y)
+                                        gene_to_color[marker] = color
+                                        gene_to_shape[marker] = _MARKER_SHAPE_CYCLE[shape_i % len(_MARKER_SHAPE_CYCLE)]
+                                        shape_i += 1
+                        return gene_to_loc, gene_to_color, gene_to_shape
 
-                    out_path = os.path.join(out_dir_plate, f"plate_{plate}_tissue_{tissue}_{tool}_gene_counts_scatterplot.png")
-                    os.makedirs(os.path.dirname(out_path), exist_ok=True)
-                    if not os.path.exists(out_path) or overwrite:
-                        plot_matrix_scatterplot(adata1=adata_processed_tissue.var["total_counts"], adata2=adata_raw_tissue.var["total_counts"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict, scale="log", point_type="custom", title=f"Gene counts", density_type="scatter_with_kde", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
+                    gene_to_loc, gene_to_color, gene_to_shape = make_gene_to_scatter_location_dict(adata_raw_tissue, adata_processed_tissue, custom_markers)
 
-                    #* Unique tissue-celltype combinations in the raw AnnData
-                    for celltype in adata_raw_tissue.obs["celltype"].dropna().drop_duplicates().values:
-                        ad_raw_sub = adata_raw_tissue[(adata_raw_tissue.obs['celltype'] == celltype)].copy()
-                        ad_proc_sub = adata_processed_tissue[(adata_processed_tissue.obs['celltype'] == celltype)].copy()
-                        if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
-                            continue
-
-                        ad_proc_sub.var["total_counts"] = np.array(ad_proc_sub.X.sum(axis=0)).ravel()
-                        ad_raw_sub.var["total_counts"] = np.array(ad_raw_sub.X.sum(axis=0)).ravel()
-                        gene_to_scatter_location_dict = make_gene_to_scatter_location_dict(ad_raw_sub, ad_proc_sub, custom_markers)
-
-                        out_path = os.path.join(out_dir_plate, "tissue_celltype_gene_scatterplots", f"plate_{plate}_tissue_{tissue}_celltype_{celltype}_{tool}_gene_counts_scatterplot.png")
+                    if _want("gene_counts_tissue"):
+                        out_path = os.path.join(out_dir_plate, f"plate_{plate}_tissue_{tissue}_{tool}_gene_counts_scatterplot.png")
                         os.makedirs(os.path.dirname(out_path), exist_ok=True)
                         if not os.path.exists(out_path) or overwrite:
-                            plot_matrix_scatterplot(adata1=ad_proc_sub.var["total_counts"], adata2=ad_raw_sub.var["total_counts"], cmap="Blues", label_to_scatter_location_dict=gene_to_scatter_location_dict, scale="log", point_type="custom", title=f"Gene counts", density_type="scatter_with_kde", x_axis=tool, y_axis='raw', out_path=out_path, show=False)
+                            plot_matrix_scatterplot(adata1=adata_raw_tissue.var["total_counts"], adata2=adata_processed_tissue.var["total_counts"], cmap="Blues", label_to_scatter_location_dict=gene_to_loc, label_to_color=gene_to_color, label_to_marker=gene_to_shape, scale="log", point_type="custom", title=f"Gene counts", density_type="scatter_with_kde", x_axis='raw', y_axis=tool, out_path=out_path, show=False)
+
+                    #* Unique tissue-celltype combinations in the raw AnnData
+                    if _want("gene_counts"):
+                        for celltype in adata_raw_tissue.obs["celltype"].dropna().drop_duplicates().values:
+                            if celltypes_lower is not None and str(celltype).lower() not in celltypes_lower:
+                                continue
+                            ad_raw_sub = adata_raw_tissue[(adata_raw_tissue.obs['celltype'] == celltype)].copy()
+                            ad_proc_sub = adata_processed_tissue[(adata_processed_tissue.obs['celltype'] == celltype)].copy()
+                            if ad_raw_sub.n_obs == 0 or ad_proc_sub.n_obs == 0:
+                                continue
+
+                            ad_proc_sub.var["total_counts"] = np.array(ad_proc_sub.X.sum(axis=0)).ravel()
+                            ad_raw_sub.var["total_counts"] = np.array(ad_raw_sub.X.sum(axis=0)).ravel()
+                            gene_to_loc, gene_to_color, gene_to_shape = make_gene_to_scatter_location_dict(ad_raw_sub, ad_proc_sub, custom_markers)
+
+                            out_path = os.path.join(out_dir_plate, "tissue_celltype_gene_scatterplots", f"plate_{plate}_tissue_{tissue}_celltype_{celltype}_{tool}_gene_counts_scatterplot.png")
+                            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+                            if not os.path.exists(out_path) or overwrite:
+                                plot_matrix_scatterplot(adata1=ad_raw_sub.var["total_counts"], adata2=ad_proc_sub.var["total_counts"], cmap="Blues", label_to_scatter_location_dict=gene_to_loc, label_to_color=gene_to_color, label_to_marker=gene_to_shape, scale="log", point_type="custom", title=f"Gene counts", density_type="scatter_with_kde", x_axis='raw', y_axis=tool, out_path=out_path, show=False)
 
                     # #* Unique tissue-leiden combinations in the raw AnnData
                     # for leiden in adata_raw_tissue.obs["leiden"].dropna().drop_duplicates().values:

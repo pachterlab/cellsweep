@@ -11,14 +11,20 @@ import cellsweep.utils as cs_utils
 debug = False
 plates = ["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"]  # ["igvf_003"]  #? debug
 print_custom_markers = True
-overwrite = False
+overwrite = False  # overridden by --overwrite
 
 parser = argparse.ArgumentParser(description="Run plates processing pipeline.")
 parser.add_argument("--plates", nargs="+", default=["igvf_003", "igvf_004", "igvf_005", "igvf_007", "igvf_008b", "igvf_009", "igvf_010", "igvf_011"], help="List of plate names (default: all plates)",)
 parser.add_argument("--tools", nargs="+", default=[], choices=["cellbender", "soupx", "decontx"], help="Alternate tools to include alongside cellsweep (default: none).",)
+parser.add_argument("--celltypes", nargs="+", default=None, help="Restrict per-celltype gene-count plots to these celltypes (case-insensitive). Default: all celltypes.",)
+parser.add_argument("--plot-types", dest="plot_types", nargs="+", default=None, choices=["joint", "gene_counts", "gene_counts_tissue"], help="Plot families to produce: 'joint' (per-plate cross-tissue scatterplot), 'gene_counts' (per-celltype gene-count scatterplots), 'gene_counts_tissue' (tissue-aggregate gene-count scatterplot). Default: all.",)
+parser.add_argument("--overwrite", action="store_true", help="Overwrite existing plot files (default: skip plots that already exist).",)
 args = parser.parse_args()
 plates = args.plates
 alternate_tools = args.tools
+celltypes = args.celltypes
+plot_types = args.plot_types
+overwrite = args.overwrite
 include_cellbender = "cellbender" in alternate_tools
 
 
@@ -59,6 +65,61 @@ custom_markers = {
 
 all_custom_markers_start_with_ensmug = all(gene.startswith("ENSMUG") for genes in custom_markers.values() for gene in genes)
 gene_name_to_id = None
+
+
+def log_sensitivity_specificity(stats_df, out_dir, celltypes=None):
+    """Print and save a sensitivity/specificity stat log derived from the signal/noise stats.
+
+    Sensitivity (TPR) = signal_retained (fraction of true signal counts kept);
+    specificity (TNR) = noise_removed (fraction of contaminating counts removed). This mirrors
+    benchmarking.ipynb cell 56, which count-weights signal_retained/noise_removed per tool by the
+    raw signal/noise counts. A per-tool count-weighted summary is printed (and written to CSV),
+    along with a per-(tool, plate, tissue, celltype) breakdown (restricted to `celltypes` if given).
+    """
+    if stats_df is None or len(stats_df) == 0:
+        print("No signal/noise stats available; skipping sensitivity/specificity log.")
+        return
+
+    def _wavg(values, weights):
+        v = np.asarray(values, dtype=float)
+        w = np.asarray(weights, dtype=float)
+        mask = ~np.isnan(v) & ~np.isnan(w) & (w > 0)
+        return float(np.average(v[mask], weights=w[mask])) if mask.any() else np.nan
+
+    # per-tool count-weighted summary (weights = raw signal / raw noise counts, like the notebook)
+    summary_rows = []
+    for tool, d in stats_df.groupby("tool"):
+        summary_rows.append({
+            "tool": tool,
+            "sensitivity_weighted": _wavg(d["sensitivity"], d["signal_raw_counts"]),
+            "specificity_weighted": _wavg(d["specificity"], d["noise_raw_counts"]),
+            "sensitivity_mean": float(np.nanmean(d["sensitivity"])),
+            "specificity_mean": float(np.nanmean(d["specificity"])),
+            "n_groups": int(len(d)),
+        })
+    summary_df = pd.DataFrame(summary_rows).sort_values("tool")
+    summary_path = os.path.join(out_dir, "sensitivity_specificity_summary.csv")
+    summary_df.to_csv(summary_path, index=False)
+
+    print("\n================ SENSITIVITY / SPECIFICITY STAT LOG ================")
+    print("Sensitivity = signal retained (TPR); Specificity = noise removed (TNR)")
+    print("\nPer-tool summary (count-weighted across plate/tissue/celltype groups):")
+    print(summary_df.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+
+    # focused per-(tool, plate, tissue, celltype) breakdown
+    detail = stats_df
+    if celltypes is not None:
+        wanted = {c.lower() for c in celltypes}
+        detail = detail[detail["celltype"].astype(str).str.lower().isin(wanted)]
+    if len(detail) > 0:
+        cols = ["tool", "plate", "tissue", "celltype", "n_cells", "sensitivity", "specificity"]
+        detail = detail[cols].sort_values(["plate", "tissue", "celltype", "tool"])
+        label = "requested celltypes" if celltypes is not None else "all celltypes"
+        print(f"\nPer-(tool, plate, tissue, celltype) breakdown ({label}):")
+        print(detail.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+    print(f"\nWrote per-tool sensitivity/specificity summary to {summary_path}")
+    print("===================================================================\n")
+    return summary_df
 
 
 def compute_signal_noise_stats(dict_of_adata_dicts, custom_markers, gene_name_to_id, out_dir):
@@ -124,9 +185,14 @@ def compute_signal_noise_stats(dict_of_adata_dicts, custom_markers, gene_name_to
                     sig_raw, sig_proc = _sum(raw_sub, signal_markers), _sum(proc_sub, signal_markers)
                     noise_raw, noise_proc = _sum(raw_sub, noise_markers), _sum(proc_sub, noise_markers)
 
-                    signal_retained = (sig_proc / sig_raw) if sig_raw > 0 else np.nan
-                    noise_removed = (1 - noise_proc / noise_raw) if noise_raw > 0 else np.nan
+                    # clamp to [0, 1] like the simulation's min/max(0,.) confusion components:
+                    # a tool can retain at most all signal (min) and remove at most all noise (max(0,.))
+                    signal_retained = min(1.0, sig_proc / sig_raw) if sig_raw > 0 else np.nan
+                    noise_removed = max(0.0, 1 - noise_proc / noise_raw) if noise_raw > 0 else np.nan
 
+                    # Sensitivity (TPR) = fraction of true signal counts retained = signal_retained.
+                    # Specificity (TNR) = fraction of contaminating noise counts removed = noise_removed.
+                    # (Same definition as benchmarking.ipynb's signal_retained / noise_removed.)
                     rows.append({
                         "tool": tool,
                         "plate": plate,
@@ -138,6 +204,8 @@ def compute_signal_noise_stats(dict_of_adata_dicts, custom_markers, gene_name_to
                         "noise_markers": ",".join(id_to_name.get(g, g) for g in noise_markers),
                         "signal_retained": signal_retained,
                         "noise_removed": noise_removed,
+                        "sensitivity": signal_retained,
+                        "specificity": noise_removed,
                         "signal_raw_counts": sig_raw,
                         "signal_proc_counts": sig_proc,
                         "noise_raw_counts": noise_raw,
@@ -190,6 +258,13 @@ def _load_alternate_tool(tool, plate, adata_raw_ref):
     print(f"  Loading {tool} for plate {plate}...")
     adata_tool = ad.read_h5ad(tool_path)
 
+    # The viz only needs X, barcodes and gene ids. CellBender h5ads carry ~30GB of unused layers
+    # (plus obsm/obsp/etc); drop them so the multi-tool, multi-plate working set stays in memory.
+    for _slot in (adata_tool.layers, adata_tool.obsm, adata_tool.obsp, adata_tool.varm, adata_tool.varp):
+        for _k in list(_slot.keys()):
+            del _slot[_k]
+    adata_tool.uns = {}
+
     if tool == "cellbender":
         if "Subpool" in adata_tool.obs_names[0]:
             adata_tool.obs_names = adata_tool.obs_names.str.replace("Subpool", "Sublibrary", regex=False)
@@ -200,6 +275,9 @@ def _load_alternate_tool(tool, plate, adata_raw_ref):
 
     adata_tool.var_names_make_unique()
     adata_tool = _attach_obs_metadata(adata_tool, adata_raw_ref)
+    if adata_tool.n_obs == 0:
+        print(f"  WARNING: {tool} for plate {plate} has 0 barcodes overlapping raw after the index transform — check the file (e.g. missing/renamed barcodes). Skipping {tool} for {plate}.")
+        return None
     if debug:  # filter to the same 5000 cells as above for debugging
         adata_tool = adata_tool[adata_tool.obs_names.isin(barcodes), :].copy()
     return adata_tool
@@ -251,9 +329,10 @@ try:
     for tool in alternate_tools:
         dict_of_adata_dicts[tool] = adata_tool_dicts[tool]
     print("Computing signal/noise stats per plate-tissue-celltype...")
-    compute_signal_noise_stats(dict_of_adata_dicts, custom_markers, gene_name_to_id, out_dir)
+    stats_df = compute_signal_noise_stats(dict_of_adata_dicts, custom_markers, gene_name_to_id, out_dir)
+    log_sensitivity_specificity(stats_df, out_dir, celltypes=celltypes)
     print("Generating 8cubed plots...")
-    cs_utils.make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=custom_markers, gene_name_to_id=gene_name_to_id, print_custom_markers=print_custom_markers, out_dir=out_dir, overwrite=overwrite)
+    cs_utils.make_8cubed_plots(dict_of_adata_dicts, eight_cubed_markers_path, custom_markers=custom_markers, gene_name_to_id=gene_name_to_id, print_custom_markers=print_custom_markers, out_dir=out_dir, overwrite=overwrite, celltypes=celltypes, plot_types=plot_types)
 except MemoryError:
     print("❌ Memory limit exceeded — exiting")  # might just print 'Segmentation fault (core dumped)' rather than this
     sys.exit(1)
