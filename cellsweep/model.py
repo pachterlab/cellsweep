@@ -585,6 +585,9 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
             "ll": ll}    
 
 
+# TODO: build docs with sphinx and describe advanced params here
+
+
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def denoise_count_matrix(
     adata: Union[str, ad.AnnData],
@@ -596,26 +599,12 @@ def denoise_count_matrix(
     empty_droplet_method: Optional[str] = "threshold",
     umi_cutoff: Optional[Annotated[int, Field(ge=0)]] = None,
     expected_cells: Optional[Annotated[int, Field(ge=0)]] = None,
-    init_alpha: Annotated[float, Field(ge=0.1, le=0.9)] = 0.9,
-    init_beta: Annotated[float, Field(ge=0.1, le=0.9)] = 0.1,
-    alpha_cap: Annotated[float, Field(ge=0, le=1)] = 0.9,
-    repulsion_strength: Annotated[float, Field(ge=0, le=1e-3)] = 1e-4,
-    max_frac_gene_repulsion: Annotated[float, Field(gt=0, le=1)] = 0.2,
-    celltype_lambda: Optional[Annotated[float, Field(ge=0)]] = 50,
-    ambient_lambda: Optional[Annotated[float, Field(ge=0)]] = 50,
-    bulk_lambda: Optional[Annotated[float, Field(ge=0)]] = 10,
-    eps: Annotated[float, Field(gt=0)] = 1e-12,
-    log_eps: Annotated[float, Field(gt=0)] = 1e-300,
-    max_iter: Annotated[int, Field(gt=1)] = 2000,
-    del0_ll_tol: Annotated[float, Field(gt=0)] = 1e-3,
-    min_ll_tol: Annotated[float, Field(gt=0)] = 1e-6,
-    tol_p: Annotated[float, Field(gt=0)] = 1e-4,
-    tol_f: Annotated[float, Field(gt=0)] = 1e-4,
     random_state: Optional[Annotated[int, Field(ge=0)]] = 42,
     inplace: bool = False,
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
-    log_file: Optional[str] = None
+    log_file: Optional[str] = None,
+    **em_kwargs,
 ):
     """
     Denoise a count matrix using the Expectation-Maximization (EM) algorithm to fit a
@@ -668,60 +657,6 @@ def denoise_count_matrix(
     expected_cells : int | None, default None
         Expected number of real cells, used when estimating thresholds.
 
-    init_alpha : float, default 0.9
-       Initial value of alpha_n for each cell if `ambient_profile` column is not present. If `freeze_ambient_profile=True`, this value does not 
-       significantly effect the final result, so we set equal to alpha_cap for convenience. If `freeze_ambient_pofile=False`, then init_alpha
-       can be set lower. For the sake of stability, we recommend that this value be far above the expected contamination rate, within [0.1, 0.9].
-
-    init_beta : float, default 0.1
-        Initial beta (percent bulk contamination) value for each cell. We do not recommend initializing beta below 0.1 for the sake of stability. 
-        Bulk and ambient contamination are not fully separable, so we set to a lower value than alpha_init to bias the assignment of contamination
-        to ambient rather than bulk.
-
-    alpha_cap : float default 0.9
-        alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold
-        will be excluded from updating p_k and will be allowed to change cell-types. Disabled for `freeze_ambient_profile=False`.
-
-    repulsion_strength : float, default 1e-4
-        Strength of repulsion between ambient and cell-type profiles during M-step.
-        Higher values lead to greater separation between ambient and cell-type profiles.
-        Note that repulsion is disabled for `freeze_ambient_profile=False`.
-
-    max_frac_gene_repulsion : float, default 0.2
-        Maximum fraction of each p_k entry that can be subtracted during repulsion.
-        Note that repulsion is disabled for `freeze_ambient_profile=False`.
-
-    celltype_lambda: float, default 50
-        Pseudocount for cell-type profile updates. Will be divided by the number of genes G. Higher values lead to smoother cell-type profiles.
-
-    ambient_lambda: float, default 50
-        Pseudocount for ambient profile update. Will be divided by the number of genes G. Higher values lead to a smoother ambient profile.
-
-    bulk_lambda: float, default 10
-        Pseudocount for bulk profile update. Will be divided by the number of genes G. Higher values lead to a smoother bulk profile.
-
-    eps : float, default 1e-12
-        Numerical stability constant to prevent division by zero.
-
-    log_eps : float, default 1e-300
-        Numerical stability constant to log(0).
-
-    max_iter : int, default 1000
-        Maximum number of EM iterations.
-
-    del0_ll_tol: float, default 1e-3
-        The change in likelihood, relative to the first likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked.
-    
-    min_ll_tol: float, default 1e-6
-        The change in likelihood, relative to the current likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked.
-        This is intended to cap `del0_ll_tol` at the edge of floating-point precision.
-
-    tol_p: float, default 1e-4
-        The maximum change in p below which training is discontinued. This is in addition to the tol_f stopping criterion.
-
-    tol_f: float, default 1e-4
-        The maximum change in f = (1 - beta) * alpha + beta, below which training is discontinued. This is in addition to the tol_p stopping criterion.
-
     random_state: int | None, default 42
         Random seed for stochastic rounding. Only necessary if `round_X=True`.
 
@@ -736,6 +671,67 @@ def denoise_count_matrix(
 
     log_file : str | None, default None
         Optional path to save EM iteration logs.
+
+    **em_kwargs
+        Advanced EM hyperparameters. Most users will not need to change these from
+        their defaults; they are exposed for tuning stability and convergence behavior
+        on unusual datasets. Passing an unrecognized keyword raises a `TypeError`.
+        Note that unlike the parameters above, these are not range-validated by pydantic,
+        so it is up to the caller to respect the documented bounds.
+
+        init_alpha : float, default 0.9, must be in [0.1, 0.9]
+            Initial value of alpha_n for each cell if `ambient_profile` column is not present. If `freeze_ambient_profile=True`, this value does not
+            significantly effect the final result, so we set equal to alpha_cap for convenience. If `freeze_ambient_pofile=False`, then init_alpha
+            can be set lower. For the sake of stability, we recommend that this value be far above the expected contamination rate, within [0.1, 0.9].
+
+        init_beta : float, default 0.1, must be in [0.1, 0.9]
+            Initial beta (percent bulk contamination) value for each cell. We do not recommend initializing beta below 0.1 for the sake of stability.
+            Bulk and ambient contamination are not fully separable, so we set to a lower value than alpha_init to bias the assignment of contamination
+            to ambient rather than bulk.
+
+        alpha_cap : float, default 0.9, must be in [0, 1]
+            alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold
+            will be excluded from updating p_k and will be allowed to change cell-types. Disabled for `freeze_ambient_profile=False`.
+
+        repulsion_strength : float, default 1e-4, must be in [0, 1e-3]
+            Strength of repulsion between ambient and cell-type profiles during M-step.
+            Higher values lead to greater separation between ambient and cell-type profiles.
+            Note that repulsion is disabled for `freeze_ambient_profile=False`.
+
+        max_frac_gene_repulsion : float, default 0.2, must be in (0, 1]
+            Maximum fraction of each p_k entry that can be subtracted during repulsion.
+            Note that repulsion is disabled for `freeze_ambient_profile=False`.
+
+        celltype_lambda : float, default 50, must be >= 0
+            Pseudocount for cell-type profile updates. Will be divided by the number of genes G. Higher values lead to smoother cell-type profiles.
+
+        ambient_lambda : float, default 50, must be >= 0
+            Pseudocount for ambient profile update. Will be divided by the number of genes G. Higher values lead to a smoother ambient profile.
+
+        bulk_lambda : float, default 10, must be >= 0
+            Pseudocount for bulk profile update. Will be divided by the number of genes G. Higher values lead to a smoother bulk profile.
+
+        eps : float, default 1e-12, must be > 0
+            Numerical stability constant to prevent division by zero.
+
+        log_eps : float, default 1e-300, must be > 0
+            Numerical stability constant to log(0).
+
+        max_iter : int, default 2000, must be > 1
+            Maximum number of EM iterations.
+
+        del0_ll_tol : float, default 1e-3, must be > 0
+            The change in likelihood, relative to the first likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked.
+
+        min_ll_tol : float, default 1e-6, must be > 0
+            The change in likelihood, relative to the current likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked.
+            This is intended to cap `del0_ll_tol` at the edge of floating-point precision.
+
+        tol_p : float, default 1e-4, must be > 0
+            The maximum change in p below which training is discontinued. This is in addition to the tol_f stopping criterion.
+
+        tol_f : float, default 1e-4, must be > 0
+            The maximum change in f = (1 - beta) * alpha + beta, below which training is discontinued. This is in addition to the tol_p stopping criterion.
 
     Returns
     -------
@@ -758,6 +754,25 @@ def denoise_count_matrix(
       3. Iterate until convergence (relative change in ll < `del0_ll_tol`) or reaching `max_iter`.
     """
     from cellsweep import __version__
+
+    # advanced EM hyperparameters (see "Other Parameters" in the docstring)
+    init_alpha = em_kwargs.pop("init_alpha", 0.9)
+    init_beta = em_kwargs.pop("init_beta", 0.1)
+    alpha_cap = em_kwargs.pop("alpha_cap", 0.9)
+    repulsion_strength = em_kwargs.pop("repulsion_strength", 1e-4)
+    max_frac_gene_repulsion = em_kwargs.pop("max_frac_gene_repulsion", 0.2)
+    celltype_lambda = em_kwargs.pop("celltype_lambda", 50)
+    ambient_lambda = em_kwargs.pop("ambient_lambda", 50)
+    bulk_lambda = em_kwargs.pop("bulk_lambda", 10)
+    eps = em_kwargs.pop("eps", 1e-12)
+    log_eps = em_kwargs.pop("log_eps", 1e-300)
+    max_iter = em_kwargs.pop("max_iter", 2000)
+    del0_ll_tol = em_kwargs.pop("del0_ll_tol", 1e-3)
+    min_ll_tol = em_kwargs.pop("min_ll_tol", 1e-6)
+    tol_p = em_kwargs.pop("tol_p", 1e-4)
+    tol_f = em_kwargs.pop("tol_f", 1e-4)
+    if em_kwargs:
+        raise TypeError(f"denoise_count_matrix() got unexpected keyword argument(s): {sorted(em_kwargs)}")
 
     # set thread number
     set_num_threads(threads)

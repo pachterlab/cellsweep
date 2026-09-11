@@ -100,95 +100,97 @@ def main():  # noqa: C901
         default=None,
         help="Expected number of real cells, used when estimating thresholds."
     )
+    # Advanced EM hyperparameters: hidden from --help (see denoise_count_matrix's
+    # "Other Parameters" docstring section for details), but still settable.
     parser_denoise_count_matrix.add_argument(
         "--init_alpha",
         type=float,
         default=0.9,
-        help="Initial value of alpha_n for each cell.",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--init_beta",
         type=float,
         default=0.1,
-        help="Initial beta (percent bulk contamination) value for each cell.",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--alpha_cap",
         type=float,
         default=0.9,
-        help="alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold will be excluded from updating p_k and allowed to change cell-types.",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--repulsion_strength",
         type=float,
         default=1e-4,
-        help="Strength of repulsion between ambient and cell-type profiles during M-step. Higher values lead to greater separation between ambient and cell-type profiles.",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--max_frac_gene_repulsion",
         type=float,
         default=0.2,
-        help="Maximum fraction of each p_k entry that can be subtracted during repulsion.",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--celltype_lambda",
         type=float,
-        default=10,
-        help="Pseudocount for celltype profile update. Higher values lead to smoother celltype profiles",
+        default=50,
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--ambient_lambda",
         type=float,
         default=50,
-        help="Pseudocount for ambient profile update. Higher values lead to a smoother ambient profile.",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--bulk_lambda",
         type=float,
         default=10,
-        help="Pseudocount for bulk profile update. Higher values lead to a smoother bulk profile.",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--eps",
         type=float,
         default=1e-12,
-        help="Numerical stability constant to prevent division by zero).",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--log_eps",
         type=float,
         default=1e-300,
-        help="Numerical stability constant to prevent log(0).",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--max_iter",
         type=int,
         default=2000,
-        help="Maximum number of EM iterations.",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--del0_ll_tol",
         type=float,
         default=1e-3,
-        help="The change in likelihood, relative to the first likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked."
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--min_ll_tol",
         type=float,
         default=1e-6,
-        help="The change in likelihood, relative to the current likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked. This is intended to cap `del0_ll_tol` at the edge of floating-point precision."
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--tol_p",
         type=float,
         default=1e-4,
-        help="The maximum change in p below which training is discontinued. This is in addition to the tol_f stopping criterion.",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--tol_f",
         type=float,
         default=1e-4,
-        help="The maximum change in f = (1 - beta) * alpha + beta, below which training is discontinued. This is in addition to the tol_p stopping criterion.",
+        help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--random_state",
