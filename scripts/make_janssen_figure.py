@@ -1,23 +1,32 @@
-"""Assemble the Janssen et al. (2023) snRNA-seq benchmark figure.
+"""Figures for the Janssen et al. (2023) droplet-based snRNA-seq benchmark.
 
-Reads the CSVs written by notebooks/janssen_snrna.ipynb plus the published benchmark values
-shipped with the Janssen code archive, and writes a six-panel figure.
+Reads the CSVs written by scripts/analyze_janssen_markers.py and writes:
 
-Usage:
-    python scripts/make_janssen_figure.py [--data-dir DIR] [--out-dir DIR] [--out PATH]
+  janssen_dotplots.png    six dot plots -- uncorrected plus five correction methods --
+                          over proximal-tubule markers and broadly expressed genes,
+                          with nucleus types grouped into PT and non-PT
+  janssen_removal.png     in non-PT nuclei, PT-marker ("noise") counts removed against
+                          own-cell-type marker ("signal") counts removed
+
+Usage: python scripts/make_janssen_figure.py [--out-dir DIR] [--rep nuc2]
 """
 
 import argparse
 import os
+import sys
 
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.patches import Patch
+from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.lines import Line2D
 
-REPLICATES = ["nuc2", "nuc3"]
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import analyze_janssen_markers as jm
+import janssen_loaders as L
 
-# Categorical slots 1-5 of the validated default palette, plus a neutral for the uncorrected data.
+# Categorical slots 1-5 of the validated default palette, plus a neutral for uncorrected data.
 METHOD_COLORS = {
     "CellSweep": "#2a78d6",
     "CellBender": "#eb6834",
@@ -26,199 +35,182 @@ METHOD_COLORS = {
     "SoupX": "#4a3aa7",
     "raw": "#9a9a95",
 }
-METHOD_ORDER = ["CellSweep", "CellBender", "DecontX", "DecontX (empty)", "SoupX"]
-REP_COLORS = {"nuc2": "#2a78d6", "nuc3": "#eb6834"}
-
-
-def _despine(ax):
-    ax.spines[["top", "right"]].set_visible(False)
+# Sequential single-hue blue ramp, steps 100 -> 700 of the same palette.
+BLUES = LinearSegmentedColormap.from_list(
+    "palette_blue", ["#f4f8fe", "#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5",
+                     "#256abf", "#184f95", "#0d366b"])
+INK, MUTED = "#26251f", "#6f6e69"
+PANEL_TITLE = "uncorrected"
 
 
 def _panel_label(ax, letter):
-    ax.text(-0.16, 1.06, letter, transform=ax.transAxes, fontsize=13, fontweight="bold", va="top")
+    ax.text(-0.17, 1.07, letter, transform=ax.transAxes, fontsize=13, fontweight="bold",
+            va="top", color=INK)
 
 
-def panel_ground_truth(ax, percell):
-    """(A) How much background these nuclei actually carry."""
-    for rep in REPLICATES:
-        gt = percell[rep]["bRNA"].dropna()
-        ax.hist(gt, bins=32, range=(0, 0.8), histtype="step", linewidth=2,
-                color=REP_COLORS[rep], label=f"{rep} (median {gt.median():.0%})")
-    ax.set_xlabel("genotype-estimated background fraction")
-    ax.set_ylabel("nuclei")
-    ax.set_title("Background RNA per nucleus", fontsize=10)
-    ax.legend(frameon=False, fontsize=8)
+def _despine(ax):
+    ax.spines[["top", "right", "left", "bottom"]].set_visible(False)
+
+
+def celltype_order(df):
+    """PT first, then the non-PT types ordered by abundance."""
+    n = df.groupby("celltype")["n_cells"].first()
+    non_pt = [t for t in n.sort_values(ascending=False).index if t != "PT"]
+    return ["PT"] + non_pt
+
+
+def dot_panel(ax, sub, types, panel_genes, norm, size_scale, show_y, show_x):
+    """One method's dot plot: size = fraction of nuclei detected, colour = mean expression."""
+    piv_d = sub.pivot(index="celltype", columns="gene", values="detected").reindex(
+        index=types, columns=panel_genes)
+    piv_e = sub.pivot(index="celltype", columns="gene", values="rel_expr").reindex(
+        index=types, columns=panel_genes)
+    xs, ys = np.meshgrid(np.arange(len(panel_genes)), np.arange(len(types)))
+    ax.scatter(xs.ravel(), ys.ravel(), s=piv_d.values.ravel() * size_scale,
+               c=piv_e.values.ravel(), cmap=BLUES, norm=norm,
+               linewidths=0.4, edgecolors="#ffffff")
+    ax.set_xlim(-0.8, len(panel_genes) - 0.2)
+    ax.set_ylim(len(types) - 0.5, -0.8)
+    ax.set_xticks(np.arange(len(panel_genes)))
+    ax.set_yticks(np.arange(len(types)))
+    ax.set_xticklabels(panel_genes if show_x else [], rotation=90, fontsize=7, style="italic")
+    ax.set_yticklabels(types if show_y else [], fontsize=7.5)
+    ax.tick_params(length=0, colors=INK)
+    # Divider between the PT-marker block and the constitutive block, and between PT and non-PT.
+    ax.axvline(len(L.PT_MARKERS) - 0.5, color="#d8d7d2", lw=1.0)
+    ax.axhline(0.5, color="#d8d7d2", lw=1.0)
+    ax.set_axisbelow(True)
+    ax.grid(axis="y", color="#f0efec", lw=0.8)
     _despine(ax)
 
 
-def panel_knee(ax, knee):
-    """(B) The shallow knee typical of high-background droplet data."""
-    for rep in REPLICATES:
-        counts, n_cells = knee[rep]["counts"], int(knee[rep]["n_cells"])
-        ax.plot(np.arange(1, len(counts) + 1), counts, linewidth=1.5,
-                color=REP_COLORS[rep], label=rep)
-        ax.plot(n_cells, counts[n_cells - 1], "o", color=REP_COLORS[rep], ms=6,
-                markeredgecolor="white", markeredgewidth=0.8, zorder=3)
-    ax.axhline(100, color="0.35", ls=":", linewidth=1.2)
-    ax.text(1.3, 110, "noncellular cutoff (100 UMI)", fontsize=7, color="#52514e", va="bottom")
-    ax.set_xscale("log")
-    ax.set_yscale("log")
-    ax.set_xlabel("barcode rank")
-    ax.set_ylabel("UMI counts")
-    ax.set_title("Knee plots (dot = last called cell)", fontsize=10)
-    ax.legend(frameon=False, fontsize=8)
-    _despine(ax)
+def build_dotplots(df, rep, out_path):
+    types = celltype_order(df)
+    panel_genes = L.PT_MARKERS + L.CONSTITUTIVE
+    methods = [m for m in L.METHOD_ORDER if m in set(df["method"])]
+    # Colour is expression relative to the highest level that gene reaches in any nucleus
+    # type under any method -- almost always PT in the uncorrected panel. Absolute CP10K
+    # would be swamped by Malat1 and leave every marker unreadable.
+    df = df.copy()
+    df["rel_expr"] = df["mean_cp10k"] / df.groupby("gene")["mean_cp10k"].transform("max")
+    norm = Normalize(vmin=0, vmax=1)
+    size_scale = 105.0
 
-
-def panel_scatter(ax, df, rep, accuracy, letter_axis=True):
-    """(C, D) CellSweep's per-nucleus estimate against the genotype ground truth."""
-    g = df.dropna(subset=["bRNA"])
-    ax.scatter(g["bRNA"], g["est"], s=7, alpha=0.3, color=METHOD_COLORS["CellSweep"],
-               edgecolors="none", rasterized=True)
-    lim = 0.9
-    ax.plot([0, lim], [0, lim], color="0.35", ls="--", linewidth=1)
-    ax.set_xlim(0, lim)
-    ax.set_ylim(0, lim)
-    ax.set_aspect("equal")
-    ax.set_xlabel("genotype ground truth")
-    ax.set_ylabel("CellSweep estimate")
-    ax.set_title(f"{rep}  ($\\tau$ = {accuracy['tau']:.2f}, RMSLE = {accuracy['rmsle']:.3f}, "
-                 f"n = {int(accuracy['n']):,})", fontsize=9)
-    _despine(ax)
-
-
-def _grouped_bars(ax, table, metric, ylabel, title, replicates=REPLICATES,
-                  include_raw=False, fmt="{:.2f}"):
-    """(E, F) One bar per method, grouped by replicate; every bar is directly labelled."""
-    methods = (["raw"] if include_raw else []) + METHOD_ORDER
-    methods = [m for m in methods if any((rep, m) in table.index for rep in replicates)]
-    x = np.arange(len(replicates))
-    width = 0.82 / len(methods)
-    top = max(table.loc[(rep, m), metric] for rep in replicates for m in methods
-              if (rep, m) in table.index)
+    ncol = 3
+    nrow = int(np.ceil(len(methods) / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4.9 * ncol, 3.15 * nrow + 0.9),
+                             squeeze=False)
     for i, method in enumerate(methods):
-        vals = [table.loc[(rep, method), metric] if (rep, method) in table.index else np.nan
-                for rep in replicates]
-        pos = x - 0.41 + width * (i + 0.5)
-        ax.bar(pos, vals, width * 0.84, color=METHOD_COLORS[method], label=method)
-        for p, v in zip(pos, vals):
-            if not np.isnan(v):
-                ax.text(p, v + 0.02 * top, fmt.format(v), ha="center", va="bottom",
-                        fontsize=7, color="#52514e", rotation=90)
-    ax.set_xticks(x)
-    ax.set_xticklabels(replicates)
-    ax.set_xlim(-0.6, len(replicates) - 0.4)
-    ax.set_ylabel(ylabel)
-    ax.set_title(title, fontsize=10)
-    ax.margins(y=0.26)
-    _despine(ax)
-    return methods
+        ax = axes[i // ncol][i % ncol]
+        dot_panel(ax, df[df["method"] == method], types, panel_genes, norm, size_scale,
+                  show_y=(i % ncol == 0), show_x=(i + ncol >= len(methods)))
+        label = PANEL_TITLE if method == "raw" else method
+        ax.set_title(label, fontsize=10.5, color=INK, pad=26,
+                     fontweight="bold" if method == "CellSweep" else "normal")
+    for j in range(len(methods), nrow * ncol):
+        axes[j // ncol][j % ncol].set_visible(False)
 
+    # Gene-block and nucleus-group labels, drawn once on the top-left panel.
+    for ax in axes[0]:
+        if not ax.get_visible():
+            continue
+        ax.text((len(L.PT_MARKERS) - 1) / 2, -1.45, "PT markers", ha="center", fontsize=8,
+                color=MUTED)
+        ax.text(len(L.PT_MARKERS) + (len(L.CONSTITUTIVE) - 1) / 2, -1.45,
+                "broadly expressed", ha="center", fontsize=8, color=MUTED)
+    for ax in axes[:, 0]:
+        if not ax.get_visible():
+            continue
+        ax.text(-0.29, 0, "PT", transform=ax.get_yaxis_transform(), rotation=90,
+                ha="center", va="center", fontsize=8.5, color=MUTED, fontweight="bold")
+        ax.text(-0.29, (len(types) + 1) / 2, "non-PT", transform=ax.get_yaxis_transform(),
+                rotation=90, ha="center", va="center", fontsize=8.5, color=MUTED,
+                fontweight="bold")
 
-def build_figure(percell, knee, accuracy, estimation_table, marker_table, out_path):
-    fig, axes = plt.subplots(2, 3, figsize=(13.5, 8.0), constrained_layout=True)
+    fig.subplots_adjust(left=0.11, right=0.895, top=0.88, bottom=0.15, wspace=0.16,
+                        hspace=0.45)
+    cax = fig.add_axes([0.915, 0.55, 0.011, 0.28])
+    cb = fig.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=BLUES), cax=cax)
+    cb.set_label("mean expression,\nrelative to peak cell type", fontsize=7.5, color=INK)
+    cb.ax.tick_params(labelsize=7, length=2, colors=INK)
+    cb.outline.set_visible(False)
 
-    panel_ground_truth(axes[0, 0], percell)
-    panel_knee(axes[0, 1], knee)
-    panel_scatter(axes[0, 2], percell["nuc2"], "nuc2", accuracy["nuc2"])
-    panel_scatter(axes[1, 0], percell["nuc3"], "nuc3", accuracy["nuc3"])
-
-    methods = _grouped_bars(axes[1, 1], estimation_table, "tau",
-                            "Kendall's $\\tau$ vs. ground truth",
-                            "Per-nucleus estimation accuracy")
-    # Janssen et al. report marker metrics for nuc2 only, so that panel is nuc2 alone.
-    _grouped_bars(axes[1, 2], marker_table, "expression_fraction",
-                  "fraction of non-PT nuclei expressing",
-                  "PT-marker leakage, nuc2 (lower is better)",
-                  replicates=["nuc2"], include_raw=True, fmt="{:.3f}")
-
-    handles = [Patch(facecolor=METHOD_COLORS[m], label=m) for m in ["raw"] + methods]
-    fig.legend(handles=handles, loc="lower center", ncol=len(handles), frameon=False,
-               fontsize=9, bbox_to_anchor=(0.5, -0.035))
-
-    for ax, letter in zip(axes.ravel(), "ABCDEF"):
-        _panel_label(ax, letter)
-
+    handles = [Line2D([], [], marker="o", linestyle="none", markerfacecolor="#6da7ec",
+                      markeredgecolor="white", markersize=np.sqrt(f * size_scale),
+                      label=f"{f:.0%}") for f in (0.25, 0.5, 0.75, 1.0)]
+    fig.legend(handles=handles, loc="center left", bbox_to_anchor=(0.9, 0.24), frameon=False,
+               fontsize=7.5, labelspacing=1.05, handletextpad=0.9,
+               title="nuclei detecting", title_fontsize=7.5)
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     fig.savefig(os.path.splitext(out_path)[0] + ".pdf", bbox_inches="tight")
     print("wrote", out_path)
-    return fig
 
 
-def build_sensitivity_figure(sweep, out_path):
-    """Companion figure: how the noncellular-barcode cutoff moves the result."""
-    fig, axes = plt.subplots(1, 2, figsize=(8.6, 3.5), constrained_layout=True)
-    for rep in REPLICATES:
-        s = sweep[sweep["replicate"] == rep].sort_values("umi")
-        knee = s.iloc[-1]
-        for ax, col in zip(axes, ["tau", "frac_alpha_above_0p9"]):
-            ax.plot(s["umi"], s[col], "o-", color=REP_COLORS[rep], label=rep, ms=6)
-            ax.plot(knee["umi"], knee[col], "o", color=REP_COLORS[rep], ms=11,
-                    markerfacecolor="none", markeredgewidth=1.6)
-    axes[0].set_ylabel("Kendall's $\\tau$ vs. ground truth")
-    axes[0].axhline(0, color="0.75", linewidth=0.8, zorder=0)
-    axes[1].set_ylabel("fraction of nuclei with $\\alpha_i > 0.9$")
-    for ax, letter in zip(axes, "AB"):
-        ax.set_xscale("log")
-        ax.set_xlabel("noncellular barcode UMI cutoff")
-        ax.legend(frameon=False, fontsize=8)
-        _despine(ax)
+def build_removal(removals, out_path):
+    """Noise removed against signal removed, one panel per replicate."""
+    reps = list(removals)
+    fig, axes = plt.subplots(1, len(reps), figsize=(4.6 * len(reps), 4.3), squeeze=False)
+    for letter, (ax, rep) in zip("ABCD", zip(axes[0], reps)):
+        df = removals[rep]
+        agg = jm.summarise(df)
+        ax.axhline(1.0, color="#d8d7d2", lw=1, ls="--")
+        ax.axvline(0.0, color="#d8d7d2", lw=1, ls="--")
+        ax.plot(0, 1, marker="*", ms=16, color="#b8b7b2", zorder=1)
+        ax.annotate("ideal", (0, 1), textcoords="offset points", xytext=(9, 11),
+                    fontsize=8, color=MUTED, va="center")
+        pts = [(method, agg.loc[method, "own-type signal"], agg.loc[method, "PT noise"])
+               for method in L.METHOD_ORDER if method in agg.index]
+        for method, x, y in pts:
+            ax.plot(x, y, "o", ms=10, color=METHOD_COLORS[method], zorder=3,
+                    markeredgecolor="white", markeredgewidth=1.2)
+        # Methods can land on top of one another, so labels are pushed apart vertically and
+        # tied back to their point with a leader line.
+        lo, hi = ax.get_ylim()
+        gap = 0.062 * (hi - lo)
+        placed = []
+        for method, x, y in sorted(pts, key=lambda t: -t[2]):
+            ly = y if not placed else min(y, placed[-1] - gap)
+            placed.append(ly)
+            if abs(ly - y) > 1e-9:
+                ax.plot([x, x + 0.012 * (ax.get_xlim()[1] - ax.get_xlim()[0])], [y, ly],
+                        color="#c9c8c3", lw=0.8, zorder=2)
+            ax.annotate(method, (x, ly), textcoords="offset points", xytext=(11, 0),
+                        fontsize=8.5, color=INK, va="center",
+                        fontweight="bold" if method == "CellSweep" else "normal")
+        ax.set_xlabel("own-cell-type marker counts removed\n(signal: lower is better)",
+                      fontsize=9)
+        ax.set_ylabel("PT marker counts removed\n(background: higher is better)", fontsize=9)
+        ax.set_title(rep, fontsize=10.5, color=INK)
         _panel_label(ax, letter)
-    axes[1].text(0.97, 0.06, "open circle = cutoff at the called-cell count",
-                 transform=axes[1].transAxes, ha="right", fontsize=7, color="#52514e")
+        ax.set_xlim(-0.045, max(0.28, agg["own-type signal"].max() * 1.5))
+        ax.set_ylim(-0.05, 1.08)
+        ax.spines[["top", "right"]].set_visible(False)
+        ax.tick_params(labelsize=8, colors=INK)
+    fig.tight_layout()
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     fig.savefig(os.path.splitext(out_path)[0] + ".pdf", bbox_inches="tight")
     print("wrote", out_path)
-    return fig
-
-
-def load_inputs(data_dir, out_dir):
-    percell = {rep: pd.read_csv(os.path.join(out_dir, f"{rep}_percell.csv"), index_col=0)
-               for rep in REPLICATES}
-    knee = {rep: np.load(os.path.join(out_dir, f"{rep}_knee.npz")) for rep in REPLICATES}
-    accuracy = (pd.read_csv(os.path.join(out_dir, "cellsweep_estimation_accuracy.csv"))
-                  .set_index("replicate").to_dict("index"))
-
-    bench = pd.read_csv(os.path.join(data_dir, "benchmark_metrics.csv"))
-    bench = bench[bench["default"] & bench["replicate"].isin(REPLICATES)].copy()
-    bench["method"] = np.where(bench["param"].str.contains("emptyTrue", na=False),
-                               bench["method"] + " (empty)", bench["method"])
-
-    estimation_table = (bench[bench["evaluation_category"] == "estimation_accuracy"]
-                        .pivot_table(index=["replicate", "method"], columns="metric", values="value"))
-    marker_table = (bench[bench["evaluation_category"] == "marker_evaluation"]
-                    .pivot_table(index=["replicate", "method"], columns="metric", values="value"))
-
-    cs_markers = pd.read_csv(os.path.join(out_dir, "marker_metrics.csv"))
-    cs_markers = cs_markers[cs_markers["method"] == "CellSweep"]
-    for _, row in cs_markers.iterrows():
-        for metric in ("expression_fraction", "log_ratio_expression", "lfc"):
-            marker_table.loc[(row["replicate"], "CellSweep"), metric] = row[metric]
-    for rep in REPLICATES:
-        estimation_table.loc[(rep, "CellSweep"), "tau"] = accuracy[rep]["tau"]
-        estimation_table.loc[(rep, "CellSweep"), "rmsle"] = accuracy[rep]["rmsle"]
-
-    return percell, knee, accuracy, estimation_table.sort_index(), marker_table.sort_index()
 
 
 def main():
-    here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--data-dir", default=os.path.join(here, "notebooks", "data", "janssen2023"))
-    p.add_argument("--out-dir", default=os.path.join(here, "notebooks", "output", "janssen2023"))
-    p.add_argument("--out", default=None)
+    p.add_argument("--out-dir", default=L.OUT_DIR)
+    p.add_argument("--rep", default="nuc2", help="replicate shown in the dot-plot figure")
     args = p.parse_args()
-    out_path = args.out or os.path.join(args.out_dir, "janssen_snrna_figure.png")
 
-    percell, knee, accuracy, estimation_table, marker_table = load_inputs(args.data_dir, args.out_dir)
-    print(estimation_table.round(3).to_string())
-    print(marker_table.round(3).to_string())
-    build_figure(percell, knee, accuracy, estimation_table, marker_table, out_path)
+    df = pd.read_csv(os.path.join(args.out_dir, f"dotplot_{args.rep}.csv"))
+    build_dotplots(df, args.rep, os.path.join(args.out_dir, "janssen_dotplots.png"))
 
-    sweep_path = os.path.join(args.out_dir, "empty_cutoff_sweep.csv")
-    if os.path.exists(sweep_path):
-        build_sensitivity_figure(pd.read_csv(sweep_path),
-                                 os.path.join(args.out_dir, "janssen_cutoff_sensitivity.png"))
+    removals = {}
+    for rep in L.REPLICATES:
+        path = os.path.join(args.out_dir, f"removal_{rep}.csv")
+        if os.path.exists(path):
+            removals[rep] = pd.read_csv(path)
+    if removals:
+        build_removal(removals, os.path.join(args.out_dir, "janssen_removal.png"))
+        for rep, d in removals.items():
+            print(f"\n=== {rep}: mean fraction removed in non-PT nuclei ===")
+            print(jm.summarise(d).round(3).to_string())
 
 
 if __name__ == "__main__":
