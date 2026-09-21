@@ -19,7 +19,11 @@ OUT_DIR = os.path.join(CS_DIR, "notebooks", "output", "janssen2023")
 TOOL_DIR = os.path.join(OUT_DIR, "tools")
 
 REPLICATES = ["nuc2", "nuc3"]
-METHOD_ORDER = ["raw", "CellSweep", "CellBender", "DecontX", "DecontX (empty)", "SoupX"]
+# "CellSweep (no empties)" is CellSweep given only the called nuclei
+# (scripts/run_janssen_cellsweep_no_empties.py), so it has to learn the ambient profile rather
+# than read it off the empty droplets.
+METHOD_ORDER = ["raw", "CellSweep", "SoupX", "CellBender", "DecontX", "scAR",
+                "CellSweep (no empties)", "DecontX (empty)"]
 # The ten proximal-tubule markers Janssen et al. use for their marker-leakage evaluation
 # (Snakemake_benchmark/input/top10_PT_markers.RDS).
 PT_MARKERS = ["Slc34a1", "Miox", "Pck1", "Slc4a4", "Ttc36", "Lrp2", "Fbp1", "Cyp2e1",
@@ -88,10 +92,11 @@ def load_method(rep, method, genes, cells):
     if method == "raw":
         m, g, b = _read_10x_h5(os.path.join(DATA_DIR, rep, "raw_feature_bc_matrix.h5"))
         return _align(m, g, b, genes, cells)
-    if method == "CellSweep":
+    if method in ("CellSweep", "CellSweep (no empties)"):
         # The h5ad also holds the ~1.5M noncellular barcodes; read the CSR blocks straight
         # out of the file rather than materialising the whole AnnData.
-        path = os.path.join(DATA_DIR, rep, f"{rep}_output_cellsweep_empty100.h5ad")
+        tag = "empty100" if method == "CellSweep" else "no_empties"
+        path = os.path.join(DATA_DIR, rep, f"{rep}_output_cellsweep_{tag}.h5ad")
         with h5py.File(path, "r") as f:
             shape = tuple(f["X"].attrs["shape"])
             m = sp.csr_matrix((f["X"]["data"][:].astype(np.float64), f["X"]["indices"][:],
@@ -108,6 +113,12 @@ def load_method(rep, method, genes, cells):
         gi = pd.Index(raw_names).get_indexer(genes)
         assert (ci >= 0).all() and (gi >= 0).all()
         return sp.csr_matrix(m[ci][:, gi])
+    if method == "scAR":
+        # scripts/run_janssen_scar.py already writes the shared cell x gene grid
+        import anndata as ad
+        a = ad.read_h5ad(os.path.join(TOOL_DIR, f"{rep}_scar.h5ad"))
+        a = a[cells, genes]
+        return sp.csr_matrix(a.X)
     if method == "CellBender":
         # The main output keeps every input barcode; the _filtered companion keeps only the
         # barcodes CellBender itself calls as cells, which is not the same set as Janssen's.

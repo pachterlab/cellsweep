@@ -14,7 +14,8 @@ annotation (CellTypist Immune_All_Low collapsed to major populations):
                     counts are ambient (dashed line, open circles)
 
 A good run keeps signal near 1 and pushes noise toward 0. Each figure's legend is written to a
-separate <name>_legend.{png,pdf}. The CSV also carries per-programme series (CD16 monocyte, NK)
+separate <name>_legend.{png,pdf} as well as drawn inside the axes, and the two panels are composed
+into Fig11.png (A = labels, B = empty barcodes). The CSV also carries per-programme series (CD16 monocyte, NK)
 that are not drawn in these figures.
 
 Run scripts/run_celltype_granularity_sensitivity.py and scripts/run_empty_barcode_sweep.py first.
@@ -118,8 +119,10 @@ def save(fig, name, tight_bbox=False):
 
 def save_legend(handles, labels, name):
     """Legend as its own file, one entry per line."""
+    from matplotlib.legend_handler import HandlerTuple
     fig = plt.figure(figsize=(3.4, 0.32 * len(labels) + 0.2))
-    fig.legend(handles, labels, loc="center", frameon=False, fontsize=8, ncol=1)
+    fig.legend(handles, labels, loc="center", frameon=False, fontsize=8, ncol=1,
+               handler_map={tuple: HandlerTuple(ndivide=None, pad=0.6)})
     save(fig, name, tight_bbox=True)
 
 
@@ -129,15 +132,25 @@ def figure_labels(df):
     fig, ax = plt.subplots(figsize=(5.4, 4.2))
     draw(ax, leiden)
 
-    # CellTypist annotations, plotted as squares (High) and diamonds (Low)
-    for cond, marker, name in [("ct_high", "s", "CellTypist High"), ("ct_low", "D", "CellTypist Low")]:
+    # CellTypist annotations in red, squares for High (the annotation used elsewhere) and diamonds for Low.
+    # Filled/open means signal/noise as in the black series, so one legend entry per annotation
+    # carries both markers and the legend stays narrow enough for the bottom-right corner.
+    from matplotlib.legend_handler import HandlerTuple
+    extra = []
+    for cond, marker, color, name in [("ct_high", "s", "#d62728", "CellTypist High"), ("ct_low", "D", "#d62728", "CellTypist Low")]:
         row = d.loc[cond]
-        ax.scatter(row["x"], row["signal_retained"], marker=marker, s=55, color="k", zorder=5, label=f"{name}: signal retained")
-        ax.scatter(row["x"], row["noise_retained"], marker=marker, s=55, facecolor="none", edgecolor="k", lw=1.2, zorder=5, label=f"{name}: noise retained")
-        ax.annotate(name, (row["x"], row["noise_retained"]), textcoords="offset points", xytext=(0, -13), ha="center", fontsize=6.5)
+        h1 = ax.scatter(row["x"], row["signal_retained"], marker=marker, s=55, color=color, zorder=5)
+        h2 = ax.scatter(row["x"], row["noise_retained"], marker=marker, s=55, facecolor="none", edgecolor=color, lw=1.2, zorder=5)
+        extra.append(((h1, h2), name))
+        ax.annotate(name, (row["x"], row["noise_retained"]), textcoords="offset points", xytext=(0, -13), ha="center", fontsize=6.5, color=color)
 
-    finish(ax, "Number of celltypes")
+    finish(ax, "Number of celltypes (Leiden)")
     handles, labels_ = ax.get_legend_handles_labels()
+    handles += [h for h, _ in extra]
+    labels_ += [l for _, l in extra]
+    ax.legend(handles, labels_, loc="lower right", bbox_to_anchor=(1.0, 0.0), frameon=False, fontsize=8,
+              labelspacing=0.4, handletextpad=0.6, borderaxespad=0.4,
+              handler_map={tuple: HandlerTuple(ndivide=None, pad=0.6)})
     fig.tight_layout()
     save(fig, "celltype_granularity_signal_vs_noise")
     save_legend(handles, labels_, "celltype_granularity_signal_vs_noise_legend")
@@ -151,9 +164,30 @@ def figure_empty(df):
     ax.annotate(f"all {N_EMPTY_ALL:,}", (N_EMPTY_ALL, 0.5), rotation=90, va="center", ha="right", fontsize=6.5, color="0.35")
     finish(ax, "Number of empty barcodes")
     handles, labels_ = ax.get_legend_handles_labels()
+    ax.legend(handles, labels_, loc="center right", bbox_to_anchor=(0.97, 0.22), frameon=False, fontsize=8)
     fig.tight_layout()
     save(fig, "empty_barcode_signal_vs_noise")
     save_legend(handles, labels_, "empty_barcode_signal_vs_noise_legend")
+
+
+def compose(names, path):
+    """Panels side by side at equal height, a capital letter at the top left of each (manuscript Fig. 11)."""
+    from PIL import Image, ImageDraw, ImageFont
+    from matplotlib.font_manager import FontProperties, findfont
+    imgs = [Image.open(os.path.join(out_dir, f"{n}.png")).convert("RGB") for n in names]
+    h = max(im.height for im in imgs)
+    imgs = [im.resize((int(im.width * h / im.height), h), Image.LANCZOS) for im in imgs]
+    pad, label_h = 120, 220
+    canvas = Image.new("RGB", (sum(im.width for im in imgs) + pad * (len(imgs) - 1), h + label_h), "white")
+    draw = ImageDraw.Draw(canvas)
+    font = ImageFont.truetype(findfont(FontProperties(family="DejaVu Sans")), 150)
+    x = 0
+    for letter, im in zip("ABCDEFGH", imgs):
+        draw.text((x + 20, 10), letter, fill="black", font=font)
+        canvas.paste(im, (x, label_h))
+        x += im.width + pad
+    canvas.save(path)
+    print(f"wrote {path} {canvas.size}")
 
 
 if __name__ == "__main__":
@@ -161,5 +195,6 @@ if __name__ == "__main__":
     df = pd.read_csv(csv) if (os.path.exists(csv) and "--reuse" in sys.argv) else collect()
     figure_labels(df)
     figure_empty(df)
+    compose(["celltype_granularity_signal_vs_noise", "empty_barcode_signal_vs_noise"], os.path.join(out_dir, "Fig11.png"))
     pd.set_option("display.width", 250)
     print(df.round(3).to_string(index=False))

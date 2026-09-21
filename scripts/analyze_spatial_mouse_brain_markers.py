@@ -58,6 +58,11 @@ def _init(rows, cols, shape, tissue, raw_cols, cs_cols, bin_retention):
     _G.update(rows=rows, cols=cols, shape=shape, tissue=tissue, raw=raw_cols, cs=cs_cols, r=bin_retention)
 
 
+def _strata(d):
+    """Distance strata; the first includes the core itself (d == 0), matching the on-source set."""
+    return [((d >= lo) if i == 0 else (d > lo)) & (d <= hi) for i, (lo, hi) in enumerate(zip(DIST_EDGES[:-1], DIST_EDGES[1:]))]
+
+
 def gene_source_stats(j):
     rows, cols, shape, tissue = _G["rows"], _G["cols"], _G["shape"], _G["tissue"]
     raw = np.asarray(_G["raw"][:, j].todense()).ravel()
@@ -81,8 +86,8 @@ def gene_source_stats(j):
         "raw_on": raw[on].sum(), "cs_on": cs[on].sum(),
         "raw_far": raw[far].sum(), "cs_far": cs[far].sum(),
         "expected_on": (raw[on] * _G["r"][on]).sum(), "expected_far": (raw[far] * _G["r"][far]).sum(),
-        "raw_decay": np.array([raw[(d > lo) & (d <= hi)].mean() if ((d > lo) & (d <= hi)).any() else np.nan for lo, hi in zip(DIST_EDGES[:-1], DIST_EDGES[1:])]),
-        "cs_decay": np.array([cs[(d > lo) & (d <= hi)].mean() if ((d > lo) & (d <= hi)).any() else np.nan for lo, hi in zip(DIST_EDGES[:-1], DIST_EDGES[1:])]),
+        "raw_decay": np.array([raw[m].mean() if m.any() else np.nan for m in _strata(d)]),
+        "cs_decay": np.array([cs[m].mean() if m.any() else np.nan for m in _strata(d)]),
     }
 
 

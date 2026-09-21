@@ -15,7 +15,9 @@ distinguishes the barcodes that a tool fails on, using
     which splits them into "ambient/global contamination" and "a genuine cell of the
     other species" using reference profiles estimated from the data itself.
 
-Outputs a per-cell table and a multi-panel figure.
+Outputs a per-cell table, the summary statistics quoted in the manuscript, and a figure
+with one panel per method: every barcode by its raw human and mouse counts, with the
+residual doublets marked and the barcodes that method failed on circled.
 
 Usage:
     python scripts/hgmm_failure_mode_analysis.py \
@@ -36,11 +38,12 @@ import cellsweep.utils as cs_utils
 
 warnings.filterwarnings("ignore")
 
-TOOLS = ["cellsweep", "cellbender", "scar", "soupx", "decontx"]
+TOOLS = ["cellsweep", "soupx", "cellbender", "decontx", "scar", "cellsweep_no_empties"]
 TOOL_LABEL = {"cellsweep": "CellSweep", "cellbender": "CellBender", "scar": "scAR",
-              "soupx": "SoupX", "decontx": "DecontX"}
+              "soupx": "SoupX", "decontx": "DecontX",
+              "cellsweep_no_empties": "CellSweep (no empties)"}
 TOOL_COLOR = {"cellsweep": "#1f77b4", "cellbender": "#d62728", "scar": "#2ca02c",
-              "soupx": "#9467bd", "decontx": "#ff7f0e"}
+              "soupx": "#9467bd", "decontx": "#ff7f0e", "cellsweep_no_empties": "#8c564b"}
 
 
 def species_totals(adata):
@@ -82,6 +85,15 @@ def build_table(data_dir):
 
     df["cellsweep_h"] = np.asarray(acs.X.tocsr()[:, is_h].sum(axis=1)).ravel()
     df["cellsweep_m"] = np.asarray(acs.X.tocsr()[:, is_m].sum(axis=1)).ravel()
+
+    # CellSweep's alternative model, run on the called cells alone
+    # (scripts/run_hgmm_cellsweep_no_empties.py)
+    ane = ad.read_h5ad(os.path.join(data_dir, "hgmm_12k_output_cellsweep_no_empties.h5ad"))
+    ane.var_names_make_unique()
+    h, m, _ = species_totals(ane)
+    df["cellsweep_no_empties_h"] = h.reindex(df.index).values
+    df["cellsweep_no_empties_m"] = m.reindex(df.index).values
+    del ane
 
     loaders = {
         "cellbender": lambda: sc.read_10x_h5(
@@ -193,106 +205,38 @@ def synthetic_controls(df, acs, is_h, is_m, con, cell, pos, n_add=2000, n_cells=
     return {k: np.asarray(v) for k, v in out.items()}
 
 
-def make_figure(df, synth, out_path):
+def make_figure(df, out_path):
+    """One panel per method: the raw human/mouse counts of every barcode, with the barcodes
+    that method leaves more than half of their cross-species counts in circled."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
-    from matplotlib.lines import Line2D
 
-    fig, axes = plt.subplots(2, 3, figsize=(16.5, 9.5))
-
-    # (A) raw human vs mouse counts, residual doublets highlighted
-    ax = axes[0, 0]
-    ax.scatter(df.raw_h + 1, df.raw_m + 1, s=4, c="0.8", lw=0, rasterized=True, label="singlet-called")
+    fig, axes = plt.subplots(2, 3, figsize=(16.5, 10.5))
     rd = df[df.residual_doublet]
-    ax.scatter(rd.raw_h + 1, rd.raw_m + 1, s=18, c="#d62728", lw=0, label="residual doublet")
-    cb = df[(df.cellbender_rm < 0.5)]
-    ax.scatter(cb.raw_h + 1, cb.raw_m + 1, s=44, facecolors="none", edgecolors="k", lw=0.9,
-               label="CellBender fails")
-    ax.set_xscale("log"); ax.set_yscale("log")
-    ax.set_xlabel("human counts + 1"); ax.set_ylabel("mouse counts + 1")
-    ax.set_title("A  Barcodes CellBender fails on")
-    ax.legend(frameon=False, fontsize=8, loc="lower left")
+    for letter, tool, ax in zip("ABCDEF", TOOLS, axes.ravel()):
+        fail = df[df[f"{tool}_rm"] < 0.5]
+        ax.scatter(df.raw_h + 1, df.raw_m + 1, s=4, c="0.8", lw=0, rasterized=True,
+                   label=f"singlet-called (n={len(df) - len(rd):,})")
+        ax.scatter(rd.raw_h + 1, rd.raw_m + 1, s=18, c="#d62728", lw=0,
+                   label=f"residual doublet (n={len(rd):,})")
+        ax.scatter(fail.raw_h + 1, fail.raw_m + 1, s=44, facecolors="none", edgecolors="k", lw=0.9,
+                   label=f"{TOOL_LABEL[tool]} fails (n={len(fail):,})")
+        ax.set_xscale("log"); ax.set_yscale("log")
+        ax.set_xlabel("human counts + 1"); ax.set_ylabel("mouse counts + 1")
+        ax.set_title(f"{letter}  Barcodes {TOOL_LABEL[tool]} fails on")
+        ax.legend(frameon=False, fontsize=8, loc="lower left")
+        ax.spines[["top", "right"]].set_visible(False)
 
-    # (B) validation of the mixture estimator
-    ax = axes[0, 1]
-    bins = np.linspace(0, 1, 41)
-    sets = [("simulated ambient-only", synth["ambient"], "#4c72b0"),
-            ("simulated doublet", synth["doublet"], "#c44e52"),
-            ("observed: all barcodes", df.w_secondcell.dropna().values, "0.6"),
-            ("observed: CellBender fails", df.loc[df.cellbender_rm < 0.5, "w_secondcell"].values, "k")]
-    for lab, v, c in sets:
-        ax.hist(v, bins=bins, density=True, histtype="step", lw=2, color=c, label=lab)
-    ax.axvspan(0.5, 1.0, color="0.92", zorder=0)
-    ax.set_yscale("log")
-    ax.set_xlabel("$w$ = fraction of cross-species counts from a real second cell")
-    ax.set_ylabel("density")
-    ax.set_title("B  Two-component fit, with controls")
-    ax.legend(frameon=False, fontsize=8)
+    # one set of axis limits, so the panels can be read against one another
+    lims = [(min(a.get_xlim()[0] for a in axes.ravel()), max(a.get_xlim()[1] for a in axes.ravel())),
+            (min(a.get_ylim()[0] for a in axes.ravel()), max(a.get_ylim()[1] for a in axes.ravel()))]
+    for a in axes.ravel():
+        a.set_xlim(*lims[0]); a.set_ylim(*lims[1])
 
-    # (C) removal vs size of the inferred second cell
-    ax = axes[0, 2]
-    edges = [0, 30, 100, 300, 1000, 3000, np.inf]
-    labels = ["<30", "30-100", "100-300", "300-1k", "1k-3k", ">3k"]
-    df = df.copy()
-    df["_bin"] = pd.cut(df.cross_from_cell, edges, labels=labels)
-    counts = df.groupby("_bin").size()
-    for t in TOOLS:
-        med = df.groupby("_bin")[f"{t}_rm"].median()
-        ax.plot(range(len(labels)), med.values, "o-", color=TOOL_COLOR[t], label=TOOL_LABEL[t])
-    ax.set_xticks(range(len(labels)))
-    ax.set_xticklabels([f"{l}\nn={counts[l]:,}" for l in labels], fontsize=8)
-    ax.set_xlabel("counts attributed to a second cell ($w \\times$ cross-species counts)")
-    ax.set_ylabel("median fraction of cross-species\ncounts removed")
-    ax.set_ylim(0, 1.08)
-    ax.set_title("C  Failure appears only when a second cell is present")
-    ax.legend(frameon=False, fontsize=8, loc="lower left")
-
-    # (D) QC of the failing barcodes
-    ax = axes[1, 0]
-    fail = df.cellbender_rm < 0.5
-    feats = [("library size", "raw_total"), ("genes detected", "raw_n_genes"),
-             ("cross-species counts", "n_cross"), ("contamination\nfraction", "frac_contam_raw"),
-             ("mitochondrial\nfraction", "mt_frac_raw"), (r"CellSweep $\hat{\alpha}$", "alpha_hat")]
-    ratios = [df.loc[fail, c].median() / df.loc[~fail, c].median() for _, c in feats]
-    ax.barh(range(len(feats)), ratios, color=["#d62728" if r > 1.5 else "0.7" for r in ratios])
-    ax.axvline(1, color="k", lw=1)
-    ax.set_xscale("log")
-    ax.set_yticks(range(len(feats)))
-    ax.set_yticklabels([f for f, _ in feats], fontsize=9)
-    ax.set_xlabel("median in failing barcodes / median in the rest")
-    ax.set_title("D  QC profile of the failing barcodes")
-    for i, r in enumerate(ratios):
-        ax.text(r * 1.06, i, f"{r:.2f}$\\times$", va="center", fontsize=8)
-
-    # (E) per-tool failure rate, split by residual doublet
-    ax = axes[1, 1]
-    x = np.arange(len(TOOLS))
-    a = [100 * (df.loc[~df.residual_doublet, f"{t}_rm"] < 0.5).mean() for t in TOOLS]
-    b = [100 * (df.loc[df.residual_doublet, f"{t}_rm"] < 0.5).mean() for t in TOOLS]
-    ax.bar(x - 0.2, a, 0.4, label="clean singlet", color="0.7")
-    ax.bar(x + 0.2, b, 0.4, label="residual doublet", color="#d62728")
-    ax.set_xticks(x); ax.set_xticklabels([TOOL_LABEL[t] for t in TOOLS], rotation=20)
-    ax.set_ylabel("% of barcodes with <50% of\ncross-species counts removed")
-    ax.set_title("E  Failure rate by barcode class")
-    ax.legend(frameon=False, fontsize=8)
-
-    # (F) the cost: same-species signal retained
-    ax = axes[1, 2]
-    a = [100 * df.loc[~df.residual_doublet, f"{t}_sig_ret"].median() for t in TOOLS]
-    b = [100 * df.loc[df.residual_doublet, f"{t}_sig_ret"].median() for t in TOOLS]
-    ax.bar(x - 0.2, a, 0.4, label="clean singlet", color="0.7")
-    ax.bar(x + 0.2, b, 0.4, label="residual doublet", color="#d62728")
-    ax.set_xticks(x); ax.set_xticklabels([TOOL_LABEL[t] for t in TOOLS], rotation=20)
-    ax.set_ylim(80, 100)
-    ax.set_ylabel("median % of same-species counts retained")
-    ax.set_title("F  Cost of stripping the second cell")
-    ax.legend(frameon=False, fontsize=8, loc="lower left")
-
-    for a_ in axes.ravel():
-        a_.spines[["top", "right"]].set_visible(False)
     fig.tight_layout()
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    fig.savefig(os.path.splitext(out_path)[0] + ".pdf", bbox_inches="tight")
     print(f"wrote {out_path}")
 
 
@@ -311,6 +255,16 @@ def main():
     if args.reuse and os.path.exists(csv) and os.path.exists(npz):
         df = pd.read_csv(csv, index_col=0)
         synth = dict(np.load(npz))
+        missing = [t for t in TOOLS if f"{t}_rm" not in df.columns]
+        if missing:
+            # the per-barcode mixture fit does not depend on the tool, so only the removal
+            # fractions of the newly added tools have to be recomputed
+            print(f"cached table predates {', '.join(missing)}; scoring them", flush=True)
+            full, _, _, _ = build_table(args.data_dir)
+            cols = [c for t in missing for c in
+                    (f"{t}_h", f"{t}_m", f"{t}_noise", f"{t}_rm", f"{t}_sig_ret")]
+            df = df.join(full[cols])
+            df.to_csv(csv)
     else:
         df, acs, is_h, is_m = build_table(args.data_dir)
         df = df[~df.is_doublet].copy()      # doublets are removed before benchmarking
@@ -333,7 +287,7 @@ def main():
                  100 * f[df.residual_doublet].mean()))
 
     fig_path = args.figure or os.path.join(args.out_dir, "hgmm_12k_failure_mode_analysis.png")
-    make_figure(df, synth, fig_path)
+    make_figure(df, fig_path)
 
 
 if __name__ == "__main__":

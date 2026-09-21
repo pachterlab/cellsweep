@@ -29,10 +29,12 @@ import janssen_loaders as L
 # Categorical slots 1-5 of the validated default palette, plus a neutral for uncorrected data.
 METHOD_COLORS = {
     "CellSweep": "#2a78d6",
+    "SoupX": "#4a3aa7",
     "CellBender": "#eb6834",
     "DecontX": "#1baf7a",
-    "DecontX (empty)": "#eda100",
-    "SoupX": "#4a3aa7",
+    "scAR": "#eda100",
+    "CellSweep (no empties)": "#b07aa1",
+    "DecontX (empty)": "#e87ba4",
     "raw": "#9a9a95",
 }
 # Sequential single-hue blue ramp, steps 100 -> 700 of the same palette.
@@ -41,6 +43,10 @@ BLUES = LinearSegmentedColormap.from_list(
                      "#256abf", "#184f95", "#0d366b"])
 INK, MUTED = "#26251f", "#6f6e69"
 PANEL_TITLE = "uncorrected"
+# Methods shown in the figures, in the tool order of the PBMC supplementary figure. DecontX (empty)
+# and CellSweep (no empties) are still scored by analyze_janssen_markers.py but left out of the
+# plots.
+FIGURE_METHODS = ["raw", "CellSweep", "SoupX", "CellBender", "DecontX", "scAR"]
 
 
 def _panel_label(ax, letter):
@@ -59,88 +65,79 @@ def celltype_order(df):
     return ["PT"] + non_pt
 
 
-def dot_panel(ax, sub, types, panel_genes, norm, size_scale, show_y, show_x):
-    """One method's dot plot: size = fraction of nuclei detected, colour = mean expression."""
-    piv_d = sub.pivot(index="celltype", columns="gene", values="detected").reindex(
-        index=types, columns=panel_genes)
-    piv_e = sub.pivot(index="celltype", columns="gene", values="rel_expr").reindex(
-        index=types, columns=panel_genes)
-    xs, ys = np.meshgrid(np.arange(len(panel_genes)), np.arange(len(types)))
-    ax.scatter(xs.ravel(), ys.ravel(), s=piv_d.values.ravel() * size_scale,
-               c=piv_e.values.ravel(), cmap=BLUES, norm=norm,
-               linewidths=0.4, edgecolors="#ffffff")
-    ax.set_xlim(-0.8, len(panel_genes) - 0.2)
-    ax.set_ylim(len(types) - 0.5, -0.8)
-    ax.set_xticks(np.arange(len(panel_genes)))
-    ax.set_yticks(np.arange(len(types)))
-    ax.set_xticklabels(panel_genes if show_x else [], rotation=90, fontsize=7, style="italic")
-    ax.set_yticklabels(types if show_y else [], fontsize=7.5)
-    ax.tick_params(length=0, colors=INK)
-    # Divider between the PT-marker block and the constitutive block, and between PT and non-PT.
-    ax.axvline(len(L.PT_MARKERS) - 0.5, color="#d8d7d2", lw=1.0)
-    ax.axhline(0.5, color="#d8d7d2", lw=1.0)
-    ax.set_axisbelow(True)
-    ax.grid(axis="y", color="#f0efec", lw=0.8)
-    _despine(ax)
+def scanpy_dotplot(ax, sub, types, panel_genes, title, show_y, show_x):
+    """One method's dot plot, drawn by scanpy's DotPlot from the precomputed per-type values:
+    size = fraction of nuclei detected, colour = mean expression relative to the peak cell type."""
+    import anndata as ad
+    import scanpy as sc
+
+    size_df = sub.pivot(index="celltype", columns="gene", values="detected").reindex(index=types, columns=panel_genes)
+    color_df = sub.pivot(index="celltype", columns="gene", values="rel_expr").reindex(index=types, columns=panel_genes)
+    # DotPlot needs an AnnData to lay out groups and genes; the values themselves come from the two frames
+    dummy = ad.AnnData(np.zeros((len(types), len(panel_genes)), dtype=np.float32),
+                       obs=pd.DataFrame({"celltype": pd.Categorical(types, categories=types)}, index=types),
+                       var=pd.DataFrame(index=panel_genes))
+    n_pt = len(L.PT_MARKERS)
+    dp = sc.pl.DotPlot(dummy, panel_genes, groupby="celltype", categories_order=types, ax=ax,
+                       dot_size_df=size_df, dot_color_df=color_df, vmin=0, vmax=1,
+                       var_group_positions=[(0, n_pt - 1), (n_pt, len(panel_genes) - 1)],
+                       var_group_labels=["PT markers", "broadly expressed"], var_group_rotation=0)
+    # size_exponent=1 keeps dot area proportional to the detected fraction; dot_min/max fixed so all panels share one scale
+    dp.style(cmap="Reds", dot_min=0, dot_max=1, size_exponent=1, smallest_dot=0, largest_dot=DOT_MAX_SIZE)
+    dp.legend(show=False)
+    dp.make_figure()
+    main_ax = dp.ax_dict["mainplot_ax"]
+    main_ax.set_xticklabels(panel_genes if show_x else [], rotation=90, fontsize=7, style="italic")
+    main_ax.tick_params(axis="x", length=3 if show_x else 0)
+    main_ax.set_yticklabels(types if show_y else [], fontsize=7.5)
+    main_ax.tick_params(axis="y", length=3 if show_y else 0)
+    dp.ax_dict["gene_group_ax"].set_title(title, fontsize=10.5, pad=12,
+                                          fontweight="bold" if title == "CellSweep" else "normal")
+    for t in dp.ax_dict["gene_group_ax"].texts:
+        t.set_fontsize(8)
+    return dp
+
+
+DOT_MAX_SIZE = 110
 
 
 def build_dotplots(df, rep, out_path):
     types = celltype_order(df)
     panel_genes = L.PT_MARKERS + L.CONSTITUTIVE
-    methods = [m for m in L.METHOD_ORDER if m in set(df["method"])]
+    methods = [m for m in FIGURE_METHODS if m in set(df["method"])]
     # Colour is expression relative to the highest level that gene reaches in any nucleus
     # type under any method -- almost always PT in the uncorrected panel. Absolute CP10K
     # would be swamped by Malat1 and leave every marker unreadable.
     df = df.copy()
     df["rel_expr"] = df["mean_cp10k"] / df.groupby("gene")["mean_cp10k"].transform("max")
-    norm = Normalize(vmin=0, vmax=1)
-    size_scale = 105.0
 
     ncol = 3
     nrow = int(np.ceil(len(methods) / ncol))
-    fig, axes = plt.subplots(nrow, ncol, figsize=(4.9 * ncol, 3.15 * nrow + 0.9),
-                             squeeze=False)
+    fig, axes = plt.subplots(nrow, ncol, figsize=(4.9 * ncol, 3.3 * nrow + 0.6), squeeze=False)
+    fig.subplots_adjust(left=0.1, right=0.885, top=0.93, bottom=0.12, wspace=0.12, hspace=0.08)
+    dp = None
     for i, method in enumerate(methods):
         ax = axes[i // ncol][i % ncol]
-        dot_panel(ax, df[df["method"] == method], types, panel_genes, norm, size_scale,
-                  show_y=(i % ncol == 0), show_x=(i + ncol >= len(methods)))
-        label = PANEL_TITLE if method == "raw" else method
-        ax.set_title(label, fontsize=10.5, color=INK, pad=26,
-                     fontweight="bold" if method == "CellSweep" else "normal")
+        dp = scanpy_dotplot(ax, df[df["method"] == method], types, panel_genes,
+                            PANEL_TITLE if method == "raw" else method,
+                            show_y=(i % ncol == 0), show_x=(i + ncol >= len(methods)))
+        if i % ncol == 0:
+            # PT / non-PT row groups, bracketed to the left of the cell-type names
+            main_ax = dp.ax_dict["mainplot_ax"]
+            trans = main_ax.get_yaxis_transform()
+            for lo, hi, label in [(0, 0, "PT"), (1, len(types) - 1, "non-PT")]:
+                main_ax.plot([-0.2, -0.22, -0.22, -0.2], [lo - 0.3, lo - 0.3, hi + 0.3, hi + 0.3], transform=trans,
+                             color="black", lw=0.8, clip_on=False)
+                main_ax.text(-0.25, (lo + hi) / 2, label, transform=trans, rotation=90, ha="center", va="center",
+                             fontsize=8.5)
     for j in range(len(methods), nrow * ncol):
         axes[j // ncol][j % ncol].set_visible(False)
 
-    # Gene-block and nucleus-group labels, drawn once on the top-left panel.
-    for ax in axes[0]:
-        if not ax.get_visible():
-            continue
-        ax.text((len(L.PT_MARKERS) - 1) / 2, -1.45, "PT markers", ha="center", fontsize=8,
-                color=MUTED)
-        ax.text(len(L.PT_MARKERS) + (len(L.CONSTITUTIVE) - 1) / 2, -1.45,
-                "broadly expressed", ha="center", fontsize=8, color=MUTED)
-    for ax in axes[:, 0]:
-        if not ax.get_visible():
-            continue
-        ax.text(-0.29, 0, "PT", transform=ax.get_yaxis_transform(), rotation=90,
-                ha="center", va="center", fontsize=8.5, color=MUTED, fontweight="bold")
-        ax.text(-0.29, (len(types) + 1) / 2, "non-PT", transform=ax.get_yaxis_transform(),
-                rotation=90, ha="center", va="center", fontsize=8.5, color=MUTED,
-                fontweight="bold")
-
-    fig.subplots_adjust(left=0.11, right=0.895, top=0.88, bottom=0.15, wspace=0.16,
-                        hspace=0.45)
-    cax = fig.add_axes([0.915, 0.55, 0.011, 0.28])
-    cb = fig.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=BLUES), cax=cax)
-    cb.set_label("mean expression,\nrelative to peak cell type", fontsize=7.5, color=INK)
-    cb.ax.tick_params(labelsize=7, length=2, colors=INK)
-    cb.outline.set_visible(False)
-
-    handles = [Line2D([], [], marker="o", linestyle="none", markerfacecolor="#6da7ec",
-                      markeredgecolor="white", markersize=np.sqrt(f * size_scale),
-                      label=f"{f:.0%}") for f in (0.25, 0.5, 0.75, 1.0)]
-    fig.legend(handles=handles, loc="center left", bbox_to_anchor=(0.9, 0.24), frameon=False,
-               fontsize=7.5, labelspacing=1.05, handletextpad=0.9,
-               title="nuclei detecting", title_fontsize=7.5)
+    # one shared legend, drawn with scanpy's own size-legend and colorbar code
+    dp.size_title = "Fraction of nuclei\nin group (%)"
+    dp.color_legend_title = "Mean expression,\nrelative to peak cell type"
+    dp._plot_size_legend(fig.add_axes([0.9, 0.36, 0.09, 0.1]))
+    dp._plot_colorbar(fig.add_axes([0.9, 0.58, 0.075, 0.018]), Normalize(vmin=0, vmax=1))
     fig.savefig(out_path, dpi=300, bbox_inches="tight")
     fig.savefig(os.path.splitext(out_path)[0] + ".pdf", bbox_inches="tight")
     print("wrote", out_path)
@@ -159,7 +156,7 @@ def build_removal(removals, out_path):
         ax.annotate("ideal", (0, 1), textcoords="offset points", xytext=(9, 11),
                     fontsize=8, color=MUTED, va="center")
         pts = [(method, agg.loc[method, "own-type signal"], agg.loc[method, "PT noise"])
-               for method in L.METHOD_ORDER if method in agg.index]
+               for method in FIGURE_METHODS if method in agg.index]
         for method, x, y in pts:
             ax.plot(x, y, "o", ms=10, color=METHOD_COLORS[method], zorder=3,
                     markeredgecolor="white", markeredgewidth=1.2)
