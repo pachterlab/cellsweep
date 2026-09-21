@@ -1,0 +1,97 @@
+description: Simulation 3 - imbalanced composition with rare types (PBMC-like)
+url: null
+
+# data file URLs and names
+adata_raw_url: null
+adata_raw_file_name: "adata_raw.h5ad"
+raw_tar_url: null
+raw_tar_file_dir_suffix: null
+filtered_tar_url: null
+filtered_tar_file_dir_suffix: null
+sequencing_technology: "10XV2"
+
+# analysis parameters
+model_pkl: null  # path, filename, or url for celltypist model pkl file
+celltypist_convert: False
+celltypist_map_file: null
+cellsweep_max_iter: 2000
+cellsweep_init_beta: 0.1
+cellsweep_init_alpha: 0.9
+cellbender_epochs: 150
+cellbender_fpr: 0.01
+cellbender_zdim: 64
+cellbender_expected_cells: null
+cellbender_total_droplets: null
+scar_epochs: 200
+scar_prob: 0.975
+expected_cells: 5000  # see below - N * (1 - empty_prob)
+remove_empties: False
+min_genes: 0
+min_cells: 0
+umi_top_percentile_to_remove: 0
+fraction_doublet: 0
+unique_genes_top_percentile_to_remove: 0
+mt_gene_percentile_to_remove: 0
+max_mt_percentage: null
+n_top_genes: 2000
+n_pcs: 25
+n_neighbors: 20
+leiden_resolution: 1.0
+marker_genes: null
+
+# output file names
+adata_path_cellsweep_name: sim3_output_cellsweep.h5ad
+adata_path_cellbender_name: sim3_output_cellbender.h5
+soupx_out_prefix_name: sim3_output_soupx
+decontx_out_prefix_name: sim3_output_decontx
+adata_path_scar_name: sim3_output_scar.h5ad
+
+# output file URLs from manuscript
+cellsweep_matrix_url: null
+cellbender_matrix_filtered_url: null
+cellbender_ckpt_url: null
+soupx_matrix_url: null
+decontx_matrix_url: null
+scar_matrix_url: null
+
+# simulation parameters
+# PBMC-like: realistic, highly imbalanced composition with rare populations.
+# Tests whether markers from abundant types (which dominate the ambient pool)
+# are removed from rare types without erasing the rare types' own markers.
+# Core scale
+G: 10000
+N: 100000
+k: 10
+
+# Cell composition
+empty_prob: 0.95              # ~5,000 cells, typical of a 10x v3 PBMC 5k run
+expected_cell_size: 5000      # 10x v3 PBMC median UMIs/cell ~4-7k
+type_proportions:             # loosely modeled on PBMC composition
+  - 0.37   # CD4 T
+  - 0.20   # CD14 monocytes
+  - 0.15   # CD8 T
+  - 0.10   # B
+  - 0.08   # NK
+  - 0.05   # FCGR3A monocytes
+  - 0.02   # cDC
+  - 0.02   # platelets
+  - 0.005  # pDC (rare)
+  - 0.005  # HSPC (rare)
+
+# Ambient RNA
+alpha: 0.05                   # ~5% ambient, typical for fresh PBMCs
+noise_logsd_empty: 1.0
+noise_logsd_cell: 0.5
+
+# Expression structure
+markers_per_type: 30
+marker_boost: 15
+housekeeping_frac: 0.08
+hk_logmean: -0.5
+hk_logsd: 1.0
+
+# Count variability
+dispersion: 2.0
+
+# Barcode swapping
+beta: 0.01                    # index hopping ~0.1-2% on patterned flow cells

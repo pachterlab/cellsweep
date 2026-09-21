@@ -745,6 +745,7 @@ def denoise_count_matrix(
         - `adata.obs["alpha_hat"]` : final optimized alpha values
         - `adata.obs["z_hat"]` : final cell-type assignments 
         - `adata.var["ambient_hat"]` : final optimized ambient distribution
+        - `adata.var["bulk_hat"]` : global noise distribution
         - `adata.uns["p_hat"]` : final optimized matrix of cell-type profiles (K x G)
         - `adata.uns["beta_hat"]` : final optimized beta
         - `adata.uns["loglike"]` : final log-likelihood (note that this value is not the 
@@ -922,6 +923,7 @@ def denoise_count_matrix(
     adata.uns["p_hat"] = p
     adata.uns["beta_hat"] = beta
     adata.var["ambient_hat"] = a
+    adata.var["bulk_hat"] = m_global
     adata.uns["loglike"] = ll
 
     # Replace adata.X
