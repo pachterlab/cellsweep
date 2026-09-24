@@ -205,8 +205,8 @@ def warm_up_e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
     
     return numer_gamma, A_n
 
-def warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N, 
-            freeze_empties, freeze_empty_mask, real_mask, eps, alpha_cap):
+def warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N,
+            freeze_empty_mask, real_mask, eps, alpha_cap):
     
     """
     Helper to initialize exclude_from_p_update mask based on which barcodes 
@@ -222,8 +222,7 @@ def warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N,
     # see which alpha_n values will exceed alpha_cap
     Ccell_n = numer_gamma
     alpha_test = A_n / np.maximum(A_n + Ccell_n, eps)
-    if freeze_empties:
-        alpha_test[~real_mask] = 1.0
+    alpha_test[~real_mask] = 1.0
 
     exclude_from_p_update = (alpha_test > (alpha_cap + 1e-6)) & (~freeze_empty_mask)
 
@@ -293,9 +292,9 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                     bulk_vals[jj] = cM
 
                 # accumulate per-row totals
+                # (empties always contribute to the ambient profile update)
                 local_A += cA
-                if not freeze_ambient_profile:
-                    a_numer_tls[tid, g] += cA
+                a_numer_tls[tid, g] += cA
                 local_M += cM
                 local_ll += val * np.log(np.maximum(p_tot, log_eps))
         else:
@@ -371,9 +370,9 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
     return ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row
 
 def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap, 
-              max_iter, del0_ll_tol, min_ll_tol, tol_p, tol_f, freeze_empties, real_mask, 
-              eps, celltype_lambda, repulsion_strength, max_frac_gene_repulsion,
-              log_eps, verbose, logger, freeze_ambient_profile):
+              max_iter, del0_ll_tol, min_ll_tol, tol_p, tol_f, real_mask,
+              eps, celltype_lambda, ambient_lambda, repulsion_strength, max_frac_gene_repulsion,
+              beta_prior_mode, beta_prior_strength, log_eps, verbose, logger, freeze_ambient_profile):
     
     """
     Helper for denoise_count_matrix. Performs sparse compatible EM on multinomial model
@@ -390,26 +389,28 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
 
     nnz = data.shape[0]
 
-    # freeze mask as boolean array for Numba
-    if freeze_empties:
-        freeze_empty_mask = ~real_mask
-    else:
-        freeze_empty_mask = np.zeros(N, dtype=np.bool_)
+    # empties are modeled as ambient + bulk only (alpha fixed at 1)
+    freeze_empty_mask = ~real_mask
+
+    # when the ambient profile is anchored on empties, re-estimate it from their ambient counts
+    update_a_from_empties = freeze_ambient_profile and bool(freeze_empty_mask.any())
 
     prev_ll = None
     prev_p = None
+    prev_a = None
     tol_adaptive = None
     prev_f = None
 
     delta_f = np.inf
     delta_p = np.inf
+    delta_a = np.inf
 
     # Precompute row_of_entry (map each nnz index to its row) -> used for constructing CSR from per-entry arrays
     row_of_entry = np.repeat(np.arange(N, dtype=np.int64), np.diff(indptr))
 
     if freeze_ambient_profile:
-        exclude_from_p_update = warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N, 
-                                        freeze_empties, freeze_empty_mask, real_mask, eps, alpha_cap)
+        exclude_from_p_update = warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N,
+                                        freeze_empty_mask, real_mask, eps, alpha_cap)
     else:
         exclude_from_p_update[:] = False
 
@@ -445,9 +446,8 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         ll = float(np.sum(ll_row)) / N # average per-cell log-likelihood
         M_total = float(np.sum(M_row))
 
-        # Build a_numer
-        if not freeze_ambient_profile:
-            a_numer = a_numer_tls.sum(axis=0)
+        # Build a_numer (empties only if freeze_ambient_profile, else all barcodes)
+        a_numer = a_numer_tls.sum(axis=0)
 
         # Build p_numer: shape (K, G) 
         p_numer = p_numer_tls.sum(axis=0)
@@ -459,8 +459,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         # update alpha
         Ccell_n = numer_gamma
         alpha = A_n / np.maximum(A_n + Ccell_n, eps)
-        if freeze_empties:
-            alpha[~real_mask] = 1.0
+        alpha[~real_mask] = 1.0
 
         if not ll_converged and freeze_ambient_profile:
             # Stage 1: Don't allow suspect cells to update p
@@ -471,13 +470,19 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
             # Stage 2: allow full alpha
             exclude_from_p_update[:] = False
 
-        # update beta
+        # update beta (MAP under a Beta prior with mode beta_prior_mode and pseudo-mass
+        # beta_prior_strength * total_counts, so its weight is independent of dataset size)
         total_counts = M_total + A_n.sum() + numer_gamma.sum()
-        beta = M_total / np.maximum(total_counts, eps)
+        prior_mass = beta_prior_strength * total_counts
+        beta = (M_total + beta_prior_mode * prior_mass) / np.maximum(total_counts + prior_mass, eps)
 
 
-        # update ambient profile if indicated
-        if not freeze_ambient_profile:
+        # update ambient profile
+        if update_a_from_empties:
+            # anchored on empties: a from their ambient-assigned counts, with m held fixed
+            a = a_numer + ambient_lambda
+            a = (a / a.sum()).astype(np.float32)
+        elif not freeze_ambient_profile:
             for i in range(3):
                 denom = np.maximum(a, eps)
                 R = (u[:, None] * p) / denom[None, :]
@@ -490,9 +495,10 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         # update p (with repulsion)
         p = p_numer + celltype_lambda
 
-        if not ll_converged and freeze_ambient_profile:
-            # Stage 1: repulsion 
-            cluster_mass = p_numer.sum(axis=1)  
+        if freeze_ambient_profile:
+            # repulsion in both stages: keeps p_k from re-absorbing ambient-shaped counts
+            # along the flat likelihood ridge once the alpha cap is lifted
+            cluster_mass = p_numer.sum(axis=1)
             repel_lambda_k = repulsion_strength * cluster_mass  
 
             sub = repel_lambda_k[:, None] * a[None, :]          
@@ -503,7 +509,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
             p = np.maximum(p, eps)
             p = p / np.maximum(p.sum(axis=1)[:, None], eps)
         else:
-            # Stage 2: repulsion disabled
+            # no repulsion when the ambient profile is a mixture of cell-type profiles
             p = p / p.sum(axis=1)[:, None]
 
         # ============================
@@ -511,23 +517,18 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         # ============================
 
         # Calculate f to check convergence of alpha and beta
-        if freeze_empties: 
-            f = (1 - beta) * alpha[real_mask] + beta
-        else:
-            f = (1 - beta) * alpha + beta
+        f = (1 - beta) * alpha[real_mask] + beta
 
         if verbose:
-            if freeze_empties:
-                alpha_eff = alpha[real_mask]
-            else:
-                alpha_eff = alpha
+            alpha_eff = alpha[real_mask]
 
             alpha_median = np.median(alpha_eff)
             alpha_mean = np.mean(alpha_eff)
             alpha_max = np.max(alpha_eff)
             alpha_min = np.min(alpha_eff)
 
-            logger.info(f"EM Iter {it:3d}: ll={ll:.4f} log_delta_p={np.log(delta_p):.4f} min_alpha={alpha_min:.4f} mean_alpha={alpha_mean:.4f} median_alpha={alpha_median:.4f} max_alpha={alpha_max:.4f} beta={beta:.4f}")
+            delta_a_str = f" log_delta_a={np.log(delta_a):.4f}" if update_a_from_empties else ""
+            logger.info(f"EM Iter {it:3d}: ll={ll:.4f} log_delta_p={np.log(delta_p):.4f}{delta_a_str} min_alpha={alpha_min:.4f} mean_alpha={alpha_mean:.4f} median_alpha={alpha_median:.4f} max_alpha={alpha_max:.4f} beta={beta:.4f}")
             
             if not ll_converged and freeze_ambient_profile:
                 logger.debug(f"{exclude_from_p_update.sum()} cells want to exceed alpha_n > {alpha_cap}. They will be excluded from update of p_k and allowed cell-type reassignment")
@@ -544,6 +545,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         if it > 1 and not converged:
             delta_p = np.max(np.sum(np.abs(p - prev_p), axis=1))
             delta_f = np.quantile(np.abs(f - prev_f), 0.9)
+            delta_a = np.sum(np.abs(a - prev_a)) if update_a_from_empties else 0.0
             min_abs_tol = min_ll_tol * max(abs(prev_ll), 1.0)
             tol_adaptive = max(tol_adaptive, min_abs_tol)
 
@@ -552,13 +554,14 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
                 ll_converged = True
             
             if ll_converged:
-                if delta_p < tol_p and delta_f < tol_f: 
-                    logger.debug(f"delta_p < {tol_p:.6f} delta_f < {tol_f:.6f}. Parameters have converged.")
+                if delta_p < tol_p and delta_f < tol_f and delta_a < tol_p:
+                    logger.debug(f"delta_p < {tol_p:.6f} delta_a < {tol_p:.6f} delta_f < {tol_f:.6f}. Parameters have converged.")
                     converged = True
 
         prev_ll = ll
         prev_f = f.copy()
         prev_p = p.copy()
+        prev_a = a.copy()
 
         if done:
             break
@@ -594,7 +597,6 @@ def denoise_count_matrix(
     adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = None,
     round_X: bool = False,
     threads: Annotated[int, Field(gt=0)] = 1,
-    freeze_empties: bool = True,
     freeze_ambient_profile: bool = True,
     empty_droplet_method: Optional[str] = "threshold",
     umi_cutoff: Optional[Annotated[int, Field(ge=0)]] = None,
@@ -641,11 +643,13 @@ def denoise_count_matrix(
     threads : int, default 1
         number of numba threads
 
-    freeze_empties : bool, default True
-        If True, does not attempt to reestimate the percent contamination of empty droplets
-
     freeze_ambient_profile: bool, default True
-        If True, does not update the ambient profile (a) 
+        If True, the ambient profile (a) is anchored on non-cellular barcodes: it is initialized
+        from the empty droplets (or from `adata.var["ambient_profile"]` if present) and re-estimated
+        each iteration from the counts the E-step assigns to the ambient component in empty droplets
+        only, with the bulk profile (m) held fixed. If False, the ambient profile is modeled as a
+        mixture of cell-type profiles and its mixture weights are updated during training.
+        Empty droplets always have alpha fixed at 1 (ambient + bulk only).
 
     empty_droplet_method : str, default "threshold"
         Strategy to infer non-cellular barcodes if `is_empty` is not present.
@@ -680,9 +684,11 @@ def denoise_count_matrix(
         so it is up to the caller to respect the documented bounds.
 
         init_alpha : float, default 0.9, must be in [0.1, 0.9]
-            Initial value of alpha_n for each cell if `ambient_profile` column is not present. If `freeze_ambient_profile=True`, this value does not
-            significantly effect the final result, so we set equal to alpha_cap for convenience. If `freeze_ambient_pofile=False`, then init_alpha
-            can be set lower. For the sake of stability, we recommend that this value be far above the expected contamination rate, within [0.1, 0.9].
+            Initial value of alpha_n for each cell if `init_alpha` column is not present in `adata.obs`. A high initial value lets the ambient
+            component claim ambient-explainable counts first, so cell-type profiles are built only from counts the ambient profile cannot
+            explain; this gives sparser cell-type profiles and a smoother log-likelihood during burn-in. Because the likelihood is nearly flat
+            along directions that trade cell-type expression against ambient contamination, lower values can converge to solutions in which
+            p_k retains ambient-shaped expression. We recommend keeping this value far above the expected contamination rate.
 
         init_beta : float, default 0.1, must be in [0.1, 0.9]
             Initial beta (percent bulk contamination) value for each cell. We do not recommend initializing beta below 0.1 for the sake of stability.
@@ -696,17 +702,29 @@ def denoise_count_matrix(
         repulsion_strength : float, default 1e-4, must be in [0, 1e-3]
             Strength of repulsion between ambient and cell-type profiles during M-step.
             Higher values lead to greater separation between ambient and cell-type profiles.
-            Note that repulsion is disabled for `freeze_ambient_profile=False`.
+            Repulsion is applied in both stages of training, which keeps cell-type profiles from
+            slowly re-absorbing ambient-shaped counts after burn-in. Disabled for `freeze_ambient_profile=False`.
 
         max_frac_gene_repulsion : float, default 0.2, must be in (0, 1]
-            Maximum fraction of each p_k entry that can be subtracted during repulsion.
-            Note that repulsion is disabled for `freeze_ambient_profile=False`.
+            Maximum fraction of each p_k entry that can be subtracted during repulsion in a single iteration.
+            Prevents cell types whose profile closely resembles the ambient profile from being over-corrected.
+            Disabled for `freeze_ambient_profile=False`.
+
+        beta_prior_mode : float, default 0.01, must be in [0, 1]
+            Mode of the Beta prior on the global contamination fraction beta. The likelihood only weakly
+            identifies beta (global contamination can largely be absorbed by the cell-type profiles), so the
+            prior keeps its estimate stable rather than letting it drift with the number of iterations.
+
+        beta_prior_strength : float, default 1e-2, must be >= 0
+            Weight of the beta prior as a fraction of the total counts, so its influence does not depend on
+            dataset size or the number of barcodes. 0 disables the prior (maximum-likelihood beta); large
+            values fix beta at `beta_prior_mode`.
 
         celltype_lambda : float, default 50, must be >= 0
             Pseudocount for cell-type profile updates. Will be divided by the number of genes G. Higher values lead to smoother cell-type profiles.
 
         ambient_lambda : float, default 50, must be >= 0
-            Pseudocount for ambient profile update. Will be divided by the number of genes G. Higher values lead to a smoother ambient profile.
+            Pseudocount for the initial and iterative ambient profile updates. Will be divided by the number of genes G. Higher values lead to a smoother ambient profile.
 
         bulk_lambda : float, default 10, must be >= 0
             Pseudocount for bulk profile update. Will be divided by the number of genes G. Higher values lead to a smoother bulk profile.
@@ -761,6 +779,8 @@ def denoise_count_matrix(
     alpha_cap = em_kwargs.pop("alpha_cap", 0.9)
     repulsion_strength = em_kwargs.pop("repulsion_strength", 1e-4)
     max_frac_gene_repulsion = em_kwargs.pop("max_frac_gene_repulsion", 0.2)
+    beta_prior_mode = em_kwargs.pop("beta_prior_mode", 0.01)
+    beta_prior_strength = em_kwargs.pop("beta_prior_strength", 1e-2)
     celltype_lambda = em_kwargs.pop("celltype_lambda", 50)
     ambient_lambda = em_kwargs.pop("ambient_lambda", 50)
     bulk_lambda = em_kwargs.pop("bulk_lambda", 10)
@@ -830,8 +850,8 @@ def denoise_count_matrix(
 
     # count parameters
     if freeze_ambient_profile:
-        number_of_parameters = 1 + Nr + (K * G)  # alpha (Nr), beta (1), p_k (K * G)
-        logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
+        number_of_parameters = (G - 1) + 1 + Nr + (K * G)  # a (G - 1), alpha (Nr), beta (1), p_k (K * G)
+        logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (a: {G-1:,}, alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
     else:
         number_of_parameters = K + 1 + Nr + (K * G)  # u, alpha (Nr), beta (1), p_k (K * G)
         logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (u: {K:,}, alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
@@ -898,9 +918,7 @@ def denoise_count_matrix(
         adata.obs.loc[is_empty, "init_alpha"] = 1.
     alpha = np.asarray(adata.obs["init_alpha"].copy(), dtype=float).ravel()
     alpha = np.clip(alpha, eps, 1.0 - eps)
-
-    if freeze_empties:
-        alpha[is_empty] = 1.0
+    alpha[is_empty] = 1.0
 
     alpha = alpha.astype(np.float64)
     a = a.astype(np.float32)
@@ -909,9 +927,9 @@ def denoise_count_matrix(
 
     logger.info(f"Performing Sparse EM with {get_num_threads()} Numba thread(s)")
     em_dict = sparse_em(C=C, alpha=alpha, beta=beta, a=a, u=u, m_global=m_global, gamma_idx=gamma_idx, p=p, K=K, N=N, G=G, alpha_cap=alpha_cap,
-                        max_iter=max_iter, del0_ll_tol=del0_ll_tol, min_ll_tol=min_ll_tol, tol_p=tol_p, tol_f=tol_f, freeze_empties=freeze_empties,
-                        real_mask=real_mask, eps=eps, celltype_lambda=celltype_lambda, repulsion_strength= repulsion_strength, max_frac_gene_repulsion=max_frac_gene_repulsion,
-                        log_eps=log_eps, verbose=verbose, logger=logger, freeze_ambient_profile=freeze_ambient_profile)
+                        max_iter=max_iter, del0_ll_tol=del0_ll_tol, min_ll_tol=min_ll_tol, tol_p=tol_p, tol_f=tol_f,
+                        real_mask=real_mask, eps=eps, celltype_lambda=celltype_lambda, ambient_lambda=ambient_lambda/G, repulsion_strength= repulsion_strength, max_frac_gene_repulsion=max_frac_gene_repulsion,
+                        beta_prior_mode=beta_prior_mode, beta_prior_strength=beta_prior_strength, log_eps=log_eps, verbose=verbose, logger=logger, freeze_ambient_profile=freeze_ambient_profile)
 
     C_denoised = em_dict['C_denoised']
     alpha = em_dict["alpha"]

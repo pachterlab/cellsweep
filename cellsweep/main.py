@@ -72,14 +72,9 @@ def main():  # noqa: C901
         help="number of numba threads",
     )
     parser_denoise_count_matrix.add_argument(
-        "--disable_freeze_empties",
-        action="store_false",
-        help="If True, does not attempt to reestimate empty droplets."
-    )
-    parser_denoise_count_matrix.add_argument(
         "--disable_freeze_ambient_profile",
         action="store_false",
-        help="If True, does not update the ambient profile (a) based on alpha."
+        help="If set, models the ambient profile (a) as a mixture of cell-type profiles instead of anchoring it on empty droplets."
     )
     parser_denoise_count_matrix.add_argument(
         "--empty_droplet_method",
@@ -130,6 +125,18 @@ def main():  # noqa: C901
         "--max_frac_gene_repulsion",
         type=float,
         default=0.2,
+        help=argparse.SUPPRESS,
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--beta_prior_mode",
+        type=float,
+        default=0.01,
+        help=argparse.SUPPRESS,
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--beta_prior_strength",
+        type=float,
+        default=1e-2,
         help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
@@ -256,7 +263,6 @@ def main():  # noqa: C901
             adata_out=args.adata_out,
             round_X=args.round_X,
             threads=args.threads,
-            freeze_empties=args.disable_freeze_empties,
             freeze_ambient_profile=args.disable_freeze_ambient_profile,
             empty_droplet_method=args.empty_droplet_method,
             umi_cutoff=args.umi_cutoff,
@@ -266,6 +272,8 @@ def main():  # noqa: C901
             alpha_cap=args.alpha_cap,
             repulsion_strength=args.repulsion_strength,
             max_frac_gene_repulsion=args.max_frac_gene_repulsion,
+            beta_prior_mode=args.beta_prior_mode,
+            beta_prior_strength=args.beta_prior_strength,
             celltype_lambda=args.celltype_lambda,
             ambient_lambda=args.ambient_lambda,
             bulk_lambda=args.bulk_lambda,

@@ -8,7 +8,7 @@ import pandas as pd
 import anndata as ad
 import scipy.sparse as sp
 from pydantic import validate_call, Field, ConfigDict
-from typing import Annotated, Optional
+from typing import Annotated, List, Optional, Union
 
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 def simulate_cells(
@@ -17,7 +17,7 @@ def simulate_cells(
     k : Annotated[int, Field(gt=0)] = 5,                           
     markers_per_type : Annotated[int, Field(gt=0)] = 30,           
     marker_boost : Annotated[float, Field(gt=0)] = 15.0,           
-    type_proportions: Optional[np.ndarray] = None,                 
+    type_proportions: Optional[Union[np.ndarray, List[float]]] = None,
     empty_prob : Annotated[float, Field(ge=0, le=1)] = 0.8,        
     alpha : Annotated[float, Field(ge=0, le=1)] = 0.01,            
     expected_cell_size : Annotated[float, Field(gt=0)] = 10e3,     
@@ -155,16 +155,22 @@ def simulate_cells(
             nonzero_idx = np.nonzero(flat_counts)[0]
             weights = flat_counts[nonzero_idx] / flat_counts[nonzero_idx].sum()
             src_indices = rng.choice(nonzero_idx, size=n_swap, replace=True, p=weights)
-            g_src = src_indices // N
-            c_src = src_indices % N
-            c_dst = rng.integers(0, N, size=n_swap)
+            c_src = src_indices // G
+            g_src = src_indices % G
+            # destination barcodes are drawn in proportion to their (pre-swap) library size
+            barcode_totals = counts.sum(axis=1)
+            c_dst = rng.choice(N, size=n_swap, replace=True, p=barcode_totals / barcode_totals.sum())
             for gs, cs, cd in zip(g_src, c_src, c_dst):
                 if counts[cs, gs] > 0:
                     counts[cd, gs] += 1
                     noise[cd, gs] += 1
                     if rng.random() < singleton_prob:
+                        # remove from real or noise in proportion to the source's composition
+                        if rng.random() * counts[cs, gs] < real[cs, gs]:
+                            real[cs, gs] -= 1
+                        else:
+                            noise[cs, gs] -= 1
                         counts[cs, gs] -= 1
-                        real[cs, gs] -= 1
 
     # --- 8. Compute ambient fraction ---
     pos_mask = counts.sum(axis=1) > 0
