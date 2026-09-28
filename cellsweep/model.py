@@ -372,7 +372,8 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
 def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap, 
               max_iter, del0_ll_tol, min_ll_tol, tol_p, tol_f, real_mask,
               eps, celltype_lambda, ambient_lambda, repulsion_strength, max_frac_gene_repulsion,
-              beta_prior_mode, beta_prior_strength, log_eps, verbose, logger, freeze_ambient_profile):
+              beta_prior_mode, beta_prior_strength, burnin_patience, burnin_max_iter,
+              log_eps, verbose, logger, freeze_ambient_profile):
     
     """
     Helper for denoise_count_matrix. Performs sparse compatible EM on multinomial model
@@ -426,6 +427,9 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
     ambient_vals = np.zeros(nnz, dtype=np.float32)
     bulk_vals = np.zeros(nnz, dtype=np.float32)
 
+    # iteration of the most recent hard cell-type reassignment (burn-in only)
+    last_reassign_it = 0
+
     # EM loop
     for it in range(1, max_iter + 1):
         done = (it == max_iter or converged)
@@ -434,13 +438,18 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         #     E STEP (numba parallel)
         # ============================
 
+        gamma_prev = gamma_idx.copy() if not ll_converged else None
+
         ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row = e_step_numba(
             indptr=indptr, indices=indices, data=data, alpha=alpha, beta=beta, a=a, m_global=m_global,
             gamma_idx=gamma_idx, p=p, K=K, N=N, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask,
             freeze_ambient_profile=freeze_ambient_profile, exclude_from_p_update = exclude_from_p_update,
-            p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, numer_gamma=numer_gamma, A_n=A_n, 
+            p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, numer_gamma=numer_gamma, A_n=A_n,
             ll_row=ll_row, M_row=M_row, ambient_vals = ambient_vals, bulk_vals=bulk_vals, done=done
         )
+
+        if gamma_prev is not None and np.any(gamma_idx != gamma_prev):
+            last_reassign_it = it
 
         # Reduce per-row scalars
         ll = float(np.sum(ll_row)) / N # average per-cell log-likelihood
@@ -549,8 +558,13 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
             min_abs_tol = min_ll_tol * max(abs(prev_ll), 1.0)
             tol_adaptive = max(tol_adaptive, min_abs_tol)
 
-            if abs((ll - prev_ll)) < tol_adaptive and not ll_converged:
-                logger.debug(f"Absolute change in log-likelihood is < {tol_adaptive:.4f} (adaptive_tol). Checking for parameter convergence.")
+            # burn-in ends once the log-likelihood has stabilized AND no cell has changed cell type
+            # for burnin_patience iterations (or after burnin_max_iter iterations)
+            ll_stable = abs((ll - prev_ll)) < tol_adaptive
+            assignments_stable = (it - last_reassign_it) >= burnin_patience
+            if not ll_converged and ((ll_stable and assignments_stable) or it >= burnin_max_iter):
+                logger.debug(f"Absolute change in log-likelihood is < {tol_adaptive:.4f} (adaptive_tol) and no cell-type "
+                             f"reassignment since iteration {last_reassign_it}. Ending burn-in and checking for parameter convergence.")
                 ll_converged = True
             
             if ll_converged:
@@ -690,25 +704,27 @@ def denoise_count_matrix(
             along directions that trade cell-type expression against ambient contamination, lower values can converge to solutions in which
             p_k retains ambient-shaped expression. We recommend keeping this value far above the expected contamination rate.
 
-        init_beta : float, default 0.1, must be in [0.1, 0.9]
-            Initial beta (percent bulk contamination) value for each cell. We do not recommend initializing beta below 0.1 for the sake of stability.
-            Bulk and ambient contamination are not fully separable, so we set to a lower value than alpha_init to bias the assignment of contamination
-            to ambient rather than bulk.
+        init_beta : float, default 0.01
+            Initial beta (percent bulk contamination) value for each cell. We set this based on the observation that bulk contamination
+            is generally on the order of 1%.
 
         alpha_cap : float, default 0.9, must be in [0, 1]
             alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold
             will be excluded from updating p_k and will be allowed to change cell-types. Disabled for `freeze_ambient_profile=False`.
 
-        repulsion_strength : float, default 1e-4, must be in [0, 1e-3]
+        repulsion_strength : float, default 1e-3, must be >= 0 (values above 1e-3 are untested)
             Strength of repulsion between ambient and cell-type profiles during M-step.
             Higher values lead to greater separation between ambient and cell-type profiles.
-            Repulsion is applied in both stages of training, which keeps cell-type profiles from
-            slowly re-absorbing ambient-shaped counts after burn-in. Disabled for `freeze_ambient_profile=False`.
-
-        max_frac_gene_repulsion : float, default 0.2, must be in (0, 1]
-            Maximum fraction of each p_k entry that can be subtracted during repulsion in a single iteration.
-            Prevents cell types whose profile closely resembles the ambient profile from being over-corrected.
+            With the default `max_frac_gene_repulsion`, results are stable across 2e-5 to 1e-3. 
             Disabled for `freeze_ambient_profile=False`.
+
+        max_frac_gene_repulsion : float, default 0.25, must be in (0, 1]
+            Maximum fraction of each p_k entry that can be subtracted during repulsion in a single iteration.
+            Together with `repulsion_strength` this sets the effective strength of repulsion:
+            values much below 0.25 let cell-type profiles re-absorb ambient-shaped counts over long runs,
+            while values of 0.3 and above (with `repulsion_strength` >= ~7e-5) can over-correct small
+            cell types that express genes abundant in the ambient profile (e.g. DCs in PBMCs, whose
+            contamination estimate then inflates well above other cell types'). Disabled for `freeze_ambient_profile=False`.
 
         beta_prior_mode : float, default 0.01, must be in [0, 1]
             Mode of the Beta prior on the global contamination fraction beta. The likelihood only weakly
@@ -739,11 +755,20 @@ def denoise_count_matrix(
             Maximum number of EM iterations.
 
         del0_ll_tol : float, default 1e-3, must be > 0
-            The change in likelihood, relative to the first likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked.
+            The change in likelihood, relative to the first likelihood step, below which the log-likelihood is considered stable. Burn-in (the alpha
+            cap and cell-type reassignment) ends once the log-likelihood is stable and cell-type assignments are stable (see `burnin_patience`).
 
         min_ll_tol : float, default 1e-6, must be > 0
-            The change in likelihood, relative to the current likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked.
+            The change in likelihood, relative to the current likelihood step, below which the log-likelihood is considered stable.
             This is intended to cap `del0_ll_tol` at the edge of floating-point precision.
+
+        burnin_patience : int, default 10, must be >= 0
+            Burn-in also requires that no cell has been reassigned to a different cell type for this many consecutive iterations.
+            On heavily contaminated data the log-likelihood can stabilize while poorly fit cells are still being reassigned; this keeps
+            burn-in running until reassignment has settled. 0 ends burn-in on log-likelihood stability alone.
+
+        burnin_max_iter : int, default 500, must be > 0
+            Maximum number of burn-in iterations, after which burn-in ends regardless of the stability criteria.
 
         tol_p : float, default 1e-4, must be > 0
             The maximum change in p below which training is discontinued. This is in addition to the tol_f stopping criterion.
@@ -775,12 +800,14 @@ def denoise_count_matrix(
 
     # advanced EM hyperparameters (see "Other Parameters" in the docstring)
     init_alpha = em_kwargs.pop("init_alpha", 0.9)
-    init_beta = em_kwargs.pop("init_beta", 0.1)
+    init_beta = em_kwargs.pop("init_beta", 0.01)
     alpha_cap = em_kwargs.pop("alpha_cap", 0.9)
-    repulsion_strength = em_kwargs.pop("repulsion_strength", 1e-4)
-    max_frac_gene_repulsion = em_kwargs.pop("max_frac_gene_repulsion", 0.2)
+    repulsion_strength = em_kwargs.pop("repulsion_strength", 1e-3)
+    max_frac_gene_repulsion = em_kwargs.pop("max_frac_gene_repulsion", 0.25)
     beta_prior_mode = em_kwargs.pop("beta_prior_mode", 0.01)
     beta_prior_strength = em_kwargs.pop("beta_prior_strength", 1e-2)
+    burnin_patience = em_kwargs.pop("burnin_patience", 10)
+    burnin_max_iter = em_kwargs.pop("burnin_max_iter", 500)
     celltype_lambda = em_kwargs.pop("celltype_lambda", 50)
     ambient_lambda = em_kwargs.pop("ambient_lambda", 50)
     bulk_lambda = em_kwargs.pop("bulk_lambda", 10)
@@ -873,8 +900,8 @@ def denoise_count_matrix(
     # empties
     gamma_idx[is_empty] = -1
 
-    if verbose:
-        gamma_idx_init = gamma_idx.copy()
+    # input cell-type assignments (gamma_idx is updated in place by hard reassignment during burn-in)
+    gamma_idx_init = gamma_idx.copy()
 
     # initial beta + bulk m
     beta = float(init_beta)
@@ -929,7 +956,8 @@ def denoise_count_matrix(
     em_dict = sparse_em(C=C, alpha=alpha, beta=beta, a=a, u=u, m_global=m_global, gamma_idx=gamma_idx, p=p, K=K, N=N, G=G, alpha_cap=alpha_cap,
                         max_iter=max_iter, del0_ll_tol=del0_ll_tol, min_ll_tol=min_ll_tol, tol_p=tol_p, tol_f=tol_f,
                         real_mask=real_mask, eps=eps, celltype_lambda=celltype_lambda, ambient_lambda=ambient_lambda/G, repulsion_strength= repulsion_strength, max_frac_gene_repulsion=max_frac_gene_repulsion,
-                        beta_prior_mode=beta_prior_mode, beta_prior_strength=beta_prior_strength, log_eps=log_eps, verbose=verbose, logger=logger, freeze_ambient_profile=freeze_ambient_profile)
+                        beta_prior_mode=beta_prior_mode, beta_prior_strength=beta_prior_strength,
+                        burnin_patience=burnin_patience, burnin_max_iter=burnin_max_iter, log_eps=log_eps, verbose=verbose, logger=logger, freeze_ambient_profile=freeze_ambient_profile)
 
     C_denoised = em_dict['C_denoised']
     alpha = em_dict["alpha"]
@@ -941,6 +969,25 @@ def denoise_count_matrix(
     if verbose:
         celltype_mod_num = (gamma_idx_init != gamma_idx).sum()
         logger.debug(f"The model reassigned the celltype of {celltype_mod_num} cells")
+
+    # warn when a cell type ends up mostly made of cells reassigned into it: its profile and contamination
+    # estimates then describe cells the input annotation put elsewhere, which usually means the annotation
+    # is too coarse (e.g. one input label covering several distinct populations)
+    celltype_names = list(adata.uns["celltype_names"])
+    for k in range(K):
+        in_k = real_mask & (gamma_idx == k)
+        n_k = int(in_k.sum())
+        if n_k == 0:
+            continue
+        moved_in = in_k & (gamma_idx_init != k)
+        frac = moved_in.sum() / n_k
+        if frac > 0.5:
+            src, src_n = np.unique(gamma_idx_init[moved_in], return_counts=True)
+            sources = ", ".join(f"{celltype_names[s]!r} ({c})" for s, c in sorted(zip(src, src_n), key=lambda x: -x[1]) if s >= 0)
+            logger.warning(f"{frac:.0%} of the {n_k} cells assigned to cell type {k + 1} (input label {celltype_names[k]!r}) "
+                           f"were reassigned there from other input labels: {sources}. The input annotation may not match "
+                           f"the structure of this dataset; consider a different or finer annotation, for example one that "
+                           f"splits the cell types these cells came from.")
 
 
     # ===================================

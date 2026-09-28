@@ -106,7 +106,7 @@ def main():  # noqa: C901
     parser_denoise_count_matrix.add_argument(
         "--init_beta",
         type=float,
-        default=0.1,
+        default=0.01,
         help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
@@ -118,13 +118,13 @@ def main():  # noqa: C901
     parser_denoise_count_matrix.add_argument(
         "--repulsion_strength",
         type=float,
-        default=1e-4,
+        default=1e-3,
         help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
         "--max_frac_gene_repulsion",
         type=float,
-        default=0.2,
+        default=0.25,
         help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
@@ -185,6 +185,18 @@ def main():  # noqa: C901
         "--min_ll_tol",
         type=float,
         default=1e-6,
+        help=argparse.SUPPRESS,
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--burnin_patience",
+        type=int,
+        default=10,
+        help=argparse.SUPPRESS,
+    )
+    parser_denoise_count_matrix.add_argument(
+        "--burnin_max_iter",
+        type=int,
+        default=500,
         help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(
@@ -282,6 +294,8 @@ def main():  # noqa: C901
             max_iter=args.max_iter,
             del0_ll_tol=args.del0_ll_tol,
             min_ll_tol=args.min_ll_tol,
+            burnin_patience=args.burnin_patience,
+            burnin_max_iter=args.burnin_max_iter,
             tol_p=args.tol_p,
             tol_f=args.tol_f,
             random_state=args.random_state,
