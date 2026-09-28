@@ -81,5 +81,5 @@ hk_logsd: 1.0
 dispersion: 2.0               
 
 # Barcode swapping
-beta: 0.05                   
+beta: 0.01                    
 

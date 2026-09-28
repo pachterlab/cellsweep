@@ -16,7 +16,16 @@ parser.add_argument('--max_counts', type=int, default=None, help='Maximum counts
 parser.add_argument('--min_genes', type=int, default=None, help='Minimum number of genes per cell to retain')
 parser.add_argument('-s', '--sparsity', type=float, default=1.0, help='Sparsity parameter for scAR model')
 parser.add_argument('-p', '--prob', type=float, default=0.995, help='Prob. Lower for small empty droplet number')
+parser.add_argument('--clip_to_obs', action='store_true', help='Clip inferred native counts to the observed counts (scAR inference option; off by default in scAR, in which case output entries can exceed the input)')
+parser.add_argument('--adjust', type=str, default='micro', choices=['micro', 'global', 'False'], help='scAR inference adjust option')
+parser.add_argument('--seed', type=int, default=None, help='Random seed for torch/numpy (training and stochastic rounding)')
 args = parser.parse_args()
+
+if args.seed is not None:
+    import numpy as np
+    import torch
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
 
 print("Loading data...")
 if args.raw.endswith('.h5'):
@@ -69,7 +78,8 @@ adata_scar.train(epochs=args.epochs,
                    )
 
 print("Performing inference...")
-adata_scar.inference()  # by defaut, batch_size = None, set a batch_size if getting a memory issue
+adjust = False if args.adjust == 'False' else args.adjust
+adata_scar.inference(clip_to_obs=args.clip_to_obs, adjust=adjust)  # set a batch_size if getting a memory issue
 assert adata_scar.native_counts.shape == adata.X.shape, "Denoised count matrix shape does not match input count matrix shape."
 
 print("Saving results...")
