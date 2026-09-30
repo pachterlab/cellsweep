@@ -28,16 +28,22 @@ OUT = os.path.join(CELLSWEEP_DIR, "notebooks", "output", "Fig2")
 
 TOOLS = ["CellSweep", "CellBender", "DecontX", "scAR", "SoupX"]
 NA = np.nan
+# order: CellSweep, CellBender, DecontX, scAR, SoupX. Sources (count-weighted, CellSweep with the current defaults):
+#   Human-Mouse: benchmarking.ipynb (hgmm_12k), "Fraction of signal retained and noise removed" -> hgmm_signal_noise_quantification.csv
+#   PBMC:        benchmarking.ipynb (pbmc8k), dot-plot marker quantification "Per-tool summary (count-weighted)"
+#   8 cubed:     scripts/visualize_8cube.py -> notebooks/output/8cubed/sensitivity_specificity_summary.csv (weighted)
 OTHER_ROWS = [
     ("Human-Mouse sensitivity", [0.981, 0.991, 0.981, 0.975, 0.983]),
-    ("Human-Mouse specificity", [0.987, 0.956, 0.712, 0.987, 0.734]),
-    ("PBMC sensitivity", [0.949, 0.997, 0.940, 0.854, 0.977]),
-    ("PBMC specificity", [0.913, 0.704, 0.913, 0.768, 0.839]),
-    ("8 cubed sensitivity", [0.975, 0.986, 0.970, NA, 0.987]),
-    ("8 cubed specificity", [0.914, 0.918, 0.898, NA, 0.404]),
+    ("Human-Mouse specificity", [0.989, 0.956, 0.712, 0.987, 0.734]),
+    ("PBMC sensitivity", [0.950, 0.989, 0.940, 0.854, 0.977]),
+    ("PBMC specificity", [0.902, 0.805, 0.842, 0.850, 0.804]),
+    ("8 cubed sensitivity", [0.973, 0.986, 0.970, NA, 0.987]),
+    ("8 cubed specificity", [0.951, 0.902, 0.898, NA, 0.404]),
 ]
 IDEMPOTENT = ["Yes", "No", "Yes", "No", "Yes"]
-RUNTIME_MIN = [1, 180, 3, 200, 2]
+# CPU runtimes (minutes) on PBMC 8k, as in the runtime figure (notebooks/runtime.ipynb): CellSweep and CellBender with
+# 16 CPU threads, scAR on CPU, DecontX and SoupX as run there
+RUNTIME_MIN = [0.68, 128.93, 2.19, 24.55, 1.61]
 FAST_MIN = 3  # runtimes at or below this are colored good, otherwise bad
 
 
@@ -72,7 +78,7 @@ def make_heatmap(rows, out_base):
         cell(i, j, cmap(norm(1.0 if v == "Yes" else 0.5)), v, "white")
     i += 1
     for j, v in enumerate(RUNTIME_MIN):
-        cell(i, j, cmap(norm(0.98 if v <= FAST_MIN else 0.5)), str(v), "white")
+        cell(i, j, cmap(norm(0.98 if v <= FAST_MIN else 0.5)), f"{v:.1f}" if v < 10 else f"{v:.0f}", "white")
 
     ax.set_xlim(0, len(TOOLS))
     ax.set_ylim(n_rows, 0)

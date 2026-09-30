@@ -32,7 +32,7 @@ from scipy.stats import spearmanr
 
 import cellsweep.utils as cs_utils
 
-cellsweep_dir = "/home/jrich/Desktop/cellsweep"
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 dataset_name = "simulation1_small_noise"
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", dataset_name)
 out_dir = os.path.join(cellsweep_dir, "notebooks", "output", dataset_name)
@@ -83,7 +83,7 @@ def run_one(condition, threads, overwrite=False):
     labels = pd.read_csv(labels_csv, index_col=0, dtype=str)
     adata = ad.read_h5ad(raw_path)
     adata.obs["celltype"] = pd.Categorical(labels[condition].reindex(adata.obs_names).fillna("Empty Droplet"))
-    denoise_count_matrix(adata, adata_out=out, init_alpha=0.9, init_beta=0.1, freeze_ambient_profile=True, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells, threads=threads, verbose=1, log_file=os.path.join(run_dir, f"cellsweep_{condition}.log"))
+    denoise_count_matrix(adata, adata_out=out, init_alpha=0.9, init_beta=0.01, freeze_ambient_profile=True, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells, threads=threads, verbose=1, log_file=os.path.join(run_dir, f"cellsweep_{condition}.log"))
     return condition, "done"
 
 

@@ -31,14 +31,14 @@ METHOD_COLORS = {
     "CellSweep": "#2a78d6",
     "CellBender": "#eb6834",
     "DecontX": "#1baf7a",
-    "DecontX (empty)": "#eda100",
     "SoupX": "#4a3aa7",
+    "scAR": "#eda100",
     "raw": "#9a9a95",
 }
-# Sequential single-hue blue ramp, steps 100 -> 700 of the same palette.
-BLUES = LinearSegmentedColormap.from_list(
-    "palette_blue", ["#f4f8fe", "#cde2fb", "#9ec5f4", "#6da7ec", "#3987e5",
-                     "#256abf", "#184f95", "#0d366b"])
+# Sequential red ramp, matching the other dot plots in the paper (scanpy's default "Reds").
+BLUES = plt.get_cmap("Reds")
+# Dot-plot panel order: uncorrected, then the methods in the order the figure caption lists them.
+DOTPLOT_ORDER = ["raw", "CellSweep", "SoupX", "CellBender", "DecontX", "scAR"]
 INK, MUTED = "#26251f", "#6f6e69"
 PANEL_TITLE = "uncorrected"
 
@@ -87,7 +87,7 @@ def dot_panel(ax, sub, types, panel_genes, norm, size_scale, show_y, show_x):
 def build_dotplots(df, rep, out_path):
     types = celltype_order(df)
     panel_genes = L.PT_MARKERS + L.CONSTITUTIVE
-    methods = [m for m in L.METHOD_ORDER if m in set(df["method"])]
+    methods = [m for m in DOTPLOT_ORDER if m in set(df["method"])]
     # Colour is expression relative to the highest level that gene reaches in any nucleus
     # type under any method -- almost always PT in the uncorrected panel. Absolute CP10K
     # would be swamped by Malat1 and leave every marker unreadable.
@@ -135,7 +135,7 @@ def build_dotplots(df, rep, out_path):
     cb.ax.tick_params(labelsize=7, length=2, colors=INK)
     cb.outline.set_visible(False)
 
-    handles = [Line2D([], [], marker="o", linestyle="none", markerfacecolor="#6da7ec",
+    handles = [Line2D([], [], marker="o", linestyle="none", markerfacecolor="#8c8c8c",
                       markeredgecolor="white", markersize=np.sqrt(f * size_scale),
                       label=f"{f:.0%}") for f in (0.25, 0.5, 0.75, 1.0)]
     fig.legend(handles=handles, loc="center left", bbox_to_anchor=(0.9, 0.24), frameon=False,
@@ -163,26 +163,35 @@ def build_removal(removals, out_path):
         for method, x, y in pts:
             ax.plot(x, y, "o", ms=10, color=METHOD_COLORS[method], zorder=3,
                     markeredgecolor="white", markeredgewidth=1.2)
-        # Methods can land on top of one another, so labels are pushed apart vertically and
-        # tied back to their point with a leader line.
-        lo, hi = ax.get_ylim()
-        gap = 0.062 * (hi - lo)
-        placed = []
+        # Methods can land on top of one another: each label tries right, left, above and below its point
+        # and takes the first position that overlaps neither another point nor an earlier label.
+        ax.set_xlim(-0.045, max(0.28, agg["own-type signal"].max() * 1.5))
+        ax.set_ylim(-0.05, 1.08)
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+        pts_disp = [ax.transData.transform((x, y)) for _, x, y in pts]
+        r = 10 * fig.dpi / 72 / 2 + 2   # marker radius in pixels, plus a margin
+        taken = []
         for method, x, y in sorted(pts, key=lambda t: -t[2]):
-            ly = y if not placed else min(y, placed[-1] - gap)
-            placed.append(ly)
-            if abs(ly - y) > 1e-9:
-                ax.plot([x, x + 0.012 * (ax.get_xlim()[1] - ax.get_xlim()[0])], [y, ly],
-                        color="#c9c8c3", lw=0.8, zorder=2)
-            ax.annotate(method, (x, ly), textcoords="offset points", xytext=(11, 0),
-                        fontsize=8.5, color=INK, va="center",
-                        fontweight="bold" if method == "CellSweep" else "normal")
+            for dx, dy, ha, va in [(11, 0, "left", "center"), (-11, 0, "right", "center"),
+                                   (0, 11, "center", "bottom"), (0, -11, "center", "top")]:
+                t = ax.annotate(method, (x, y), textcoords="offset points", xytext=(dx, dy), ha=ha, va=va,
+                                fontsize=8.5, color=INK, fontweight="bold" if method == "CellSweep" else "normal")
+                bb = t.get_window_extent(renderer).expanded(1.05, 1.1)
+                hits_point = any(bb.x0 - r < px < bb.x1 + r and bb.y0 - r < py < bb.y1 + r
+                                 for (m2, _, _), (px, py) in zip(pts, pts_disp) if m2 != method)
+                if not hits_point and not any(bb.overlaps(o) for o in taken):
+                    taken.append(bb)
+                    break
+                t.remove()
+            else:   # nowhere free: fall back to the right
+                ax.annotate(method, (x, y), textcoords="offset points", xytext=(11, 0), fontsize=8.5, color=INK,
+                            va="center", fontweight="bold" if method == "CellSweep" else "normal")
         ax.set_xlabel("own-cell-type marker counts removed\n(signal: lower is better)",
                       fontsize=9)
         ax.set_ylabel("PT marker counts removed\n(background: higher is better)", fontsize=9)
         ax.set_title(rep, fontsize=10.5, color=INK)
         _panel_label(ax, letter)
-        ax.set_xlim(-0.045, max(0.28, agg["own-type signal"].max() * 1.5))
         ax.set_ylim(-0.05, 1.08)
         ax.spines[["top", "right"]].set_visible(False)
         ax.tick_params(labelsize=8, colors=INK)

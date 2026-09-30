@@ -42,7 +42,7 @@ from PIL import Image
 
 import cellsweep.utils as cs_utils
 
-cellsweep_dir = "/home/jrich/Desktop/cellsweep"
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "visium_human_mouse")
 out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "visium_human_mouse")
 os.makedirs(out_dir, exist_ok=True)
@@ -51,7 +51,7 @@ PURITY = 0.9
 INTERFACE_UM = 16
 RUNS = {
     "purity": (os.path.join(data_dir, "purity_filtered", f"adata_cellsweep_pure{int(PURITY * 100)}.h5ad"), f"excluded: <{int(PURITY * 100)}% species-pure"),
-    "interface": (os.path.join(data_dir, "purity_filtered", f"adata_cellsweep_interface{INTERFACE_UM}.h5ad"), f"excluded: within {INTERFACE_UM} um of interface"),
+    "interface": (os.path.join(data_dir, "purity_filtered", f"adata_cellsweep_interface{INTERFACE_UM}.h5ad"), f"excluded: within\n{INTERFACE_UM} um of interface"),
 }
 N_HUMAN_SUBSAMPLE = 20_000
 ALPHA_BINS = [0, 0.25, 0.5, 0.75, 1.0]

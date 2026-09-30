@@ -36,7 +36,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import spearmanr
 from sklearn.neighbors import NearestNeighbors
 
-cellsweep_dir = "/home/jrich/Desktop/cellsweep"
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "pbmc8k")
 run_dir = os.path.join(data_dir, "celltype_granularity")
 out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "pbmc8k", "celltype_granularity")

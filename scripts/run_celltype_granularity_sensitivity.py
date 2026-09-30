@@ -32,7 +32,7 @@ import anndata as ad
 
 import cellsweep.utils as cs_utils
 
-cellsweep_dir = "/home/jrich/Desktop/cellsweep"
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 dataset_name = "pbmc8k"
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", dataset_name)
 run_dir = os.path.join(data_dir, "celltype_granularity")
@@ -51,7 +51,7 @@ n_neighbors = 20
 expected_cells = 8381
 cellsweep_max_iter = 2000
 cellsweep_init_alpha = 0.9
-cellsweep_init_beta = 0.1
+cellsweep_init_beta = 0.01
 
 existing_leiden_resolutions = [0.1, 0.5, 1.0, 1.5, 2.0, 5.0]
 new_leiden_resolutions = [0.001, 0.005, 0.01, 10.0, 20.0]  # 0.001 -> K=1, 0.005 -> K=2, 0.01 -> K=3

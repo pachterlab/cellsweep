@@ -98,7 +98,7 @@ def compute(raw, tools, common):
     Yr, Yt = _rint(raw.X), _rint(raw.layers["real"])
     is_marker = raw.var["is_marker"].to_numpy().astype(bool)
     celltype = raw.obs["celltype"].astype(str).to_numpy()
-    ambient = raw.obs["ambient_fraction"].to_numpy()
+    ambient = raw.obs["true_ambient_fraction" if "true_ambient_fraction" in raw.obs else "ambient_fraction"].to_numpy()
     true_mean = _sum(Yt, 0) / Yt.shape[0]
 
     global_rows, cell_rows, gene_rows, ct_rows = [], [], [], []

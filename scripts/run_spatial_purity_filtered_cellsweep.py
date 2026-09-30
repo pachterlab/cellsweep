@@ -37,7 +37,7 @@ import anndata as ad
 from cellsweep import denoise_count_matrix
 import cellsweep.utils as cs_utils
 
-cellsweep_dir = "/home/jrich/Desktop/cellsweep"
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "visium_human_mouse")
 run_dir = os.path.join(data_dir, "purity_filtered")
 os.makedirs(run_dir, exist_ok=True)

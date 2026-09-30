@@ -22,7 +22,7 @@ import pandas as pd
 from cellsweep import denoise_count_matrix
 import cellsweep.utils as cs_utils
 
-cellsweep_dir = "/home/jrich/Desktop/cellsweep"
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "visium_mouse_brain")
 out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "visium_mouse_brain")
 os.makedirs(data_dir, exist_ok=True)

@@ -34,7 +34,7 @@ from skimage.draw import polygon as draw_polygon
 
 import cellsweep.utils as cs_utils
 
-cellsweep_dir = "/home/jrich/Desktop/cellsweep"
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "visium_human_mouse")
 out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "visium_human_mouse", "reviewer7")
 cache_dir = os.path.join(data_dir, "reviewer7_cache")
@@ -100,7 +100,9 @@ def build_bin_table():
 def ambient_composition(bins):
     original = ad.read_h5ad(RUNS["original"], backed="r")
     is_human = (original.var["genome"] == "GRCh38").values
-    ambient = original.var["ambient"].values
+    # the column name depends on the cellsweep version (as in make_spatial_species_run_figures.py)
+    column = next(c for c in ["ambient_hat", "ambient_profile", "ambient"] if c in original.var.columns)
+    ambient = original.var[column].values
     empty = bins[bins["is_empty"]]
     rows = [
         ("ambient profile used by cellsweep", ambient[is_human].sum() / ambient.sum()),

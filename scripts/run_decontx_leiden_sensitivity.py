@@ -36,7 +36,7 @@ import cellsweep.utils as cs_utils
 # ----------------------------------------------------------------------------------
 # Config (mirrors notebooks/benchmarking.ipynb for pbmc8k)
 # ----------------------------------------------------------------------------------
-cellsweep_dir = "/home/jrich/Desktop/cellsweep"
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 rver_docker_workspace = "/home/ruser/work/cellsweep"
 docker = "podman"
 dataset_name = "pbmc8k"

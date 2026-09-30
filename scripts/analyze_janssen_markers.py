@@ -132,7 +132,7 @@ def summarise(df):
 
 def run(methods=None, out_dir=None):
     """Write dotplot_<rep>.csv and removal_<rep>.csv for every method that is available."""
-    methods = methods or list(L.METHOD_ORDER)
+    methods = methods or list(L.METHOD_ORDER) + L.JANSSEN_SETTINGS
     out_dir = out_dir or L.OUT_DIR
 
     # Marker panels are defined once, on the deeper replicate, and reused for both so the
@@ -191,7 +191,7 @@ def run(methods=None, out_dir=None):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("--methods", default=",".join(L.METHOD_ORDER))
+    p.add_argument("--methods", default=",".join(L.METHOD_ORDER + L.JANSSEN_SETTINGS))
     p.add_argument("--out-dir", default=L.OUT_DIR)
     args = p.parse_args()
     run(args.methods.split(","), args.out_dir)

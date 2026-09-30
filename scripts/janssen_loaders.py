@@ -19,7 +19,15 @@ OUT_DIR = os.path.join(CS_DIR, "notebooks", "output", "janssen2023")
 TOOL_DIR = os.path.join(OUT_DIR, "tools")
 
 REPLICATES = ["nuc2", "nuc3"]
-METHOD_ORDER = ["raw", "CellSweep", "CellBender", "DecontX", "DecontX (empty)", "SoupX"]
+# Methods compared in the figures. CellBender, DecontX (with empty droplets), SoupX and scAR are run
+# with the same scripts and settings as every other dataset in the paper (benchmarking.ipynb).
+METHOD_ORDER = ["raw", "CellSweep", "CellBender", "DecontX", "SoupX", "scAR"]
+# The same tools at Janssen et al.'s default settings; scored only to check the re-runs against the
+# numbers they publish (janssen_snrna.ipynb, "Against the published benchmark"), never plotted.
+JANSSEN_SETTINGS = ["CellBender (Janssen)", "DecontX (Janssen)", "DecontX (empty, Janssen)", "SoupX (Janssen)"]
+# Labels given to CellSweep (janssen_snrna.ipynb: label_resolution, label_min_cluster): the
+# authors' PT label split by their Seurat clusters at resolution 0.5, clusters < 50 nuclei pooled.
+LABEL_TAG = "_res0.5_min50"
 # The ten proximal-tubule markers Janssen et al. use for their marker-leakage evaluation
 # (Snakemake_benchmark/input/top10_PT_markers.RDS).
 PT_MARKERS = ["Slc34a1", "Miox", "Pck1", "Slc4a4", "Ttc36", "Lrp2", "Fbp1", "Cyp2e1",
@@ -91,7 +99,7 @@ def load_method(rep, method, genes, cells):
     if method == "CellSweep":
         # The h5ad also holds the ~1.5M noncellular barcodes; read the CSR blocks straight
         # out of the file rather than materialising the whole AnnData.
-        path = os.path.join(DATA_DIR, rep, f"{rep}_output_cellsweep_empty100.h5ad")
+        path = os.path.join(DATA_DIR, rep, f"{rep}_output_cellsweep_empty100{LABEL_TAG}.h5ad")
         with h5py.File(path, "r") as f:
             shape = tuple(f["X"].attrs["shape"])
             m = sp.csr_matrix((f["X"]["data"][:].astype(np.float64), f["X"]["indices"][:],
@@ -108,13 +116,19 @@ def load_method(rep, method, genes, cells):
         gi = pd.Index(raw_names).get_indexer(genes)
         assert (ci >= 0).all() and (gi >= 0).all()
         return sp.csr_matrix(m[ci][:, gi])
-    if method == "CellBender":
+    if method in ("CellBender", "CellBender (Janssen)"):
         # The main output keeps every input barcode; the _filtered companion keeps only the
         # barcodes CellBender itself calls as cells, which is not the same set as Janssen's.
-        path = os.path.join(TOOL_DIR, f"cb_{rep}", f"{rep}_cellbender.h5")
-        m, g, b = _read_10x_h5(path)
+        run_dir = f"cb_bench_{rep}" if method == "CellBender" else f"cb_{rep}"
+        m, g, b = _read_10x_h5(os.path.join(TOOL_DIR, run_dir, f"{rep}_cellbender.h5"))
         return _align(m, g, b, genes, cells)
-    suffix = {"DecontX": "decontx", "DecontX (empty)": "decontx_empty", "SoupX": "soupx"}[method]
+    if method == "scAR":
+        import anndata as ad
+        a = ad.read_h5ad(os.path.join(TOOL_DIR, f"{rep}_scar_bench.h5ad"))
+        return _align(sp.csr_matrix(a.X).T, np.asarray(a.var_names), np.asarray(a.obs_names), genes, cells)
+    suffix = {"DecontX": "decontx_bench", "SoupX": "soupx_bench",
+              "DecontX (Janssen)": "decontx", "DecontX (empty, Janssen)": "decontx_empty",
+              "SoupX (Janssen)": "soupx"}[method]
     return _read_mtx_triplet(os.path.join(TOOL_DIR, f"{rep}_{suffix}"), genes, cells)
 
 

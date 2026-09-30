@@ -28,6 +28,7 @@ import anndata as ad
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.legend_handler import HandlerTuple
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from analyze_celltype_granularity_sensitivity import (REF_GROUP, LINEAGE_PANELS, T, B, MONO, MYELOID, ALL, labels, run_dir, out_dir)
@@ -125,22 +126,29 @@ def save_legend(handles, labels, name):
 
 def figure_labels(df):
     d = df[df.sweep == "labels"].set_index("condition")
-    leiden = d.loc[[c for c in d.index if c.startswith("leiden")]]
+    # Leiden sweep; a single label for every cell (all_one) is its K = 1 limit
+    leiden = d.loc[["all_one"] + [c for c in d.index if c.startswith("leiden")]]
     fig, ax = plt.subplots(figsize=(5.4, 4.2))
     draw(ax, leiden)
 
     # CellTypist annotations, plotted as squares (High) and diamonds (Low)
+    red = "#d62728"
+    ct_handles = []
     for cond, marker, name in [("ct_high", "s", "CellTypist High"), ("ct_low", "D", "CellTypist Low")]:
         row = d.loc[cond]
-        ax.scatter(row["x"], row["signal_retained"], marker=marker, s=55, color="k", zorder=5, label=f"{name}: signal retained")
-        ax.scatter(row["x"], row["noise_retained"], marker=marker, s=55, facecolor="none", edgecolor="k", lw=1.2, zorder=5, label=f"{name}: noise retained")
-        ax.annotate(name, (row["x"], row["noise_retained"]), textcoords="offset points", xytext=(0, -13), ha="center", fontsize=6.5)
+        filled = ax.scatter(row["x"], row["signal_retained"], marker=marker, s=55, color=red, zorder=5)
+        hollow = ax.scatter(row["x"], row["noise_retained"], marker=marker, s=55, facecolor="none", edgecolor=red, lw=1.2, zorder=5)
+        ax.annotate(name, (row["x"], row["noise_retained"]), textcoords="offset points", xytext=(0, -13), ha="center", fontsize=6.5, color=red)
+        ct_handles.append(((filled, hollow), name))
 
-    finish(ax, "Number of celltypes")
+    finish(ax, "Number of celltypes (Leiden)")
     handles, labels_ = ax.get_legend_handles_labels()
+    handles += [h for h, _ in ct_handles]
+    labels_ += [n for _, n in ct_handles]
+    ax.legend(handles, labels_, handler_map={tuple: HandlerTuple(ndivide=None, pad=0.3)}, loc="lower right",
+              frameon=False, fontsize=8)
     fig.tight_layout()
     save(fig, "celltype_granularity_signal_vs_noise")
-    save_legend(handles, labels_, "celltype_granularity_signal_vs_noise_legend")
 
 
 def figure_empty(df):
@@ -150,10 +158,9 @@ def figure_empty(df):
     ax.axvline(N_EMPTY_ALL, color="0.6", ls=":", lw=1)
     ax.annotate(f"all {N_EMPTY_ALL:,}", (N_EMPTY_ALL, 0.5), rotation=90, va="center", ha="right", fontsize=6.5, color="0.35")
     finish(ax, "Number of empty barcodes")
-    handles, labels_ = ax.get_legend_handles_labels()
+    ax.legend(loc="center right", bbox_to_anchor=(0.97, 0.25), frameon=False, fontsize=8)
     fig.tight_layout()
     save(fig, "empty_barcode_signal_vs_noise")
-    save_legend(handles, labels_, "empty_barcode_signal_vs_noise_legend")
 
 
 if __name__ == "__main__":

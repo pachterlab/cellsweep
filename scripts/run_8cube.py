@@ -41,7 +41,7 @@ os.makedirs(out_dir, exist_ok=True)
 eight_cubed_markers_path = os.path.join(data_dir, "8_cube_marker_genes.csv")
 
 cellsweep_max_iter = 1000
-cellsweep_beta = 0.1
+cellsweep_init_beta = 0.01
 cellsweep_init_alpha = 0.9
 
 # Docker/Podman settings for the R-based alternate tools (SoupX, DecontX).
@@ -225,7 +225,7 @@ def run_cellsweep(plate):
     adata_raw = ad.read_h5ad(os.path.join(data_dir, plate, "raw_counts.h5ad"))
     cellsweep_log_path = os.path.join(data_dir, plate, "cellsweep.log")
 
-    adata_cellsweep = denoise_count_matrix(adata_raw, adata_out=adata_path_cellsweep, beta=cellsweep_beta, freeze_ambient_profile=True, init_alpha=cellsweep_init_alpha, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells[plate], threads=threads, verbose=verbose, log_file=cellsweep_log_path)
+    adata_cellsweep = denoise_count_matrix(adata_raw, adata_out=adata_path_cellsweep, init_beta=cellsweep_init_beta, freeze_ambient_profile=True, init_alpha=cellsweep_init_alpha, max_iter=cellsweep_max_iter, empty_droplet_method="threshold", expected_cells=expected_cells[plate], threads=threads, verbose=verbose, log_file=cellsweep_log_path)
 
     adata_cellsweep = None  # memory management
     del adata_raw   # memory management

@@ -35,7 +35,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy import ndimage as ndi
 
-cellsweep_dir = "/home/jrich/Desktop/cellsweep"
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "visium_mouse_brain")
 out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "visium_mouse_brain", "reviewer7")
 os.makedirs(out_dir, exist_ok=True)
