@@ -68,7 +68,7 @@ def fig5():
              "Fig5", width_in=7.0)
 
 
-# 8 cubed panels (scripts/paper_figures/visualize_8cube.py): plate -> [(tissue and cell type as in the file names,
+# 8 cubed panels (8cube.ipynb, cell 35): plate -> [(tissue and cell type as in the file names,
 # tissue and cell type as shown)], in the order they appear in Fig6 and in Supp14/Supp15
 CUBE_CELLTYPES = {"igvf_003": [("Heart", "atrial cardiac myocyte", "Heart", "Atrial Cardiac Myocyte"),
                                ("CortexHippocampus", "glutamatergic neuron", "Cortex/Hippocampus", "Glutamatergic Neuron")],

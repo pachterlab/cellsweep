@@ -50,8 +50,9 @@ janssen_snrna.ipynb janssen_snrna --set overwrite=$OVERWRITE --set threads=$THRE
 !janssen_figures $PYTHON scripts/paper_figures/make_janssen_figure.py
 
 # ---------- 8 cubed: Fig6, Fig2 (8 cubed rows), Supp14-Supp15, and Trem2 (Supp16) ----------
-!cellsweep_8cube_plates $PYTHON scripts/run_8cube.py --tools cellsweep
-!viz_8cube $PYTHON scripts/paper_figures/visualize_8cube.py --plates igvf_003 igvf_009 --tools cellbender soupx decontx --celltypes "atrial cardiac myocyte" "glutamatergic neuron" "zona fasciculata" "proximal tubule epithelial cell" --plot-types gene_counts --overwrite
+# plates: 8cube.ipynb's setup cells, the CellSweep/SoupX/DecontX runs (cell 30) and the signal/noise stats and plots
+# (cell 35); outputs go into the notebook. The runs reuse existing outputs (set overwrite in cell 3 to rerun CellSweep)
+!8cube_plates $PYTHON scripts/paper_figures/run_notebook_cells.py 8cube.ipynb --cells 1,3,4,30,35
 # Trem2: 8cube.ipynb's setup cells, then its Trem2 section (CellSweep run and Supp16 bar plots); outputs go into the notebook
 !8cube_trem2 $PYTHON scripts/paper_figures/run_notebook_cells.py 8cube.ipynb --cells 1,3,4,38-56
 
