@@ -23,8 +23,9 @@ their mouse counts. a_h is read from the ambient profile of the run, not hard-co
     visium_hd_alpha_hat.png                              alpha_hat map, purity run, excluded bins in grey
     visium_hd_alpha_hat_interface_excluded.png           alpha_hat map, interface run
     visium_hd_alpha_hat_exclusion_comparison.png         the two maps side by side
+    alpha_hat_histogram_interface_excluded.png           alpha_hat over the corrected bins, interface run (Fig. S7B)
 
-Usage: python scripts/make_spatial_species_run_figures.py
+Usage: python scripts/paper_figures/make_spatial_species_run_figures.py
 """
 import os
 import json
@@ -42,7 +43,7 @@ from PIL import Image
 
 import cellsweep.utils as cs_utils
 
-cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "visium_human_mouse")
 out_dir = os.path.join(cellsweep_dir, "notebooks", "output", "visium_human_mouse")
 os.makedirs(out_dir, exist_ok=True)
@@ -136,6 +137,21 @@ def joint_scatter(df, fname, label_col="genome_boundary", keep=None):
     return keep
 
 
+def alpha_histogram(df, fname):
+    """Histogram of alpha_hat over the corrected (non-empty) bins of a run."""
+    alpha = df["alpha_hat"].values
+    fig, ax = plt.subplots(figsize=(5.4, 4.2))
+    ax.hist(alpha, bins=100, color="blue")
+    ax.set_yscale("log")
+    ax.set_xlabel(r"$\hat{\alpha}_i$")
+    ax.set_ylabel("Number of bins")
+    ax.grid(axis="y", alpha=0.5)
+    fig.tight_layout()
+    fig.savefig(os.path.join(out_dir, fname), dpi=300)
+    plt.close(fig)
+    print(f"   {len(alpha):,} bins; median alpha {np.median(alpha):.3f}; fraction > 0.5: {np.mean(alpha > 0.5):.3f}")
+
+
 def build_map_adata(df, excluded, excluded_label):
     # include_lowest: alpha_hat == 0 would otherwise fall outside the first interval
     alpha_bin = pd.cut(df["alpha_hat"], bins=ALPHA_BINS, labels=ALPHA_LABELS, include_lowest=True).astype(str)
@@ -165,6 +181,7 @@ def main():
         if name == "interface":
             keep = joint_scatter(df, "visium_human_mouse_cellsweep_joint_scatterplot.png", label_col="genome_boundary")
             joint_scatter(df, "visium_human_mouse_cellsweep_joint_scatterplot_majority_rule.png", label_col="genome_majority", keep=keep)
+            alpha_histogram(df, "alpha_hat_histogram_interface_excluded.png")
         else:
             joint_scatter(df, "visium_human_mouse_cellsweep_joint_scatterplot_purity_rule.png", label_col="genome_majority")
 

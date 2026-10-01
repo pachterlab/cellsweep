@@ -1,8 +1,8 @@
-"""Shared loaders for the Janssen et al. (2023) snRNA-seq benchmark.
+"""Shared loaders for the Janssen et al. (2023) scRNA-seq and snRNA-seq benchmark.
 
-Every correction method is returned on the same (cell x gene) grid: the 16,714 / 4,266
-nuclei and 28,679 genes of the published Seurat objects (CellRanger's features minus the
-13 mitochondrial genes, which Janssen et al. drop).
+Every correction method is returned on the same (cell x gene) grid for each replicate: the cells
+(or nuclei) and genes of the published Seurat objects (CellRanger's features minus the 13
+mitochondrial genes, which Janssen et al. drop).
 """
 
 import os
@@ -18,16 +18,29 @@ DATA_DIR = os.path.join(CS_DIR, "notebooks", "data", "janssen2023")
 OUT_DIR = os.path.join(CS_DIR, "notebooks", "output", "janssen2023")
 TOOL_DIR = os.path.join(OUT_DIR, "tools")
 
-REPLICATES = ["nuc2", "nuc3"]
+import json
+
+# rep1-rep3: droplet-based scRNA-seq; nuc2, nuc3: droplet-based snRNA-seq (same animals)
+REPLICATES = ["rep1", "rep2", "rep3", "nuc2", "nuc3"]
+SINGLE_CELL = ["rep1", "rep2", "rep3"]
+SINGLE_NUCLEUS = ["nuc2", "nuc3"]
+# Non-cellular barcodes: every barcode below this many UMIs that the authors did not call as a cell
+EMPTY_UMI = 100
 # Methods compared in the figures. CellBender, DecontX (with empty droplets), SoupX and scAR are run
 # with the same scripts and settings as every other dataset in the paper (benchmarking.ipynb).
 METHOD_ORDER = ["raw", "CellSweep", "CellBender", "DecontX", "SoupX", "scAR"]
 # The same tools at Janssen et al.'s default settings; scored only to check the re-runs against the
 # numbers they publish (janssen_snrna.ipynb, "Against the published benchmark"), never plotted.
 JANSSEN_SETTINGS = ["CellBender (Janssen)", "DecontX (Janssen)", "DecontX (empty, Janssen)", "SoupX (Janssen)"]
-# Labels given to CellSweep (janssen_snrna.ipynb: label_resolution, label_min_cluster): the
-# authors' PT label split by their Seurat clusters at resolution 0.5, clusters < 50 nuclei pooled.
-LABEL_TAG = "_res0.5_min50"
+# Labels CellSweep was given for each replicate, written by janssen_snrna.ipynb: "_author" for the
+# authors' cell types, or e.g. "_res0.5_min50" when CellSweep warned on those and was rerun with PT
+# split by the authors' Seurat clusters.
+LABELS_JSON = os.path.join(OUT_DIR, "cellsweep_labels.json")
+
+
+def cellsweep_label_tag(rep):
+    with open(LABELS_JSON) as f:
+        return json.load(f)[rep]
 # The ten proximal-tubule markers Janssen et al. use for their marker-leakage evaluation
 # (Snakemake_benchmark/input/top10_PT_markers.RDS).
 PT_MARKERS = ["Slc34a1", "Miox", "Pck1", "Slc4a4", "Ttc36", "Lrp2", "Fbp1", "Cyp2e1",
@@ -97,9 +110,9 @@ def load_method(rep, method, genes, cells):
         m, g, b = _read_10x_h5(os.path.join(DATA_DIR, rep, "raw_feature_bc_matrix.h5"))
         return _align(m, g, b, genes, cells)
     if method == "CellSweep":
-        # The h5ad also holds the ~1.5M noncellular barcodes; read the CSR blocks straight
+        # The h5ad also holds the ~1-2M noncellular barcodes; read the CSR blocks straight
         # out of the file rather than materialising the whole AnnData.
-        path = os.path.join(DATA_DIR, rep, f"{rep}_output_cellsweep_empty100{LABEL_TAG}.h5ad")
+        path = os.path.join(DATA_DIR, rep, f"{rep}_output_cellsweep_empty{EMPTY_UMI}{cellsweep_label_tag(rep)}.h5ad")
         with h5py.File(path, "r") as f:
             shape = tuple(f["X"].attrs["shape"])
             m = sp.csr_matrix((f["X"]["data"][:].astype(np.float64), f["X"]["indices"][:],

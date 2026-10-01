@@ -1,14 +1,18 @@
-"""Figures for the Janssen et al. (2023) droplet-based snRNA-seq benchmark.
+"""Figures for the Janssen et al. (2023) droplet-based scRNA-seq and snRNA-seq benchmark.
 
 Reads the CSVs written by scripts/analyze_janssen_markers.py and writes:
 
+  janssen_accuracy.png    Kendall's tau against RMSLE of each method's per-cell background estimate
+                          versus the genotype ground truth, one panel for the scRNA-seq replicates
+                          (rep1-rep3) and one for the snRNA-seq replicates (nuc2, nuc3); colour is
+                          the method, marker shape the replicate (the paper's Fig. S5)
   janssen_dotplots.png    six dot plots -- uncorrected plus five correction methods --
                           over proximal-tubule markers and broadly expressed genes,
-                          with nucleus types grouped into PT and non-PT
+                          with nucleus types grouped into PT and non-PT (nuc2)
   janssen_removal.png     in non-PT nuclei, PT-marker ("noise") counts removed against
-                          own-cell-type marker ("signal") counts removed
+                          own-cell-type marker ("signal") counts removed (nuc2, nuc3)
 
-Usage: python scripts/make_janssen_figure.py [--out-dir DIR] [--rep nuc2]
+Usage: python scripts/paper_figures/make_janssen_figure.py [--out-dir DIR] [--rep nuc2]
 """
 
 import argparse
@@ -22,7 +26,7 @@ import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap, Normalize
 from matplotlib.lines import Line2D
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # scripts/, for the analysis modules
 import analyze_janssen_markers as jm
 import janssen_loaders as L
 
@@ -201,17 +205,58 @@ def build_removal(removals, out_path):
     print("wrote", out_path)
 
 
+# Methods in the accuracy figure, in legend order, and one marker per replicate within each panel
+ACCURACY_METHODS = ["CellSweep", "SoupX", "CellBender", "DecontX", "scAR"]
+REPLICATE_MARKERS = {"rep1": "o", "rep2": "s", "rep3": "^", "nuc2": "o", "nuc3": "s"}
+
+
+def build_accuracy(accuracy, out_path):
+    """Kendall's tau (x) against RMSLE (y) per method and replicate; scRNA-seq and snRNA-seq panels.
+
+    `accuracy` maps replicate -> the accuracy_<rep>.csv table (columns method, tau, rmsle)."""
+    panels = [("scRNA-seq", [r for r in L.SINGLE_CELL if r in accuracy]),
+              ("snRNA-seq", [r for r in L.SINGLE_NUCLEUS if r in accuracy])]
+    panels = [(t, reps) for t, reps in panels if reps]
+    fig, axes = plt.subplots(1, len(panels), figsize=(4.6 * len(panels), 4.0), constrained_layout=True, squeeze=False)
+    for ax, (title, reps) in zip(axes[0], panels):
+        for rep in reps:
+            d = accuracy[rep].set_index("method")
+            for method in ACCURACY_METHODS:
+                if method in d.index:
+                    ax.scatter(d.loc[method, "tau"], d.loc[method, "rmsle"], s=70, marker=REPLICATE_MARKERS[rep],
+                               color=METHOD_COLORS[method], edgecolors="k", linewidths=0.6, zorder=3)
+        ax.set_xlabel("Kendall's $\\tau$ (higher is better)")
+        ax.set_ylabel("RMSLE (lower is better)")
+        ax.set_title(title, fontsize=11)
+        ax.grid(alpha=0.3)
+        ax.spines[["top", "right"]].set_visible(False)
+        handles = [Line2D([], [], ls="", marker="o", ms=8, color=METHOD_COLORS[m], markeredgecolor="k", label=m)
+                   for m in ACCURACY_METHODS]
+        handles += [Line2D([], [], ls="", marker=REPLICATE_MARKERS[r], ms=8, color="0.6", markeredgecolor="k", label=r)
+                    for r in reps]
+        ax.legend(handles=handles, frameon=False, fontsize=8, loc="upper left", bbox_to_anchor=(1.0, 1.0))
+    fig.savefig(out_path, dpi=300, bbox_inches="tight")
+    fig.savefig(os.path.splitext(out_path)[0] + ".pdf", bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out_path}")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--out-dir", default=L.OUT_DIR)
     p.add_argument("--rep", default="nuc2", help="replicate shown in the dot-plot figure")
     args = p.parse_args()
 
+    accuracy = {rep: pd.read_csv(os.path.join(args.out_dir, f"accuracy_{rep}.csv")) for rep in L.REPLICATES
+                if os.path.exists(os.path.join(args.out_dir, f"accuracy_{rep}.csv"))}
+    if accuracy:
+        build_accuracy(accuracy, os.path.join(args.out_dir, "janssen_accuracy.png"))
+
     df = pd.read_csv(os.path.join(args.out_dir, f"dotplot_{args.rep}.csv"))
     build_dotplots(df, args.rep, os.path.join(args.out_dir, "janssen_dotplots.png"))
 
     removals = {}
-    for rep in L.REPLICATES:
+    for rep in L.SINGLE_NUCLEUS:
         path = os.path.join(args.out_dir, f"removal_{rep}.csv")
         if os.path.exists(path):
             removals[rep] = pd.read_csv(path)

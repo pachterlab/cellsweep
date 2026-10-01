@@ -25,7 +25,7 @@ gets its own profile instead of being merged into mixed clusters (see scripts/ru
 Purity uses the raw-count species fraction; the content-normalized fraction is stored alongside for reference.
 
 Usage: python scripts/run_spatial_purity_filtered_cellsweep.py [--overwrite]
-Figures: scripts/make_spatial_species_run_figures.py
+Figures: scripts/paper_figures/make_spatial_species_run_figures.py
 """
 import os
 import argparse

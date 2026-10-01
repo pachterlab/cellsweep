@@ -35,7 +35,7 @@ MAX_RAM = max_ram_gb * 1024**3
 soft, hard = resource.getrlimit(resource.RLIMIT_AS)
 resource.setrlimit(resource.RLIMIT_AS, (MAX_RAM, MAX_RAM))
 
-cellsweep_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+cellsweep_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 data_dir = os.path.join(cellsweep_dir, "notebooks", "data", "8cubed")
 eight_cubed_markers_path = os.path.join(data_dir, "8_cube_marker_genes.csv")
 gene_id_name_map_path = os.path.join(data_dir, "gene_id_name_map.csv")
