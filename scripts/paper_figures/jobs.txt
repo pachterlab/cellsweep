@@ -29,7 +29,7 @@ benchmarking.ipynb bench_pbmc_mouse_5k --set dataset_name=\"pbmc_mouse_5k\" --se
 
 # ---------- pbmc8k idempotency (Fig7, Supp17; CellBender on CPU unless the notebook sets use_cuda) and runtime (Fig8) ----------
 idempotency.ipynb idempotency_pbmc8k --set alternative_tools=[\"cellbender\",\"soupx\",\"decontx\",\"scar\",\"cellsweep_no_empties\"] --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
-runtime.ipynb runtime_pbmc8k --set docker=\"$DOCKER\" --set threads=$THREADS
+runtime.ipynb runtime_pbmc8k --set docker=\"$DOCKER\"   # no threads override: the notebook times 1 and 16 threads itself
 
 # ---------- pbmc8k label granularity and number of empty barcodes: Supp19 ----------
 granularity.ipynb granularity --set overwrite=$OVERWRITE --set threads=$THREADS
@@ -46,7 +46,6 @@ spatial_mouse_brain.ipynb spatial_mouse_brain --set overwrite=$OVERWRITE --set t
 
 # ---------- Janssen et al. single-nucleus RNA-seq: Supp5, Supp6 (S6) ----------
 janssen_snrna.ipynb janssen_snrna --set overwrite=$OVERWRITE --set threads=$THREADS --set verbose=1
-!janssen_markers $PYTHON scripts/analyze_janssen_markers.py
 !janssen_figures $PYTHON scripts/paper_figures/make_janssen_figure.py
 
 # ---------- 8 cubed: Fig6, Fig2 (8 cubed rows), Supp14-Supp15, and Trem2 (Supp16) ----------

@@ -16,7 +16,7 @@ celltypist_convert: True
 celltypist_map_file: null
 cellsweep_max_iter: 2000
 cellsweep_init_beta: 0.01
-cellsweep_init_alpha: 0.9
+cellsweep_init_alpha: 0.7
 cellbender_epochs: 150
 cellbender_fpr: 0.01
 cellbender_zdim: 64

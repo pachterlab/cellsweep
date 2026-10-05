@@ -697,12 +697,14 @@ def denoise_count_matrix(
         Note that unlike the parameters above, these are not range-validated by pydantic,
         so it is up to the caller to respect the documented bounds.
 
-        init_alpha : float, default 0.9, must be in [0.1, 0.9]
+        init_alpha : float, default 0.7, must be in [0.1, 0.9]
             Initial value of alpha_n for each cell if `init_alpha` column is not present in `adata.obs`. A high initial value lets the ambient
-            component claim ambient-explainable counts first, so cell-type profiles are built only from counts the ambient profile cannot
-            explain; this gives sparser cell-type profiles and a smoother log-likelihood during burn-in. Because the likelihood is nearly flat
-            along directions that trade cell-type expression against ambient contamination, lower values can converge to solutions in which
-            p_k retains ambient-shaped expression. We recommend keeping this value far above the expected contamination rate.
+            component claim ambient-explainable counts first, so cell-type profiles are built mostly from counts the ambient profile cannot
+            explain. Because the likelihood is nearly flat along directions that trade cell-type expression against ambient contamination,
+            the starting value selects among near-equal solutions: low values can leave ambient-shaped expression in p_k, while values close
+            to `alpha_cap` can strip a cell type's own broadly expressed genes from its profile when that cell type is the main source of the
+            ambient RNA (e.g. proximal tubule in kidney), overestimating its contamination. Keep this value well above the expected
+            contamination rate.
 
         init_beta : float, default 0.01
             Initial beta (percent bulk contamination) value for each cell. We set this based on the observation that bulk contamination
@@ -800,7 +802,7 @@ def denoise_count_matrix(
     from cellsweep import __version__
 
     # advanced EM hyperparameters (see "Other Parameters" in the docstring)
-    init_alpha = em_kwargs.pop("init_alpha", 0.9)
+    init_alpha = em_kwargs.pop("init_alpha", 0.7)
     init_beta = em_kwargs.pop("init_beta", 0.01)
     alpha_cap = em_kwargs.pop("alpha_cap", 0.9)
     repulsion_strength = em_kwargs.pop("repulsion_strength", 1e-3)

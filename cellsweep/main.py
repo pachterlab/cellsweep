@@ -100,7 +100,7 @@ def main():  # noqa: C901
     parser_denoise_count_matrix.add_argument(
         "--init_alpha",
         type=float,
-        default=0.9,
+        default=0.7,
         help=argparse.SUPPRESS,
     )
     parser_denoise_count_matrix.add_argument(

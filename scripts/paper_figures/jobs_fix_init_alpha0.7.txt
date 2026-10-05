@@ -1,0 +1,9 @@
+hgmm_failure_modes.ipynb hgmm_failure_modes --set overwrite=$OVERWRITE
+benchmarking.ipynb bench_pbmc8k --set dataset_name=\"pbmc8k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+benchmarking.ipynb bench_pbmc8k_no_empties --set dataset_name=\"pbmc8k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[] --cfg remove_empties=True
+benchmarking.ipynb bench_kidney_nuclei_10k --set dataset_name=\"kidney_nuclei_10k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+benchmarking.ipynb bench_melanoma --set dataset_name=\"melanoma\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+benchmarking.ipynb bench_pbmc33k --set dataset_name=\"pbmc33k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]
+benchmarking.ipynb bench_pbmc_mouse_5k --set dataset_name=\"pbmc_mouse_5k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]
+granularity.ipynb granularity --set overwrite=$OVERWRITE --set threads=$THREADS
+summary_heatmap.ipynb summary_heatmap --set overwrite=$OVERWRITE
