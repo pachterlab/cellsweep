@@ -194,7 +194,8 @@ def write_10x_like(
     write_raw=True,
     write_filtered=True,
     transpose_matrix=True,
-    raw_mask=None
+    raw_mask=None,
+    overwrite=False
 ):
     """
     Write an AnnData object to a 10x-like directory structure.
@@ -231,6 +232,13 @@ def write_10x_like(
     cluster_col : str, default "leiden"
         Column name in adata.obs with cluster labels.
 
+    overwrite : bool, default False
+        Whether to rewrite outputs that already exist. Existing files are kept by
+        default, since for a downloaded dataset the export is a deterministic
+        function of the download and is expensive to redo. Pass True when `adata`
+        itself was just regenerated (e.g. a re-simulated dataset), where keeping
+        the old files would leave the exported matrices out of sync with it.
+
     Returns
     -------
     dict
@@ -248,7 +256,7 @@ def write_10x_like(
         genes_path = os.path.join(subdir, "genes.tsv") if not gzip_output else os.path.join(subdir, "features.tsv.gz")
         matrix_path = os.path.join(subdir, f"matrix.mtx{suffix}")
 
-        if os.path.exists(barcodes_path) and os.path.exists(genes_path) and os.path.exists(matrix_path):
+        if not overwrite and os.path.exists(barcodes_path) and os.path.exists(genes_path) and os.path.exists(matrix_path):
             print(f"Found existing 10x files in {subdir!r}. Skipping write.")
             return subdir  # {"barcodes": barcodes_path, "genes": genes_path, "matrix": matrix_path}
 
@@ -298,7 +306,7 @@ def write_10x_like(
 
     clusters_path = os.path.join(parent_dir, "clusters.csv")
     paths["clusters"] = clusters_path
-    if cluster_col is not None and not os.path.exists(clusters_path) and cluster_col in adata.obs.columns and is_empty_col in adata.obs.columns:
+    if cluster_col is not None and (overwrite or not os.path.exists(clusters_path)) and cluster_col in adata.obs.columns and is_empty_col in adata.obs.columns:
         # Clusters
         adata_filtered = adata[~adata.obs[is_empty_col].astype(bool)].copy()
         adata_filtered.obs[[cluster_col]].to_csv(clusters_path)
