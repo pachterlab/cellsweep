@@ -296,6 +296,15 @@ def sweep(src, name):   # Figs. S26-S29: notebooks/parameter_sweep.ipynb
     return lambda: copy_pdf(f"{O}/parameter_sweep/{src}.pdf", name)
 
 
+def supp29():   # Fig. S29: contamination grid, notebooks/simulations.ipynb section 1
+    o = f"{O}/simulations"
+    assemble([[("A", f"{o}/grid_heatmaps.png")], [("B", f"{o}/grid_noise_fraction.png")]], "Supp29", width_in=7.0)
+
+
+def supp30():   # Fig. S30: profile similarity, notebooks/simulations.ipynb section 2 (panel letters drawn by the notebook)
+    copy_pdf(f"{O}/simulations/similarity.pdf", "Supp30")
+
+
 # name -> (figure number, builder). Not listed: Fig1 (schematic, not generated from data).
 FIGURES = {
     "Fig2": ("Fig. 2", fig2), "Fig3": ("Fig. 3", fig3), "Fig4": ("Fig. 4", fig4), "Fig5": ("Fig. 5", fig5),
@@ -311,6 +320,7 @@ FIGURES = {
     "Supp26": ("Fig. S26", sweep("convergence_check", "Supp26")),
     "Supp27": ("Fig. S27", sweep("kappa_sweep", "Supp27")),
     "Supp28": ("Fig. S28", sweep("init_alpha_sweep", "Supp28")),
+    "Supp29": ("Fig. S29", supp29), "Supp30": ("Fig. S30", supp30),
 }
 
 

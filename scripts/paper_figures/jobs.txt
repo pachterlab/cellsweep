@@ -44,9 +44,8 @@ spatial.ipynb spatial_visium_human_mouse --set dataset_name=\"visium_human_mouse
 # CellSweep is run with the saved labels of the original run (Leiden labels depend on the scanpy/umap/numba versions)
 spatial_mouse_brain.ipynb spatial_mouse_brain --set overwrite=$OVERWRITE --set threads=$THREADS
 
-# ---------- Janssen et al. single-nucleus RNA-seq: Supp5, Supp6 (S6) ----------
+# ---------- Janssen et al. scRNA-seq and snRNA-seq: Supp5 (S5, janssen_accuracy) ----------
 janssen_snrna.ipynb janssen_snrna --set overwrite=$OVERWRITE --set threads=$THREADS --set verbose=1
-!janssen_figures $PYTHON scripts/paper_figures/make_janssen_figure.py
 
 # ---------- 8 cubed: Fig6, Fig2 (8 cubed rows), Supp14-Supp15, and Trem2 (Supp16) ----------
 # plates: 8cube.ipynb's setup cells, the CellSweep/SoupX/DecontX runs (cell 30) and the signal/noise stats and plots
@@ -63,3 +62,8 @@ parameter_sweep.ipynb parameter_sweep --set overwrite=$OVERWRITE --set threads=$
 
 # ---------- Fig2: simulation sensitivity and the summary heatmap (uses the benchmark, 8 cubed and runtime outputs above) ----------
 summary_heatmap.ipynb summary_heatmap --set overwrite=$OVERWRITE
+
+# ---------- simulations 5-6 (CellSweep only; ambient from one cell type) and simulations.ipynb (R2.5 grid, R3.3 recovery) ----------
+benchmarking.ipynb bench_simulation5_ambient_dominant_type --set dataset_name=\"simulation5_ambient_dominant_type\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]
+benchmarking.ipynb bench_simulation6_ambient_rare_type --set dataset_name=\"simulation6_ambient_rare_type\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]
+simulations.ipynb simulations --set overwrite=$OVERWRITE
