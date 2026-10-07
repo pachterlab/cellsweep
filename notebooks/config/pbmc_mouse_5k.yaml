@@ -47,7 +47,7 @@ decontx_out_prefix_name: pbmc_mouse_5k_output_decontx
 adata_path_scar_name: pbmc_mouse_5k_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: https://caltech.box.com/shared/static/q8o47flbgeury10fsbnoae6co97uielo.h5ad
+cellsweep_matrix_url: https://caltech.box.com/shared/static/unm5euxyzjgc9dqz9uzqfag9hxtqe2k5.h5ad
 cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/oui0suixloncpthd6jy1g5j3syfn04uh.h5
 cellbender_ckpt_url: null
 soupx_matrix_url: https://caltech.box.com/shared/static/h3z9sh2g6lqjewzm7yk4ssnj0n2jlzos.gz

@@ -2,7 +2,7 @@ description: "Simulation 5 - ambient RNA mostly from the dominant cell type (Typ
 url: null
 
 # data file URLs and names
-adata_raw_url: null
+adata_raw_url: https://caltech.box.com/shared/static/9j3zudzsgh69qtu5kej11okra9reijlv.h5ad
 adata_raw_file_name: "adata_raw.h5ad"
 raw_tar_url: null
 raw_tar_file_dir_suffix: null
@@ -47,7 +47,7 @@ decontx_out_prefix_name: sim5_output_decontx
 adata_path_scar_name: sim5_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: null
+cellsweep_matrix_url: https://caltech.box.com/shared/static/wx80jld1uoduzndy5138u6merzognbxa.h5ad
 cellbender_matrix_filtered_url: null
 cellbender_ckpt_url: null
 soupx_matrix_url: null

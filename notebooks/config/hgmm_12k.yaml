@@ -47,7 +47,8 @@ decontx_out_prefix_name: hgmm_12k_output_decontx
 adata_path_scar_name: hgmm_12k_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: https://caltech.box.com/shared/static/asrt7vgt7lnhazcjujkil1ak1v9y6qo5.h5ad
+cellsweep_matrix_url: https://caltech.box.com/shared/static/6tvyk51phqaqa3bqgk61s1e6kp6mcwuw.h5ad
+cellsweep_no_empties_matrix_url: https://caltech.box.com/shared/static/kql3bch3digk0a4fzpu8uh78gxxhfhcr.h5ad
 cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/0dma5qrc94tbi07pic0w8c0b50jxmach.h5
 cellbender_ckpt_url: https://caltech.box.com/shared/static/esz6du1ti0wakqc1j2y1gzg445zllcw5.gz
 soupx_matrix_url: https://caltech.box.com/shared/static/mt9us648ol61hdol3mohrpg1t658quqv.gz

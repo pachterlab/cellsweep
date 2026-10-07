@@ -2,7 +2,7 @@ description: "Simulation 6 - ambient RNA mostly from a rare cell type (Type_11: 
 url: null
 
 # data file URLs and names
-adata_raw_url: null
+adata_raw_url: https://caltech.box.com/shared/static/lrwus0g8zpffcpvev0r1sx28cqkqwx7m.h5ad
 adata_raw_file_name: "adata_raw.h5ad"
 raw_tar_url: null
 raw_tar_file_dir_suffix: null
@@ -47,7 +47,7 @@ decontx_out_prefix_name: sim6_output_decontx
 adata_path_scar_name: sim6_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: null
+cellsweep_matrix_url: https://caltech.box.com/shared/static/6nvzlg99yria2imqcsbx2u1lmp1ghe0o.h5ad
 cellbender_matrix_filtered_url: null
 cellbender_ckpt_url: null
 soupx_matrix_url: null

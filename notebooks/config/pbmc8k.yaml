@@ -74,7 +74,8 @@ decontx_out_prefix_name: pbmc8k_output_decontx
 adata_path_scar_name: pbmc8k_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: https://caltech.box.com/shared/static/dltpt6ixhvzg0rb6h1058aamrcmi7oy7.h5ad
+cellsweep_matrix_url: https://caltech.box.com/shared/static/7zp5841nj6as7cqfxg3s3v40jxm5ql0d.h5ad
+cellsweep_no_empties_matrix_url: https://caltech.box.com/shared/static/0frc95ur98hsdlydsvgi24i03v9o016f.h5ad
 cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/bnilabzuvdvtm1knpsfgy89php938qft.h5
 cellbender_ckpt_url: https://caltech.box.com/shared/static/hj41un9dz0pk5j10t8dyfj2mbllzrp6s.gz
 soupx_matrix_url: https://caltech.box.com/shared/static/7lhpw8bgwf3b3gyl7wgqe15h3yhxamld.gz
