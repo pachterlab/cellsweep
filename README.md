@@ -58,5 +58,8 @@ The input Anndata object/h5ad file should have the following structure:
     - `adata.uns['celltype_profile']` (optional): a matrix giving the mean expression for each cell type (K x G). If not provided, CellSweep will infer the cell type profile from the data.
     - `adata.uns['celltype_profile_genes']` (optional): a list of gene names corresponding to the columns of `celltype_profile`.
 
+### Multiple samples
+CellSweep fits a single ambient profile, global contamination profile and global contamination fraction per run. Ambient contamination is specific to each sample, so run CellSweep separately on each sequencing sample (e.g. each 10x channel or plate), with that sample's own non-cellular barcodes, rather than on a matrix that combines several samples, batches or plates.
+
 ## Tutorials
 We have several Jupyter Notebooks demonstrating the use of CellSweep for denoising count matrices and analyzing the results. See the `notebooks` folder in the repository.

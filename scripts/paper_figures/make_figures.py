@@ -292,7 +292,7 @@ def supp24():   # Fig. S24
     assemble([[(L, f"{m}/cellsweep_vs_raw_{k}_expression_scatterplot.png") for L, k in zip("ABC", ("matrix", "cell", "gene"))]], "Supp24", width_in=7.0)
 
 
-def sweep(src, name):   # Figs. S26-S29: notebooks/parameter_sweep.ipynb
+def sweep(src, name):   # Figs. S25, S26 and S28: notebooks/parameter_sweep.ipynb
     return lambda: copy_pdf(f"{O}/parameter_sweep/{src}.pdf", name)
 
 
@@ -318,7 +318,7 @@ FIGURES = {
     "Supp21": ("Fig. S21", supp21), "Supp22": ("Fig. S22", supp22), "Supp23": ("Fig. S23", supp23), "Supp24": ("Fig. S24", supp24),
     "Supp25": ("Fig. S25", sweep("heatmaps_default", "Supp25")),
     "Supp26": ("Fig. S26", sweep("convergence_check", "Supp26")),
-    "Supp27": ("Fig. S27", sweep("kappa_sweep", "Supp27")),
+    "Supp27": ("Fig. S27", lambda: copy_pdf(f"{O}/simulations/similarity_global_ablation.pdf", "Supp27")),   # simulations.ipynb section 3
     "Supp28": ("Fig. S28", sweep("init_alpha_sweep", "Supp28")),
     "Supp29": ("Fig. S29", supp29), "Supp30": ("Fig. S30", supp30),
 }
