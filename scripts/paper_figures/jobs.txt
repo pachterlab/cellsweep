@@ -57,7 +57,7 @@ janssen_snrna.ipynb janssen_snrna --set overwrite=$OVERWRITE --set threads=$THRE
 # ---------- melanoma discovery analysis: Fig10 ----------
 melanoma_discovery.ipynb melanoma_discovery
 
-# ---------- parameter sweep: Supp26, Supp27, Supp28, Supp29 (S26-S29) ----------
+# ---------- parameter sweep: Supp25, Supp26, Supp28 (S25, S26, S28); Supp27 comes from simulations.ipynb ----------
 parameter_sweep.ipynb parameter_sweep --set overwrite=$OVERWRITE --set threads=$THREADS
 
 # ---------- Fig2: simulation sensitivity and the summary heatmap (uses the benchmark, 8 cubed and runtime outputs above) ----------
