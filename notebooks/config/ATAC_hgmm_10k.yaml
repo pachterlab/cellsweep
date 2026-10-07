@@ -47,7 +47,7 @@ decontx_out_prefix_name: ATAC_hgmm_10k_output_decontx
 adata_path_scar_name: ATAC_hgmm_10k_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: null
+cellsweep_matrix_url: https://caltech.box.com/shared/static/vw89wkm49o4990sg762g8q8jw47bwk32.h5ad
 cellbender_matrix_filtered_url: null
 cellbender_ckpt_url: null
 soupx_matrix_url: null
