@@ -15,13 +15,18 @@ from .utils import infer_empty_droplets, load_adata, setup_logger
 
 
 #* Take the mean expression of each gene across all cells of a given cell type, and normalize to sum to 1.
-def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
+def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, is_empty_key="is_empty", celltype_profile_key="celltype_profile", verbose=0, quiet=False, logger=None):
     """
     input: adata with adata.obs: is_empty (optional), celltype
-    output: adata with adata.obs: is_empty, celltype, and adata.uns: celltype_profile
+    output: adata with adata.obs: is_empty, celltype, and adata.uns: celltype_profile, celltype_names, celltype_profile_genes
       - is_empty: boolean indicating whether each cell is an empty droplet or not. If not present, it will be inferred using infer_empty_droplets().
       - celltype: string indicating the cell type of each cell.
       - celltype_profile: DataFrame (n_celltypes x n_genes) - mean expression of each gene across all cells of that type.
+      - celltype_names: array (n_celltypes) - cell-type label for each row of celltype_profile.
+      - celltype_profile_genes: array (n_genes) - gene name for each column of celltype_profile.
+
+    The column/key names are set by `celltype_key` (adata.obs), `is_empty_key` (adata.obs), and
+    `celltype_profile_key` (adata.uns). The gene names are stored under adata.uns[f"{celltype_profile_key}_genes"].
     """
     if not logger:
         logger = setup_logger(verbose=verbose, quiet=quiet)
@@ -29,11 +34,11 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     if celltype_key not in adata.obs:
         raise KeyError(f"{celltype_key!r} not found in adata.obs")
 
-    if "is_empty" not in adata.obs.columns:
-        logger.info("Inferring empty droplets since 'is_empty' not found in adata.obs.")
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
+    if is_empty_key not in adata.obs.columns:
+        logger.info(f"Inferring empty droplets since {is_empty_key!r} not found in adata.obs.")
+        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, is_empty_key=is_empty_key, verbose=verbose, quiet=quiet)
 
-    is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
+    is_empty = np.asarray(adata.obs[is_empty_key].copy(), dtype=bool)
 
     # Extract matrix and group info
     X = adata.X
@@ -61,9 +66,9 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
             mean_expr[i, :] = subX.mean(axis=0)
 
     # Store in adata.uns as a numeric matrix and metadata separately
-    adata.uns["celltype_profile"] = mean_expr  # (K × G) matrix
+    adata.uns[celltype_profile_key] = mean_expr  # (K × G) matrix
     adata.uns["celltype_names"] = np.array(unique_cts)  # K-length array
-    adata.uns["celltype_profile_genes"] = np.array(adata.var_names)  # G-length array
+    adata.uns[f"{celltype_profile_key}_genes"] = np.array(adata.var_names)  # G-length array
 
     return adata
 
@@ -376,7 +381,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
               log_eps, verbose, logger, freeze_ambient_profile):
     
     """
-    Helper for denoise_count_matrix. Performs sparse compatible EM on multinomial model
+    Helper for denoise. Performs sparse compatible EM on multinomial model
     """
 
     exclude_from_p_update = np.zeros(N, dtype=np.bool_)
@@ -602,14 +607,12 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
             "ll": ll}    
 
 
-# TODO: build docs with sphinx and describe advanced params here
-
-
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-def denoise_count_matrix(
+def denoise(
     adata: Union[str, ad.AnnData],
     adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = None,
     round_X: bool = False,
+    keep_empties: bool = False,
     threads: Annotated[int, Field(gt=0)] = 1,
     freeze_ambient_profile: bool = True,
     empty_droplet_method: Optional[str] = "threshold",
@@ -620,6 +623,8 @@ def denoise_count_matrix(
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
     log_file: Optional[str] = None,
+    celltype_key: str = "celltype",
+    is_empty_key: str = "is_empty",
     **em_kwargs,
 ):
     """
@@ -635,38 +640,57 @@ def denoise_count_matrix(
     ----------
     adata : str | AnnData
         Either an AnnData object or a path to an `.h5ad` file. Must contain:
+
         - `adata.X` : cell count matrix (cells x genes)
         - `adata.obs` :
-            * `celltype` : categorical cell-type label for each cell
-            * `is_empty` (optional) : boolean marking non-cellular barcodes. If absent,
-              they are inferred using `empty_droplet_method`.
-            * `init_alpha` (optional) : initial estimate of fraction of ambient contamination per cell;
-              defaults to `init_alpha` argument if missing.
-        - `adata.var` :
-            * `ambient_profile` (optional) : per-gene ambient RNA fraction.
-        - `adata.uns` :
-            * `celltype_profile` (optional) : cell type matrix giving mean expression for each cell type (K x G); inferred if absent.
-            * `celltype_profile_genes` (optional) : list of gene names corresponding to columns of `celltype_profile`.
 
-    adata_out : str, default "adata_straightened.h5ad"
-        Path to write the denoised AnnData object (must end with `.h5ad`).
+          * `celltype` : categorical cell-type label for each cell (column name set by `celltype_key`)
+          * `is_empty` (optional) : boolean marking non-cellular barcodes (column name set by `is_empty_key`).
+            If absent, they are inferred using `empty_droplet_method` and stored under this column.
+          * `init_alpha` (optional) : initial estimate of fraction of ambient contamination per cell;
+            defaults to the `init_alpha` argument if missing.
+
+        - `adata.var` :
+
+          * `ambient_profile` (optional) : per-gene ambient RNA fraction (column name set by the
+            `ambient_profile_key` em_kwarg).
+          * `bulk_profile` (optional) : per-gene bulk (global) contamination distribution (column name set by
+            the `bulk_profile_key` em_kwarg).
+
+        - `adata.uns` :
+
+          * `celltype_profile` (optional) : cell type matrix giving mean expression for each cell type (K x G)
+            (key set by the `celltype_profile_key` em_kwarg); inferred if absent.
+          * `celltype_names` (optional) : cell-type label for each row of `celltype_profile`; inferred
+            together with `celltype_profile` if either is absent.
+          * `celltype_profile_genes` (optional) : list of gene names corresponding to columns of `celltype_profile`
+            (stored under `f"{celltype_profile_key}_genes"` when inferred).
+
+    adata_out : str | None, default None
+        Path to write the denoised AnnData object (must end with `.h5ad`). If None, the result is only returned.
 
     round_X : bool, default False
         If True, rounds denoised counts to nearest integer before saving.
+
+    keep_empties : bool, default False
+        If False, the empty droplets (barcodes where `adata.obs[is_empty_key]` is True) are removed
+        from the returned (and saved) AnnData object after denoising, so it contains only the real
+        cells. If True, all input barcodes are kept; empty droplets then have `alpha_hat` = 1 and
+        `z_hat` = -1. The empty droplets are always used to fit the model regardless of this setting.
 
     threads : int, default 1
         number of numba threads
 
     freeze_ambient_profile: bool, default True
         If True, the ambient profile (a) is anchored on non-cellular barcodes: it is initialized
-        from the empty droplets (or from `adata.var["ambient_profile"]` if present) and re-estimated
+        from the empty droplets (or from `adata.var[ambient_profile_key]` if present) and re-estimated
         each iteration from the counts the E-step assigns to the ambient component in empty droplets
         only, with the bulk profile (m) held fixed. If False, the ambient profile is modeled as a
         mixture of cell-type profiles and its mixture weights are updated during training.
         Empty droplets always have alpha fixed at 1 (ambient + bulk only).
 
     empty_droplet_method : str, default "threshold"
-        Strategy to infer non-cellular barcodes if `is_empty` is not present.
+        Strategy to infer non-cellular barcodes if `adata.obs[is_empty_key]` is not present.
         Options include "threshold" or "mx_filter".
 
     umi_cutoff : int | None, default None
@@ -679,7 +703,8 @@ def denoise_count_matrix(
         Random seed for stochastic rounding. Only necessary if `round_X=True`.
 
     inplace : bool, default False
-        If False, copy anndata rather than modify inplace
+        If False, copy anndata rather than modify inplace. With `keep_empties=False` the empty
+        droplets are dropped from the object in place as well (`adata` then only holds the real cells).
 
     verbose : int, default 0
         Verbosity level (2 debug, 1 info, 0 warning, -1 error, -2 critical).
@@ -689,6 +714,12 @@ def denoise_count_matrix(
 
     log_file : str | None, default None
         Optional path to save EM iteration logs.
+
+    celltype_key : str, default "celltype"
+        Column in `adata.obs` holding the input cell-type labels.
+
+    is_empty_key : str, default "is_empty"
+        Column in `adata.obs` marking non-cellular barcodes. Written here if inferred.
 
     **em_kwargs
         Advanced EM hyperparameters. Most users will not need to change these from
@@ -709,6 +740,21 @@ def denoise_count_matrix(
         init_beta : float, default 0.01
             Initial beta (percent bulk contamination) value for each cell. We set this based on the observation that bulk contamination
             is generally on the order of 1%.
+
+        celltype_profile_key : str, default "celltype_profile"
+            Key in `adata.uns` holding the initial cell-type profiles (K x G), with the matching cell-type labels
+            in `adata.uns["celltype_names"]`. If either is absent, both are inferred from the cell-type means
+            and written there.
+
+        ambient_profile_key : str, default "ambient_profile"
+            Column in `adata.var` holding the initial ambient profile (one value per gene). If absent, it is
+            estimated (from the empty droplets if `freeze_ambient_profile=True`, else from the cell-type
+            profiles) and written there.
+
+        bulk_profile_key : str, default "bulk_profile"
+            Column in `adata.var` holding the bulk (global) contamination profile: a single distribution over
+            genes, normalized to sum to 1, that is held fixed during training. If absent, it is estimated from
+            the summed counts of all barcodes (smoothed by `bulk_lambda`) and written there.
 
         alpha_cap : float, default 0.9, must be in [0, 1]
             alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold
@@ -745,7 +791,8 @@ def denoise_count_matrix(
             Pseudocount for the initial and iterative ambient profile updates. Will be divided by the number of genes G. Higher values lead to a smoother ambient profile.
 
         bulk_lambda : float, default 10, must be >= 0
-            Pseudocount for bulk profile update. Will be divided by the number of genes G. Higher values lead to a smoother bulk profile.
+            Pseudocount for the bulk profile estimate. Will be divided by the number of genes G. Higher values lead to a smoother bulk profile.
+            Unused when the bulk profile is provided in `adata.var[bulk_profile_key]`.
 
         eps : float, default 1e-12, must be > 0
             Numerical stability constant to prevent division by zero.
@@ -781,16 +828,20 @@ def denoise_count_matrix(
     Returns
     -------
     AnnData
-        Denoised AnnData object with updated `adata.X`, and added fields:
+        Denoised AnnData object with updated `adata.X`, and added fields. Unless `keep_empties=True`,
+        it holds only the real cells (empty droplets removed).
+
         - `adata.layers["raw"]` : raw count matrix
         - `adata.obs["alpha_hat"]` : final optimized alpha values
+        - `adata.obs["contamination_fraction"]` : total contamination fraction per cell,
+          (1 - beta) * alpha + beta
         - `adata.obs["z_hat"]` : final cell-type assignments 
         - `adata.var["ambient_hat"]` : final optimized ambient distribution
         - `adata.var["bulk_hat"]` : global noise distribution
         - `adata.uns["p_hat"]` : final optimized matrix of cell-type profiles (K x G)
         - `adata.uns["beta_hat"]` : final optimized beta
-        - `adata.uns["loglike"]` : final log-likelihood (note that this value is not the 
-           complete log-likelihood, only the relative log-likelihood)
+        - `adata.uns["loglike"]` : final log-likelihood (note that this value is not the
+          complete log-likelihood, only the relative log-likelihood)
 
     Notes
     -----
@@ -804,6 +855,9 @@ def denoise_count_matrix(
     # advanced EM hyperparameters (see "Other Parameters" in the docstring)
     init_alpha = em_kwargs.pop("init_alpha", 0.7)
     init_beta = em_kwargs.pop("init_beta", 0.01)
+    celltype_profile_key = em_kwargs.pop("celltype_profile_key", "celltype_profile")
+    ambient_profile_key = em_kwargs.pop("ambient_profile_key", "ambient_profile")
+    bulk_profile_key = em_kwargs.pop("bulk_profile_key", "bulk_profile")
     alpha_cap = em_kwargs.pop("alpha_cap", 0.9)
     repulsion_strength = em_kwargs.pop("repulsion_strength", 1e-3)
     max_frac_gene_repulsion = em_kwargs.pop("max_frac_gene_repulsion", 0.25)
@@ -822,7 +876,7 @@ def denoise_count_matrix(
     tol_p = em_kwargs.pop("tol_p", 1e-4)
     tol_f = em_kwargs.pop("tol_f", 1e-4)
     if em_kwargs:
-        raise TypeError(f"denoise_count_matrix() got unexpected keyword argument(s): {sorted(em_kwargs)}")
+        raise TypeError(f"denoise() got unexpected keyword argument(s): {sorted(em_kwargs)}")
 
     # set thread number
     set_num_threads(threads)
@@ -832,22 +886,25 @@ def denoise_count_matrix(
     logger.info(f"Starting cellsweep denoising at {timestamp}, cellsweep version {__version__}")
 
     adata = load_adata(adata, logger=logger, inplace=inplace)
-    if "celltype" not in adata.obs.columns:
-        raise KeyError("adata.obs must have column \"celltype\".")
+    if celltype_key not in adata.obs.columns:
+        raise KeyError(f"adata.obs must have column {celltype_key!r}.")
 
     # ensure empty droplets are present
-    if "is_empty" not in adata.obs.columns:
+    if is_empty_key not in adata.obs.columns:
         logger.info("Inferring empty droplets.")
         adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff,
-                                     expected_cells=expected_cells, verbose=verbose, quiet=quiet, logger=logger)
+                                     expected_cells=expected_cells, is_empty_key=is_empty_key,
+                                     verbose=verbose, quiet=quiet, logger=logger)
 
-    if "celltype_profile" not in adata.uns or "celltype_names" not in adata.uns:
+    if celltype_profile_key not in adata.uns or "celltype_names" not in adata.uns:
         logger.info("Inferring celltype profiles.")
-        adata = infer_celltype_profile(adata, celltype_key="celltype",
+        adata = infer_celltype_profile(adata, celltype_key=celltype_key,
                                        empty_droplet_method=empty_droplet_method,
+                                       is_empty_key=is_empty_key,
+                                       celltype_profile_key=celltype_profile_key,
                                        verbose=verbose, quiet=quiet, logger=logger)
             
-    num_empty_droplets = adata.obs["is_empty"].sum()
+    num_empty_droplets = adata.obs[is_empty_key].sum()
     RECOMMENDED_MIN_EMPTY_DROPLETS = 10_000
     if freeze_ambient_profile:
         if num_empty_droplets < 30:
@@ -860,7 +917,7 @@ def denoise_count_matrix(
     adata.layers["raw"] = adata.X
     C = adata.X
     N, G = C.shape
-    K = adata.uns["celltype_profile"].shape[0]
+    K = adata.uns[celltype_profile_key].shape[0]
     celltype_lambda = celltype_lambda / G
 
     # Convert matrix to csr format
@@ -872,11 +929,11 @@ def denoise_count_matrix(
         C = sp.csr_matrix(C)
 
     # empty mask
-    is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
+    is_empty = np.asarray(adata.obs[is_empty_key].copy(), dtype=bool)
     real_mask = ~is_empty
     Nr = real_mask.sum()
 
-    logger.info(f"Number of celltypes: {adata.obs.loc[real_mask, 'celltype'].nunique()}")
+    logger.info(f"Number of celltypes: {adata.obs.loc[real_mask, celltype_key].nunique()}")
 
     # count parameters
     if freeze_ambient_profile:
@@ -887,11 +944,11 @@ def denoise_count_matrix(
         logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (u: {K:,}, alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
 
     # celltype mapping
-    z_true = adata.obs["celltype"].copy()
+    z_true = adata.obs[celltype_key].copy()
     z_true_str_to_int = {ct: i for i, ct in enumerate(adata.uns["celltype_names"])}
 
     # initialize p from uns
-    p = np.asarray(adata.uns["celltype_profile"], dtype=float)
+    p = np.asarray(adata.uns[celltype_profile_key], dtype=float)
     for k in range(K):
         p[k] = (p[k] + celltype_lambda) / (p[k].sum() + G * celltype_lambda)
 
@@ -908,19 +965,20 @@ def denoise_count_matrix(
 
     # initial beta + bulk m
     beta = float(init_beta)
-    m_raw = np.array(C.sum(axis=0)).ravel().astype(float) + bulk_lambda/G
-    m_global = m_raw / m_raw.sum()
+    if bulk_profile_key not in adata.var:
+        logger.info("Inferring the bulk profile from all barcodes.")
+        m_raw = np.array(C.sum(axis=0)).ravel().astype(float) + bulk_lambda/G
+        m_global = m_raw / m_raw.sum()
+        adata.var[bulk_profile_key] = m_global
+    else:
+        m_global = np.asarray(adata.var[bulk_profile_key], dtype=float).ravel()
+        if (m_global < 0).any() or m_global.sum() <= 0:
+            raise ValueError(f"adata.var[{bulk_profile_key!r}] must be non-negative with a positive sum.")
+        m_global = m_global / m_global.sum()
 
-    if "ambient_profile" not in adata.var: 
+    if ambient_profile_key not in adata.var: 
         if freeze_ambient_profile:
             logger.info("Inferring the ambient profile from empty droplets.")
-            # Ensure we have is_empty
-            if "is_empty" not in adata.obs:
-                logger.info("Inferring empty droplets since 'is_empty' not found in adata.obs.")
-                
-                adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
-                is_empty = adata.obs["is_empty"].values
-
             C_empty = C[is_empty,:]
 
             a_raw = np.array(C_empty.sum(axis=0)).ravel().astype(float) + ambient_lambda/G
@@ -934,9 +992,9 @@ def denoise_count_matrix(
             u = counts / counts.sum()
             a = u @ p
             a = a / a.sum()
-        adata.var["ambient_profile"] = a
+        adata.var[ambient_profile_key] = a
     else:
-        a = np.asarray(adata.var["ambient_profile"])
+        a = np.asarray(adata.var[ambient_profile_key])
         valid = gamma_idx >= 0
         counts = np.bincount(gamma_idx[valid], minlength=K)
         u = counts / counts.sum()
@@ -999,6 +1057,7 @@ def denoise_count_matrix(
 
     assert C_denoised.shape == (N, G), "Denoised matrix has incorrect shape."
     adata.obs["alpha_hat"] = alpha
+    adata.obs["contamination_fraction"] = (1 - beta) * alpha + beta
     z_hat = np.full(N, -1, dtype=int)
     z_hat[real_mask] = gamma_idx[real_mask] + 1
     adata.obs["z_hat"] = z_hat
@@ -1023,6 +1082,13 @@ def denoise_count_matrix(
         # adata.X = np.asarray(adata.X)
         adata.X = adata.X.toarray()
 
+    if not keep_empties:
+        logger.info(f"Removing {int(is_empty.sum())} empty droplets from the output (keep_empties=False); {int(Nr)} cells remain.")
+        if inplace:
+            adata._inplace_subset_obs(real_mask)
+        else:
+            adata = adata[real_mask].copy()
+
     if adata_out:
         logger.info(f"Saving inferred adata to {adata_out!r}")
         if os.path.dirname(adata_out):
@@ -1032,3 +1098,6 @@ def denoise_count_matrix(
         logger.warning("adata_out not specified; not saving inferred adata to a file.")
 
     return adata
+
+
+denoise_count_matrix = denoise  # backwards compatibility

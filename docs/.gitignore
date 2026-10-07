@@ -1,0 +1,4 @@
+# copied from notebooks/ by docs/conf.py at build time
+tutorials/*.ipynb
+_build/
+api/generated/

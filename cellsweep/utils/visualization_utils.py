@@ -49,11 +49,13 @@ def auto_bins(x):
 
 def make_upset_plot(upset_data_dict: dict[str: list[str]], out_path: str = None, title: str = None, show: bool = True):
     """
-    eg upset_data_dict: {
-        "Method A": ["cell1", "cell2", "cell3"],
-        "Method B": ["cell2", "cell3", "cell4"],
-        "Method C": ["cell1", "cell4", "cell5"],
-    }
+    eg upset_data_dict::
+
+        {
+            "Method A": ["cell1", "cell2", "cell3"],
+            "Method B": ["cell2", "cell3", "cell4"],
+            "Method C": ["cell1", "cell4", "cell5"],
+        }
     """
     upset_data_dict = {k: v for k, v in upset_data_dict.items() if v is not None}  # iterate through dict, and if a value is None, skip that entry
     if len(upset_data_dict) == 0:
@@ -428,9 +430,11 @@ def sparse_row_pearson(x, y):
     """
     Compute Pearson correlation between two 1×G row vectors.
     Works for:
+
         - csr_matrix rows
         - csc_matrix rows
         - numpy arrays
+
     Avoids densifying the full matrix.
     """
 
@@ -2047,14 +2051,14 @@ def plot_iterative_difference_counts(
         Used only when metric="cells"
 
     metric : {"cells", "counts"}
-        "cells"  -> count rows where |row_sum| > threshold
+        "cells"  -> count rows where ``|row_sum|`` > threshold
         "counts" -> reduce the per-cell absolute row differences (see mode)
 
     mode : {"sum", "AUC"}
         Only applies to metric="counts".
         "sum" -> sum of absolute row differences (default)
         "AUC" -> area under the histogram of the per-cell absolute row differences
-                 (histogram_auc), instead of their sum.
+        (histogram_auc), instead of their sum.
 
     auc_bins : int
         Number of histogram bins used when mode="AUC".

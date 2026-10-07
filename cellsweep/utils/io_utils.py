@@ -200,7 +200,8 @@ def write_10x_like(
     """
     Write an AnnData object to a 10x-like directory structure.
 
-    Structure:
+    Structure::
+
       <parent_dir>/
           raw_gene_bc_matrices/
               <genome>/
