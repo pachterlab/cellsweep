@@ -15,13 +15,18 @@ from .utils import infer_empty_droplets, load_adata, setup_logger
 
 
 #* Take the mean expression of each gene across all cells of a given cell type, and normalize to sum to 1.
-def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
+def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, is_empty_key="is_empty", celltype_profile_key="celltype_profile", verbose=0, quiet=False, logger=None):
     """
     input: adata with adata.obs: is_empty (optional), celltype
-    output: adata with adata.obs: is_empty, celltype, and adata.uns: celltype_profile
+    output: adata with adata.obs: is_empty, celltype, and adata.uns: celltype_profile, celltype_names, celltype_profile_genes
       - is_empty: boolean indicating whether each cell is an empty droplet or not. If not present, it will be inferred using infer_empty_droplets().
       - celltype: string indicating the cell type of each cell.
       - celltype_profile: DataFrame (n_celltypes x n_genes) - mean expression of each gene across all cells of that type.
+      - celltype_names: array (n_celltypes) - cell-type label for each row of celltype_profile.
+      - celltype_profile_genes: array (n_genes) - gene name for each column of celltype_profile.
+
+    The column/key names are set by `celltype_key` (adata.obs), `is_empty_key` (adata.obs), and
+    `celltype_profile_key` (adata.uns). The gene names are stored under adata.uns[f"{celltype_profile_key}_genes"].
     """
     if not logger:
         logger = setup_logger(verbose=verbose, quiet=quiet)
@@ -29,11 +34,11 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     if celltype_key not in adata.obs:
         raise KeyError(f"{celltype_key!r} not found in adata.obs")
 
-    if "is_empty" not in adata.obs.columns:
-        logger.info("Inferring empty droplets since 'is_empty' not found in adata.obs.")
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
+    if is_empty_key not in adata.obs.columns:
+        logger.info(f"Inferring empty droplets since {is_empty_key!r} not found in adata.obs.")
+        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, is_empty_key=is_empty_key, verbose=verbose, quiet=quiet)
 
-    is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
+    is_empty = np.asarray(adata.obs[is_empty_key].copy(), dtype=bool)
 
     # Extract matrix and group info
     X = adata.X
@@ -61,9 +66,9 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
             mean_expr[i, :] = subX.mean(axis=0)
 
     # Store in adata.uns as a numeric matrix and metadata separately
-    adata.uns["celltype_profile"] = mean_expr  # (K × G) matrix
+    adata.uns[celltype_profile_key] = mean_expr  # (K × G) matrix
     adata.uns["celltype_names"] = np.array(unique_cts)  # K-length array
-    adata.uns["celltype_profile_genes"] = np.array(adata.var_names)  # G-length array
+    adata.uns[f"{celltype_profile_key}_genes"] = np.array(adata.var_names)  # G-length array
 
     return adata
 
@@ -205,8 +210,8 @@ def warm_up_e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
     
     return numer_gamma, A_n
 
-def warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N, 
-            freeze_empties, freeze_empty_mask, real_mask, eps, alpha_cap):
+def warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N,
+            freeze_empty_mask, real_mask, eps, alpha_cap):
     
     """
     Helper to initialize exclude_from_p_update mask based on which barcodes 
@@ -222,8 +227,7 @@ def warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N,
     # see which alpha_n values will exceed alpha_cap
     Ccell_n = numer_gamma
     alpha_test = A_n / np.maximum(A_n + Ccell_n, eps)
-    if freeze_empties:
-        alpha_test[~real_mask] = 1.0
+    alpha_test[~real_mask] = 1.0
 
     exclude_from_p_update = (alpha_test > (alpha_cap + 1e-6)) & (~freeze_empty_mask)
 
@@ -293,9 +297,9 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
                     bulk_vals[jj] = cM
 
                 # accumulate per-row totals
+                # (empties always contribute to the ambient profile update)
                 local_A += cA
-                if not freeze_ambient_profile:
-                    a_numer_tls[tid, g] += cA
+                a_numer_tls[tid, g] += cA
                 local_M += cM
                 local_ll += val * np.log(np.maximum(p_tot, log_eps))
         else:
@@ -371,12 +375,13 @@ def e_step_numba(indptr, indices, data, alpha, beta, a, m_global,
     return ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row
 
 def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap, 
-              max_iter, del0_ll_tol, min_ll_tol, tol_p, tol_f, freeze_empties, real_mask, 
-              eps, celltype_lambda, repulsion_strength, max_frac_gene_repulsion,
+              max_iter, del0_ll_tol, min_ll_tol, tol_p, tol_f, real_mask,
+              eps, celltype_lambda, ambient_lambda, repulsion_strength, max_frac_gene_repulsion,
+              beta_prior_mode, beta_prior_strength, burnin_patience, burnin_max_iter,
               log_eps, verbose, logger, freeze_ambient_profile):
     
     """
-    Helper for denoise_count_matrix. Performs sparse compatible EM on multinomial model
+    Helper for denoise. Performs sparse compatible EM on multinomial model
     """
 
     exclude_from_p_update = np.zeros(N, dtype=np.bool_)
@@ -390,26 +395,28 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
 
     nnz = data.shape[0]
 
-    # freeze mask as boolean array for Numba
-    if freeze_empties:
-        freeze_empty_mask = ~real_mask
-    else:
-        freeze_empty_mask = np.zeros(N, dtype=np.bool_)
+    # empties are modeled as ambient + bulk only (alpha fixed at 1)
+    freeze_empty_mask = ~real_mask
+
+    # when the ambient profile is anchored on empties, re-estimate it from their ambient counts
+    update_a_from_empties = freeze_ambient_profile and bool(freeze_empty_mask.any())
 
     prev_ll = None
     prev_p = None
+    prev_a = None
     tol_adaptive = None
     prev_f = None
 
     delta_f = np.inf
     delta_p = np.inf
+    delta_a = np.inf
 
     # Precompute row_of_entry (map each nnz index to its row) -> used for constructing CSR from per-entry arrays
     row_of_entry = np.repeat(np.arange(N, dtype=np.int64), np.diff(indptr))
 
     if freeze_ambient_profile:
-        exclude_from_p_update = warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N, 
-                                        freeze_empties, freeze_empty_mask, real_mask, eps, alpha_cap)
+        exclude_from_p_update = warm_up(indptr, indices, data, alpha, beta, a, m_global, gamma_idx, p, N,
+                                        freeze_empty_mask, real_mask, eps, alpha_cap)
     else:
         exclude_from_p_update[:] = False
 
@@ -425,6 +432,9 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
     ambient_vals = np.zeros(nnz, dtype=np.float32)
     bulk_vals = np.zeros(nnz, dtype=np.float32)
 
+    # iteration of the most recent hard cell-type reassignment (burn-in only)
+    last_reassign_it = 0
+
     # EM loop
     for it in range(1, max_iter + 1):
         done = (it == max_iter or converged)
@@ -433,21 +443,25 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         #     E STEP (numba parallel)
         # ============================
 
+        gamma_prev = gamma_idx.copy() if not ll_converged else None
+
         ambient_vals, bulk_vals, numer_gamma, A_n, ll_row, M_row = e_step_numba(
             indptr=indptr, indices=indices, data=data, alpha=alpha, beta=beta, a=a, m_global=m_global,
             gamma_idx=gamma_idx, p=p, K=K, N=N, eps=eps, log_eps=log_eps, freeze_empty_mask=freeze_empty_mask,
             freeze_ambient_profile=freeze_ambient_profile, exclude_from_p_update = exclude_from_p_update,
-            p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, numer_gamma=numer_gamma, A_n=A_n, 
+            p_numer_tls=p_numer_tls, a_numer_tls=a_numer_tls, numer_gamma=numer_gamma, A_n=A_n,
             ll_row=ll_row, M_row=M_row, ambient_vals = ambient_vals, bulk_vals=bulk_vals, done=done
         )
+
+        if gamma_prev is not None and np.any(gamma_idx != gamma_prev):
+            last_reassign_it = it
 
         # Reduce per-row scalars
         ll = float(np.sum(ll_row)) / N # average per-cell log-likelihood
         M_total = float(np.sum(M_row))
 
-        # Build a_numer
-        if not freeze_ambient_profile:
-            a_numer = a_numer_tls.sum(axis=0)
+        # Build a_numer (empties only if freeze_ambient_profile, else all barcodes)
+        a_numer = a_numer_tls.sum(axis=0)
 
         # Build p_numer: shape (K, G) 
         p_numer = p_numer_tls.sum(axis=0)
@@ -459,8 +473,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         # update alpha
         Ccell_n = numer_gamma
         alpha = A_n / np.maximum(A_n + Ccell_n, eps)
-        if freeze_empties:
-            alpha[~real_mask] = 1.0
+        alpha[~real_mask] = 1.0
 
         if not ll_converged and freeze_ambient_profile:
             # Stage 1: Don't allow suspect cells to update p
@@ -471,13 +484,19 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
             # Stage 2: allow full alpha
             exclude_from_p_update[:] = False
 
-        # update beta
+        # update beta (MAP under a Beta prior with mode beta_prior_mode and pseudo-mass
+        # beta_prior_strength * total_counts, so its weight is independent of dataset size)
         total_counts = M_total + A_n.sum() + numer_gamma.sum()
-        beta = M_total / np.maximum(total_counts, eps)
+        prior_mass = beta_prior_strength * total_counts
+        beta = (M_total + beta_prior_mode * prior_mass) / np.maximum(total_counts + prior_mass, eps)
 
 
-        # update ambient profile if indicated
-        if not freeze_ambient_profile:
+        # update ambient profile
+        if update_a_from_empties:
+            # anchored on empties: a from their ambient-assigned counts, with m held fixed
+            a = a_numer + ambient_lambda
+            a = (a / a.sum()).astype(np.float32)
+        elif not freeze_ambient_profile:
             for i in range(3):
                 denom = np.maximum(a, eps)
                 R = (u[:, None] * p) / denom[None, :]
@@ -490,9 +509,10 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         # update p (with repulsion)
         p = p_numer + celltype_lambda
 
-        if not ll_converged and freeze_ambient_profile:
-            # Stage 1: repulsion 
-            cluster_mass = p_numer.sum(axis=1)  
+        if freeze_ambient_profile:
+            # repulsion in both stages: keeps p_k from re-absorbing ambient-shaped counts
+            # along the flat likelihood ridge once the alpha cap is lifted
+            cluster_mass = p_numer.sum(axis=1)
             repel_lambda_k = repulsion_strength * cluster_mass  
 
             sub = repel_lambda_k[:, None] * a[None, :]          
@@ -503,7 +523,7 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
             p = np.maximum(p, eps)
             p = p / np.maximum(p.sum(axis=1)[:, None], eps)
         else:
-            # Stage 2: repulsion disabled
+            # no repulsion when the ambient profile is a mixture of cell-type profiles
             p = p / p.sum(axis=1)[:, None]
 
         # ============================
@@ -511,23 +531,18 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         # ============================
 
         # Calculate f to check convergence of alpha and beta
-        if freeze_empties: 
-            f = (1 - beta) * alpha[real_mask] + beta
-        else:
-            f = (1 - beta) * alpha + beta
+        f = (1 - beta) * alpha[real_mask] + beta
 
         if verbose:
-            if freeze_empties:
-                alpha_eff = alpha[real_mask]
-            else:
-                alpha_eff = alpha
+            alpha_eff = alpha[real_mask]
 
             alpha_median = np.median(alpha_eff)
             alpha_mean = np.mean(alpha_eff)
             alpha_max = np.max(alpha_eff)
             alpha_min = np.min(alpha_eff)
 
-            logger.info(f"EM Iter {it:3d}: ll={ll:.4f} log_delta_p={np.log(delta_p):.4f} min_alpha={alpha_min:.4f} mean_alpha={alpha_mean:.4f} median_alpha={alpha_median:.4f} max_alpha={alpha_max:.4f} beta={beta:.4f}")
+            delta_a_str = f" log_delta_a={np.log(delta_a):.4f}" if update_a_from_empties else ""
+            logger.info(f"EM Iter {it:3d}: ll={ll:.4f} log_delta_p={np.log(delta_p):.4f}{delta_a_str} min_alpha={alpha_min:.4f} mean_alpha={alpha_mean:.4f} median_alpha={alpha_median:.4f} max_alpha={alpha_max:.4f} beta={beta:.4f}")
             
             if not ll_converged and freeze_ambient_profile:
                 logger.debug(f"{exclude_from_p_update.sum()} cells want to exceed alpha_n > {alpha_cap}. They will be excluded from update of p_k and allowed cell-type reassignment")
@@ -544,21 +559,28 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
         if it > 1 and not converged:
             delta_p = np.max(np.sum(np.abs(p - prev_p), axis=1))
             delta_f = np.quantile(np.abs(f - prev_f), 0.9)
+            delta_a = np.sum(np.abs(a - prev_a)) if update_a_from_empties else 0.0
             min_abs_tol = min_ll_tol * max(abs(prev_ll), 1.0)
             tol_adaptive = max(tol_adaptive, min_abs_tol)
 
-            if abs((ll - prev_ll)) < tol_adaptive and not ll_converged:
-                logger.debug(f"Absolute change in log-likelihood is < {tol_adaptive:.4f} (adaptive_tol). Checking for parameter convergence.")
+            # burn-in ends once the log-likelihood has stabilized AND no cell has changed cell type
+            # for burnin_patience iterations (or after burnin_max_iter iterations)
+            ll_stable = abs((ll - prev_ll)) < tol_adaptive
+            assignments_stable = (it - last_reassign_it) >= burnin_patience
+            if not ll_converged and ((ll_stable and assignments_stable) or it >= burnin_max_iter):
+                logger.debug(f"Absolute change in log-likelihood is < {tol_adaptive:.4f} (adaptive_tol) and no cell-type "
+                             f"reassignment since iteration {last_reassign_it}. Ending burn-in and checking for parameter convergence.")
                 ll_converged = True
             
             if ll_converged:
-                if delta_p < tol_p and delta_f < tol_f: 
-                    logger.debug(f"delta_p < {tol_p:.6f} delta_f < {tol_f:.6f}. Parameters have converged.")
+                if delta_p < tol_p and delta_f < tol_f and delta_a < tol_p:
+                    logger.debug(f"delta_p < {tol_p:.6f} delta_a < {tol_p:.6f} delta_f < {tol_f:.6f}. Parameters have converged.")
                     converged = True
 
         prev_ll = ll
         prev_f = f.copy()
         prev_p = p.copy()
+        prev_a = a.copy()
 
         if done:
             break
@@ -586,36 +608,24 @@ def sparse_em(C, alpha, beta, a, u, m_global, gamma_idx, p, K, N, G, alpha_cap,
 
 
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-def denoise_count_matrix(
+def denoise(
     adata: Union[str, ad.AnnData],
     adata_out: Optional[Annotated[str, Field(pattern=r"\.h5ad$")]] = None,
     round_X: bool = False,
+    keep_empties: bool = False,
     threads: Annotated[int, Field(gt=0)] = 1,
-    freeze_empties: bool = True,
     freeze_ambient_profile: bool = True,
     empty_droplet_method: Optional[str] = "threshold",
     umi_cutoff: Optional[Annotated[int, Field(ge=0)]] = None,
     expected_cells: Optional[Annotated[int, Field(ge=0)]] = None,
-    init_alpha: Annotated[float, Field(ge=0.1, le=0.9)] = 0.9,
-    init_beta: Annotated[float, Field(ge=0.1, le=0.9)] = 0.1,
-    alpha_cap: Annotated[float, Field(ge=0, le=1)] = 0.9,
-    repulsion_strength: Annotated[float, Field(ge=0, le=1e-3)] = 1e-4,
-    max_frac_gene_repulsion: Annotated[float, Field(gt=0, le=1)] = 0.2,
-    celltype_lambda: Optional[Annotated[float, Field(ge=0)]] = 50,
-    ambient_lambda: Optional[Annotated[float, Field(ge=0)]] = 50,
-    bulk_lambda: Optional[Annotated[float, Field(ge=0)]] = 10,
-    eps: Annotated[float, Field(gt=0)] = 1e-12,
-    log_eps: Annotated[float, Field(gt=0)] = 1e-300,
-    max_iter: Annotated[int, Field(gt=1)] = 2000,
-    del0_ll_tol: Annotated[float, Field(gt=0)] = 1e-3,
-    min_ll_tol: Annotated[float, Field(gt=0)] = 1e-6,
-    tol_p: Annotated[float, Field(gt=0)] = 1e-4,
-    tol_f: Annotated[float, Field(gt=0)] = 1e-4,
     random_state: Optional[Annotated[int, Field(ge=0)]] = 42,
     inplace: bool = False,
     verbose: Annotated[int, Field(ge=-2, le=2)] = 0,
     quiet: bool = False,
-    log_file: Optional[str] = None
+    log_file: Optional[str] = None,
+    celltype_key: str = "celltype",
+    is_empty_key: str = "is_empty",
+    **em_kwargs,
 ):
     """
     Denoise a count matrix using the Expectation-Maximization (EM) algorithm to fit a
@@ -630,36 +640,57 @@ def denoise_count_matrix(
     ----------
     adata : str | AnnData
         Either an AnnData object or a path to an `.h5ad` file. Must contain:
+
         - `adata.X` : cell count matrix (cells x genes)
         - `adata.obs` :
-            * `celltype` : categorical cell-type label for each cell
-            * `is_empty` (optional) : boolean marking non-cellular barcodes. If absent,
-              they are inferred using `empty_droplet_method`.
-            * `init_alpha` (optional) : initial estimate of fraction of ambient contamination per cell;
-              defaults to `init_alpha` argument if missing.
-        - `adata.var` :
-            * `ambient_profile` (optional) : per-gene ambient RNA fraction.
-        - `adata.uns` :
-            * `celltype_profile` (optional) : cell type matrix giving mean expression for each cell type (K x G); inferred if absent.
-            * `celltype_profile_genes` (optional) : list of gene names corresponding to columns of `celltype_profile`.
 
-    adata_out : str, default "adata_straightened.h5ad"
-        Path to write the denoised AnnData object (must end with `.h5ad`).
+          * `celltype` : categorical cell-type label for each cell (column name set by `celltype_key`)
+          * `is_empty` (optional) : boolean marking non-cellular barcodes (column name set by `is_empty_key`).
+            If absent, they are inferred using `empty_droplet_method` and stored under this column.
+          * `init_alpha` (optional) : initial estimate of fraction of ambient contamination per cell;
+            defaults to the `init_alpha` argument if missing.
+
+        - `adata.var` :
+
+          * `ambient_profile` (optional) : per-gene ambient RNA fraction (column name set by the
+            `ambient_profile_key` em_kwarg).
+          * `bulk_profile` (optional) : per-gene bulk (global) contamination distribution (column name set by
+            the `bulk_profile_key` em_kwarg).
+
+        - `adata.uns` :
+
+          * `celltype_profile` (optional) : cell type matrix giving mean expression for each cell type (K x G)
+            (key set by the `celltype_profile_key` em_kwarg); inferred if absent.
+          * `celltype_names` (optional) : cell-type label for each row of `celltype_profile`; inferred
+            together with `celltype_profile` if either is absent.
+          * `celltype_profile_genes` (optional) : list of gene names corresponding to columns of `celltype_profile`
+            (stored under `f"{celltype_profile_key}_genes"` when inferred).
+
+    adata_out : str | None, default None
+        Path to write the denoised AnnData object (must end with `.h5ad`). If None, the result is only returned.
 
     round_X : bool, default False
         If True, rounds denoised counts to nearest integer before saving.
 
+    keep_empties : bool, default False
+        If False, the empty droplets (barcodes where `adata.obs[is_empty_key]` is True) are removed
+        from the returned (and saved) AnnData object after denoising, so it contains only the real
+        cells. If True, all input barcodes are kept; empty droplets then have `alpha_hat` = 1 and
+        `z_hat` = -1. The empty droplets are always used to fit the model regardless of this setting.
+
     threads : int, default 1
         number of numba threads
 
-    freeze_empties : bool, default True
-        If True, does not attempt to reestimate the percent contamination of empty droplets
-
     freeze_ambient_profile: bool, default True
-        If True, does not update the ambient profile (a) 
+        If True, the ambient profile (a) is anchored on non-cellular barcodes: it is initialized
+        from the empty droplets (or from `adata.var[ambient_profile_key]` if present) and re-estimated
+        each iteration from the counts the E-step assigns to the ambient component in empty droplets
+        only, with the bulk profile (m) held fixed. If False, the ambient profile is modeled as a
+        mixture of cell-type profiles and its mixture weights are updated during training.
+        Empty droplets always have alpha fixed at 1 (ambient + bulk only).
 
     empty_droplet_method : str, default "threshold"
-        Strategy to infer non-cellular barcodes if `is_empty` is not present.
+        Strategy to infer non-cellular barcodes if `adata.obs[is_empty_key]` is not present.
         Options include "threshold" or "mx_filter".
 
     umi_cutoff : int | None, default None
@@ -668,65 +699,12 @@ def denoise_count_matrix(
     expected_cells : int | None, default None
         Expected number of real cells, used when estimating thresholds.
 
-    init_alpha : float, default 0.9
-       Initial value of alpha_n for each cell if `ambient_profile` column is not present. If `freeze_ambient_profile=True`, this value does not 
-       significantly effect the final result, so we set equal to alpha_cap for convenience. If `freeze_ambient_pofile=False`, then init_alpha
-       can be set lower. For the sake of stability, we recommend that this value be far above the expected contamination rate, within [0.1, 0.9].
-
-    init_beta : float, default 0.1
-        Initial beta (percent bulk contamination) value for each cell. We do not recommend initializing beta below 0.1 for the sake of stability. 
-        Bulk and ambient contamination are not fully separable, so we set to a lower value than alpha_init to bias the assignment of contamination
-        to ambient rather than bulk.
-
-    alpha_cap : float default 0.9
-        alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold
-        will be excluded from updating p_k and will be allowed to change cell-types. Disabled for `freeze_ambient_profile=False`.
-
-    repulsion_strength : float, default 1e-4
-        Strength of repulsion between ambient and cell-type profiles during M-step.
-        Higher values lead to greater separation between ambient and cell-type profiles.
-        Note that repulsion is disabled for `freeze_ambient_profile=False`.
-
-    max_frac_gene_repulsion : float, default 0.2
-        Maximum fraction of each p_k entry that can be subtracted during repulsion.
-        Note that repulsion is disabled for `freeze_ambient_profile=False`.
-
-    celltype_lambda: float, default 50
-        Pseudocount for cell-type profile updates. Will be divided by the number of genes G. Higher values lead to smoother cell-type profiles.
-
-    ambient_lambda: float, default 50
-        Pseudocount for ambient profile update. Will be divided by the number of genes G. Higher values lead to a smoother ambient profile.
-
-    bulk_lambda: float, default 10
-        Pseudocount for bulk profile update. Will be divided by the number of genes G. Higher values lead to a smoother bulk profile.
-
-    eps : float, default 1e-12
-        Numerical stability constant to prevent division by zero.
-
-    log_eps : float, default 1e-300
-        Numerical stability constant to log(0).
-
-    max_iter : int, default 1000
-        Maximum number of EM iterations.
-
-    del0_ll_tol: float, default 1e-3
-        The change in likelihood, relative to the first likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked.
-    
-    min_ll_tol: float, default 1e-6
-        The change in likelihood, relative to the current likelihood step, below which repulsion and cell-type reassignment are discontinued and convergence is checked.
-        This is intended to cap `del0_ll_tol` at the edge of floating-point precision.
-
-    tol_p: float, default 1e-4
-        The maximum change in p below which training is discontinued. This is in addition to the tol_f stopping criterion.
-
-    tol_f: float, default 1e-4
-        The maximum change in f = (1 - beta) * alpha + beta, below which training is discontinued. This is in addition to the tol_p stopping criterion.
-
     random_state: int | None, default 42
         Random seed for stochastic rounding. Only necessary if `round_X=True`.
 
     inplace : bool, default False
-        If False, copy anndata rather than modify inplace
+        If False, copy anndata rather than modify inplace. With `keep_empties=False` the empty
+        droplets are dropped from the object in place as well (`adata` then only holds the real cells).
 
     verbose : int, default 0
         Verbosity level (2 debug, 1 info, 0 warning, -1 error, -2 critical).
@@ -737,19 +715,133 @@ def denoise_count_matrix(
     log_file : str | None, default None
         Optional path to save EM iteration logs.
 
+    celltype_key : str, default "celltype"
+        Column in `adata.obs` holding the input cell-type labels.
+
+    is_empty_key : str, default "is_empty"
+        Column in `adata.obs` marking non-cellular barcodes. Written here if inferred.
+
+    **em_kwargs
+        Advanced EM hyperparameters. Most users will not need to change these from
+        their defaults; they are exposed for tuning stability and convergence behavior
+        on unusual datasets. Passing an unrecognized keyword raises a `TypeError`.
+        Note that unlike the parameters above, these are not range-validated by pydantic,
+        so it is up to the caller to respect the documented bounds.
+
+        init_alpha : float, default 0.7, must be in [0.1, 0.9]
+            Initial value of alpha_n for each cell if `init_alpha` column is not present in `adata.obs`. A high initial value lets the ambient
+            component claim ambient-explainable counts first, so cell-type profiles are built mostly from counts the ambient profile cannot
+            explain. Because the likelihood is nearly flat along directions that trade cell-type expression against ambient contamination,
+            the starting value selects among near-equal solutions: low values can leave ambient-shaped expression in p_k, while values close
+            to `alpha_cap` can strip a cell type's own broadly expressed genes from its profile when that cell type is the main source of the
+            ambient RNA (e.g. proximal tubule in kidney), overestimating its contamination. Keep this value well above the expected
+            contamination rate.
+
+        init_beta : float, default 0.01
+            Initial beta (percent bulk contamination) value for each cell. We set this based on the observation that bulk contamination
+            is generally on the order of 1%.
+
+        celltype_profile_key : str, default "celltype_profile"
+            Key in `adata.uns` holding the initial cell-type profiles (K x G), with the matching cell-type labels
+            in `adata.uns["celltype_names"]`. If either is absent, both are inferred from the cell-type means
+            and written there.
+
+        ambient_profile_key : str, default "ambient_profile"
+            Column in `adata.var` holding the initial ambient profile (one value per gene). If absent, it is
+            estimated (from the empty droplets if `freeze_ambient_profile=True`, else from the cell-type
+            profiles) and written there.
+
+        bulk_profile_key : str, default "bulk_profile"
+            Column in `adata.var` holding the bulk (global) contamination profile: a single distribution over
+            genes, normalized to sum to 1, that is held fixed during training. If absent, it is estimated from
+            the summed counts of all barcodes (smoothed by `bulk_lambda`) and written there.
+
+        alpha_cap : float, default 0.9, must be in [0, 1]
+            alpha_n is not allowed to surpass this value in the first stage of training (before ll convergence). Barcodes that attempt to pass this threshold
+            will be excluded from updating p_k and will be allowed to change cell-types. Disabled for `freeze_ambient_profile=False`.
+
+        repulsion_strength : float, default 1e-3, must be >= 0 (values above 1e-3 are untested)
+            Strength of repulsion between ambient and cell-type profiles during M-step.
+            Higher values lead to greater separation between ambient and cell-type profiles.
+            With the default `max_frac_gene_repulsion`, results are stable across 2e-5 to 1e-3. 
+            Disabled for `freeze_ambient_profile=False`.
+
+        max_frac_gene_repulsion : float, default 0.25, must be in (0, 1]
+            Maximum fraction of each p_k entry that can be subtracted during repulsion in a single iteration.
+            Together with `repulsion_strength` this sets the effective strength of repulsion:
+            values much below 0.25 let cell-type profiles re-absorb ambient-shaped counts over long runs,
+            while values of 0.3 and above (with `repulsion_strength` >= ~7e-5) can over-correct small
+            cell types that express genes abundant in the ambient profile (e.g. DCs in PBMCs, whose
+            contamination estimate then inflates well above other cell types'). Disabled for `freeze_ambient_profile=False`.
+
+        beta_prior_mode : float, default 0.01, must be in [0, 1]
+            Mode of the Beta prior on the global contamination fraction beta. The likelihood only weakly
+            identifies beta (global contamination can largely be absorbed by the cell-type profiles), so the
+            prior keeps its estimate stable rather than letting it drift with the number of iterations.
+
+        beta_prior_strength : float, default 1e-2, must be >= 0
+            Weight of the beta prior as a fraction of the total counts, so its influence does not depend on
+            dataset size or the number of barcodes. 0 disables the prior (maximum-likelihood beta); large
+            values fix beta at `beta_prior_mode`.
+
+        celltype_lambda : float, default 50, must be >= 0
+            Pseudocount for cell-type profile updates. Will be divided by the number of genes G. Higher values lead to smoother cell-type profiles.
+
+        ambient_lambda : float, default 50, must be >= 0
+            Pseudocount for the initial and iterative ambient profile updates. Will be divided by the number of genes G. Higher values lead to a smoother ambient profile.
+
+        bulk_lambda : float, default 10, must be >= 0
+            Pseudocount for the bulk profile estimate. Will be divided by the number of genes G. Higher values lead to a smoother bulk profile.
+            Unused when the bulk profile is provided in `adata.var[bulk_profile_key]`.
+
+        eps : float, default 1e-12, must be > 0
+            Numerical stability constant to prevent division by zero.
+
+        log_eps : float, default 1e-300, must be > 0
+            Numerical stability constant to log(0).
+
+        max_iter : int, default 2000, must be > 1
+            Maximum number of EM iterations.
+
+        del0_ll_tol : float, default 1e-3, must be > 0
+            The change in likelihood, relative to the first likelihood step, below which the log-likelihood is considered stable. Burn-in (the alpha
+            cap and cell-type reassignment) ends once the log-likelihood is stable and cell-type assignments are stable (see `burnin_patience`).
+
+        min_ll_tol : float, default 1e-6, must be > 0
+            The change in likelihood, relative to the current likelihood step, below which the log-likelihood is considered stable.
+            This is intended to cap `del0_ll_tol` at the edge of floating-point precision.
+
+        burnin_patience : int, default 10, must be >= 0
+            Burn-in also requires that no cell has been reassigned to a different cell type for this many consecutive iterations.
+            On heavily contaminated data the log-likelihood can stabilize while poorly fit cells are still being reassigned; this keeps
+            burn-in running until reassignment has settled. 0 ends burn-in on log-likelihood stability alone.
+
+        burnin_max_iter : int, default 500, must be > 0
+            Maximum number of burn-in iterations, after which burn-in ends regardless of the stability criteria.
+
+        tol_p : float, default 1e-4, must be > 0
+            The maximum change in p below which training is discontinued. This is in addition to the tol_f stopping criterion.
+
+        tol_f : float, default 1e-4, must be > 0
+            The maximum change in f = (1 - beta) * alpha + beta, below which training is discontinued. This is in addition to the tol_p stopping criterion.
+
     Returns
     -------
     AnnData
-        Denoised AnnData object with updated `adata.X`, and added fields:
+        Denoised AnnData object with updated `adata.X`, and added fields. Unless `keep_empties=True`,
+        it holds only the real cells (empty droplets removed).
+
         - `adata.layers["raw"]` : raw count matrix
         - `adata.obs["alpha_hat"]` : final optimized alpha values
+        - `adata.obs["contamination_fraction"]` : total contamination fraction per cell,
+          (1 - beta) * alpha + beta
         - `adata.obs["z_hat"]` : final cell-type assignments 
         - `adata.var["ambient_hat"]` : final optimized ambient distribution
         - `adata.var["bulk_hat"]` : global noise distribution
         - `adata.uns["p_hat"]` : final optimized matrix of cell-type profiles (K x G)
         - `adata.uns["beta_hat"]` : final optimized beta
-        - `adata.uns["loglike"]` : final log-likelihood (note that this value is not the 
-           complete log-likelihood, only the relative log-likelihood)
+        - `adata.uns["loglike"]` : final log-likelihood (note that this value is not the
+          complete log-likelihood, only the relative log-likelihood)
 
     Notes
     -----
@@ -760,6 +852,32 @@ def denoise_count_matrix(
     """
     from cellsweep import __version__
 
+    # advanced EM hyperparameters (see "Other Parameters" in the docstring)
+    init_alpha = em_kwargs.pop("init_alpha", 0.7)
+    init_beta = em_kwargs.pop("init_beta", 0.01)
+    celltype_profile_key = em_kwargs.pop("celltype_profile_key", "celltype_profile")
+    ambient_profile_key = em_kwargs.pop("ambient_profile_key", "ambient_profile")
+    bulk_profile_key = em_kwargs.pop("bulk_profile_key", "bulk_profile")
+    alpha_cap = em_kwargs.pop("alpha_cap", 0.9)
+    repulsion_strength = em_kwargs.pop("repulsion_strength", 1e-3)
+    max_frac_gene_repulsion = em_kwargs.pop("max_frac_gene_repulsion", 0.25)
+    beta_prior_mode = em_kwargs.pop("beta_prior_mode", 0.01)
+    beta_prior_strength = em_kwargs.pop("beta_prior_strength", 1e-2)
+    burnin_patience = em_kwargs.pop("burnin_patience", 10)
+    burnin_max_iter = em_kwargs.pop("burnin_max_iter", 500)
+    celltype_lambda = em_kwargs.pop("celltype_lambda", 50)
+    ambient_lambda = em_kwargs.pop("ambient_lambda", 50)
+    bulk_lambda = em_kwargs.pop("bulk_lambda", 10)
+    eps = em_kwargs.pop("eps", 1e-12)
+    log_eps = em_kwargs.pop("log_eps", 1e-300)
+    max_iter = em_kwargs.pop("max_iter", 2000)
+    del0_ll_tol = em_kwargs.pop("del0_ll_tol", 1e-3)
+    min_ll_tol = em_kwargs.pop("min_ll_tol", 1e-6)
+    tol_p = em_kwargs.pop("tol_p", 1e-4)
+    tol_f = em_kwargs.pop("tol_f", 1e-4)
+    if em_kwargs:
+        raise TypeError(f"denoise() got unexpected keyword argument(s): {sorted(em_kwargs)}")
+
     # set thread number
     set_num_threads(threads)
     
@@ -768,22 +886,25 @@ def denoise_count_matrix(
     logger.info(f"Starting cellsweep denoising at {timestamp}, cellsweep version {__version__}")
 
     adata = load_adata(adata, logger=logger, inplace=inplace)
-    if "celltype" not in adata.obs.columns:
-        raise KeyError("adata.obs must have column \"celltype\".")
+    if celltype_key not in adata.obs.columns:
+        raise KeyError(f"adata.obs must have column {celltype_key!r}.")
 
     # ensure empty droplets are present
-    if "is_empty" not in adata.obs.columns:
+    if is_empty_key not in adata.obs.columns:
         logger.info("Inferring empty droplets.")
         adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff,
-                                     expected_cells=expected_cells, verbose=verbose, quiet=quiet, logger=logger)
+                                     expected_cells=expected_cells, is_empty_key=is_empty_key,
+                                     verbose=verbose, quiet=quiet, logger=logger)
 
-    if "celltype_profile" not in adata.uns or "celltype_names" not in adata.uns:
+    if celltype_profile_key not in adata.uns or "celltype_names" not in adata.uns:
         logger.info("Inferring celltype profiles.")
-        adata = infer_celltype_profile(adata, celltype_key="celltype",
+        adata = infer_celltype_profile(adata, celltype_key=celltype_key,
                                        empty_droplet_method=empty_droplet_method,
+                                       is_empty_key=is_empty_key,
+                                       celltype_profile_key=celltype_profile_key,
                                        verbose=verbose, quiet=quiet, logger=logger)
             
-    num_empty_droplets = adata.obs["is_empty"].sum()
+    num_empty_droplets = adata.obs[is_empty_key].sum()
     RECOMMENDED_MIN_EMPTY_DROPLETS = 10_000
     if freeze_ambient_profile:
         if num_empty_droplets < 30:
@@ -796,7 +917,7 @@ def denoise_count_matrix(
     adata.layers["raw"] = adata.X
     C = adata.X
     N, G = C.shape
-    K = adata.uns["celltype_profile"].shape[0]
+    K = adata.uns[celltype_profile_key].shape[0]
     celltype_lambda = celltype_lambda / G
 
     # Convert matrix to csr format
@@ -808,26 +929,26 @@ def denoise_count_matrix(
         C = sp.csr_matrix(C)
 
     # empty mask
-    is_empty = np.asarray(adata.obs["is_empty"].copy(), dtype=bool)
+    is_empty = np.asarray(adata.obs[is_empty_key].copy(), dtype=bool)
     real_mask = ~is_empty
     Nr = real_mask.sum()
 
-    logger.info(f"Number of celltypes: {adata.obs.loc[real_mask, 'celltype'].nunique()}")
+    logger.info(f"Number of celltypes: {adata.obs.loc[real_mask, celltype_key].nunique()}")
 
     # count parameters
     if freeze_ambient_profile:
-        number_of_parameters = 1 + Nr + (K * G)  # alpha (Nr), beta (1), p_k (K * G)
-        logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
+        number_of_parameters = (G - 1) + 1 + Nr + (K * G)  # a (G - 1), alpha (Nr), beta (1), p_k (K * G)
+        logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (a: {G-1:,}, alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
     else:
         number_of_parameters = K + 1 + Nr + (K * G)  # u, alpha (Nr), beta (1), p_k (K * G)
         logger.debug(f"Number of parameters in the cellsweep model: {number_of_parameters:,} (u: {K:,}, alpha: {Nr:,}, beta: {1:,}, p_k: {K*G:,})")
 
     # celltype mapping
-    z_true = adata.obs["celltype"].copy()
+    z_true = adata.obs[celltype_key].copy()
     z_true_str_to_int = {ct: i for i, ct in enumerate(adata.uns["celltype_names"])}
 
     # initialize p from uns
-    p = np.asarray(adata.uns["celltype_profile"], dtype=float)
+    p = np.asarray(adata.uns[celltype_profile_key], dtype=float)
     for k in range(K):
         p[k] = (p[k] + celltype_lambda) / (p[k].sum() + G * celltype_lambda)
 
@@ -839,24 +960,25 @@ def denoise_count_matrix(
     # empties
     gamma_idx[is_empty] = -1
 
-    if verbose:
-        gamma_idx_init = gamma_idx.copy()
+    # input cell-type assignments (gamma_idx is updated in place by hard reassignment during burn-in)
+    gamma_idx_init = gamma_idx.copy()
 
     # initial beta + bulk m
     beta = float(init_beta)
-    m_raw = np.array(C.sum(axis=0)).ravel().astype(float) + bulk_lambda/G
-    m_global = m_raw / m_raw.sum()
+    if bulk_profile_key not in adata.var:
+        logger.info("Inferring the bulk profile from all barcodes.")
+        m_raw = np.array(C.sum(axis=0)).ravel().astype(float) + bulk_lambda/G
+        m_global = m_raw / m_raw.sum()
+        adata.var[bulk_profile_key] = m_global
+    else:
+        m_global = np.asarray(adata.var[bulk_profile_key], dtype=float).ravel()
+        if (m_global < 0).any() or m_global.sum() <= 0:
+            raise ValueError(f"adata.var[{bulk_profile_key!r}] must be non-negative with a positive sum.")
+        m_global = m_global / m_global.sum()
 
-    if "ambient_profile" not in adata.var: 
+    if ambient_profile_key not in adata.var: 
         if freeze_ambient_profile:
             logger.info("Inferring the ambient profile from empty droplets.")
-            # Ensure we have is_empty
-            if "is_empty" not in adata.obs:
-                logger.info("Inferring empty droplets since 'is_empty' not found in adata.obs.")
-                
-                adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
-                is_empty = adata.obs["is_empty"].values
-
             C_empty = C[is_empty,:]
 
             a_raw = np.array(C_empty.sum(axis=0)).ravel().astype(float) + ambient_lambda/G
@@ -870,9 +992,9 @@ def denoise_count_matrix(
             u = counts / counts.sum()
             a = u @ p
             a = a / a.sum()
-        adata.var["ambient_profile"] = a
+        adata.var[ambient_profile_key] = a
     else:
-        a = np.asarray(adata.var["ambient_profile"])
+        a = np.asarray(adata.var[ambient_profile_key])
         valid = gamma_idx >= 0
         counts = np.bincount(gamma_idx[valid], minlength=K)
         u = counts / counts.sum()
@@ -884,9 +1006,7 @@ def denoise_count_matrix(
         adata.obs.loc[is_empty, "init_alpha"] = 1.
     alpha = np.asarray(adata.obs["init_alpha"].copy(), dtype=float).ravel()
     alpha = np.clip(alpha, eps, 1.0 - eps)
-
-    if freeze_empties:
-        alpha[is_empty] = 1.0
+    alpha[is_empty] = 1.0
 
     alpha = alpha.astype(np.float64)
     a = a.astype(np.float32)
@@ -895,9 +1015,10 @@ def denoise_count_matrix(
 
     logger.info(f"Performing Sparse EM with {get_num_threads()} Numba thread(s)")
     em_dict = sparse_em(C=C, alpha=alpha, beta=beta, a=a, u=u, m_global=m_global, gamma_idx=gamma_idx, p=p, K=K, N=N, G=G, alpha_cap=alpha_cap,
-                        max_iter=max_iter, del0_ll_tol=del0_ll_tol, min_ll_tol=min_ll_tol, tol_p=tol_p, tol_f=tol_f, freeze_empties=freeze_empties,
-                        real_mask=real_mask, eps=eps, celltype_lambda=celltype_lambda, repulsion_strength= repulsion_strength, max_frac_gene_repulsion=max_frac_gene_repulsion,
-                        log_eps=log_eps, verbose=verbose, logger=logger, freeze_ambient_profile=freeze_ambient_profile)
+                        max_iter=max_iter, del0_ll_tol=del0_ll_tol, min_ll_tol=min_ll_tol, tol_p=tol_p, tol_f=tol_f,
+                        real_mask=real_mask, eps=eps, celltype_lambda=celltype_lambda, ambient_lambda=ambient_lambda/G, repulsion_strength= repulsion_strength, max_frac_gene_repulsion=max_frac_gene_repulsion,
+                        beta_prior_mode=beta_prior_mode, beta_prior_strength=beta_prior_strength,
+                        burnin_patience=burnin_patience, burnin_max_iter=burnin_max_iter, log_eps=log_eps, verbose=verbose, logger=logger, freeze_ambient_profile=freeze_ambient_profile)
 
     C_denoised = em_dict['C_denoised']
     alpha = em_dict["alpha"]
@@ -910,6 +1031,25 @@ def denoise_count_matrix(
         celltype_mod_num = (gamma_idx_init != gamma_idx).sum()
         logger.debug(f"The model reassigned the celltype of {celltype_mod_num} cells")
 
+    # warn when a cell type ends up mostly made of cells reassigned into it: its profile and contamination
+    # estimates then describe cells the input annotation put elsewhere, which usually means the annotation
+    # is too coarse (e.g. one input label covering several distinct populations)
+    celltype_names = list(adata.uns["celltype_names"])
+    for k in range(K):
+        in_k = real_mask & (gamma_idx == k)
+        n_k = int(in_k.sum())
+        if n_k == 0:
+            continue
+        moved_in = in_k & (gamma_idx_init != k)
+        frac = moved_in.sum() / n_k
+        if frac > 0.5:
+            src, src_n = np.unique(gamma_idx_init[moved_in], return_counts=True)
+            sources = ", ".join(f"{celltype_names[s]!r} ({c})" for s, c in sorted(zip(src, src_n), key=lambda x: -x[1]) if s >= 0)
+            logger.warning(f"{frac:.0%} of the {n_k} cells assigned to cell type {k + 1} (input label {celltype_names[k]!r}) "
+                           f"were reassigned there from other input labels: {sources}. The input annotation may not match "
+                           f"the structure of this dataset; consider a different or finer annotation, for example one that "
+                           f"splits the cell types these cells came from.")
+
 
     # ===================================
     # STORE RESULTS AND RETURN
@@ -917,6 +1057,7 @@ def denoise_count_matrix(
 
     assert C_denoised.shape == (N, G), "Denoised matrix has incorrect shape."
     adata.obs["alpha_hat"] = alpha
+    adata.obs["contamination_fraction"] = (1 - beta) * alpha + beta
     z_hat = np.full(N, -1, dtype=int)
     z_hat[real_mask] = gamma_idx[real_mask] + 1
     adata.obs["z_hat"] = z_hat
@@ -941,6 +1082,13 @@ def denoise_count_matrix(
         # adata.X = np.asarray(adata.X)
         adata.X = adata.X.toarray()
 
+    if not keep_empties:
+        logger.info(f"Removing {int(is_empty.sum())} empty droplets from the output (keep_empties=False); {int(Nr)} cells remain.")
+        if inplace:
+            adata._inplace_subset_obs(real_mask)
+        else:
+            adata = adata[real_mask].copy()
+
     if adata_out:
         logger.info(f"Saving inferred adata to {adata_out!r}")
         if os.path.dirname(adata_out):
@@ -950,3 +1098,6 @@ def denoise_count_matrix(
         logger.warning("adata_out not specified; not saving inferred adata to a file.")
 
     return adata
+
+
+denoise_count_matrix = denoise  # backwards compatibility

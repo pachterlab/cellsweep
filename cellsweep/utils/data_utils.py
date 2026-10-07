@@ -147,10 +147,12 @@ def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, 
     return adata
 
 valid_empty_droplet_methods = {"threshold", "mx_filter"}
-def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, verbose=0, quiet=False, logger=None):
+def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, is_empty_key="is_empty", verbose=0, quiet=False, logger=None):
     """
     input: adata
-    output: adata with adata.obs: is_empty
+
+    output: adata with adata.obs[is_empty_key] (default "is_empty")
+
       - is_empty: boolean indicating whether each cell is an empty droplet or not. This is inferred using a simple heuristic: if the total counts for a cell are below a certain threshold (e.g., 100), it is considered an empty droplet. This threshold can be adjusted based on the dataset and expected cell types.
     """
     if not logger:
@@ -164,12 +166,12 @@ def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_ce
                 expected_cells, umi_cutoff = automatic_umi_cutoff_detection(adata)
             else:
                 umi_cutoff = determine_cutoff_umi_for_expected_cells(adata, expected_cells)
-        adata.obs["is_empty"] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
+        adata.obs[is_empty_key] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
     elif method == "mx_filter":
         if umi_cutoff is None:
             logger.warning("UMI cutoff being determined automatically using mx_filter method. To determine manually, please provide umi_cutoff as a parameter.")
             umi_cutoff = get_umi_cutoff_from_adata(adata, sum_axis=1, comps=[2], select_axis=None)
-        adata.obs["is_empty"] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
+        adata.obs[is_empty_key] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
     #!!! add more methods here
     else:
         raise ValueError(f"Invalid method {method!r} for inferring empty droplets. Valid methods are: {valid_empty_droplet_methods}")
@@ -196,7 +198,7 @@ def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_co
         logger.info(f"Filtering empty droplets using column '{empty_column}' in adata.obs. If this column is not present, it will be inferred using method '{method}' with umi_cutoff={umi_cutoff} and expected_cells={expected_cells}.")
         if empty_column not in adata.obs.columns:
             logger.info(f"'{empty_column}' column not found in adata.obs. Inferring empty droplets using method '{method}' with umi_cutoff={umi_cutoff} and expected_cells={expected_cells}.")
-            adata = infer_empty_droplets(adata, method="threshold", umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet)
+            adata = infer_empty_droplets(adata, method="threshold", umi_cutoff=umi_cutoff, expected_cells=expected_cells, is_empty_key=empty_column, verbose=verbose, quiet=quiet)
         real_mask = ~adata.obs[empty_column].astype(bool)
         adata_real = adata[real_mask].copy()
     else:

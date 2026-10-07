@@ -15,8 +15,8 @@ model_pkl: Immune_All_High.pkl  # path, filename, or url for celltypist model pk
 celltypist_convert: True
 celltypist_map_file: null
 cellsweep_max_iter: 2000
-cellsweep_init_beta: 0.1
-cellsweep_init_alpha: 0.9
+cellsweep_init_beta: 0.01
+cellsweep_init_alpha: 0.7
 cellbender_epochs: 150
 cellbender_fpr: 0.01
 cellbender_zdim: 64
@@ -47,7 +47,7 @@ decontx_out_prefix_name: pbmc_mouse_5k_output_decontx
 adata_path_scar_name: pbmc_mouse_5k_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: https://caltech.box.com/shared/static/q8o47flbgeury10fsbnoae6co97uielo.h5ad
+cellsweep_matrix_url: https://caltech.box.com/shared/static/unm5euxyzjgc9dqz9uzqfag9hxtqe2k5.h5ad
 cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/oui0suixloncpthd6jy1g5j3syfn04uh.h5
 cellbender_ckpt_url: null
 soupx_matrix_url: https://caltech.box.com/shared/static/h3z9sh2g6lqjewzm7yk4ssnj0n2jlzos.gz

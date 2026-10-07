@@ -1,0 +1,5 @@
+sphinx>=7.0
+furo
+myst-nb>=1.0
+sphinx-copybutton
+sphinx-argparse

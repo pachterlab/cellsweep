@@ -1,0 +1,3 @@
+# R3.3: simulations whose ambient RNA comes mostly from one cell type (CellSweep only)
+benchmarking.ipynb bench_simulation5_ambient_dominant_type --set dataset_name=\"simulation5_ambient_dominant_type\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]
+benchmarking.ipynb bench_simulation6_ambient_rare_type --set dataset_name=\"simulation6_ambient_rare_type\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]

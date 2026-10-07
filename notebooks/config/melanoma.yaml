@@ -15,8 +15,8 @@ model_pkl: Adult_Human_Skin.pkl  # path, filename, or url for celltypist model p
 celltypist_convert: False
 celltypist_map_file: null
 cellsweep_max_iter: 2000
-cellsweep_init_beta: 0.1
-cellsweep_init_alpha: 0.9
+cellsweep_init_beta: 0.01
+cellsweep_init_alpha: 0.7
 cellbender_epochs: 150
 cellbender_fpr: 0.01
 cellbender_zdim: 64
@@ -47,7 +47,7 @@ decontx_out_prefix_name: melanoma_output_decontx
 adata_path_scar_name: melanoma_output_scar.h5ad
 
 # output file URLs from manuscript
-cellsweep_matrix_url: https://caltech.box.com/shared/static/1621hm7bg9v313goq3ezzula0ucb9t7p.h5ad
+cellsweep_matrix_url: https://caltech.box.com/shared/static/3w0ljvdu98ndsf3rk13i8pwichef04r5.h5ad
 cellbender_matrix_filtered_url: https://caltech.box.com/shared/static/b4z4nqgm7hk74uofszhwhsoide1pmmmd.h5
 cellbender_ckpt_url: null
 soupx_matrix_url: https://caltech.box.com/shared/static/xb27m0mgfl0m01v73e7w3vu792efge84.gz

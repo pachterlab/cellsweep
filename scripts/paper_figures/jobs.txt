@@ -1,0 +1,69 @@
+# Every run that produces the panels of the paper's figures, in dependency order.
+# Run with: bash scripts/paper_figures/queue.sh        (settings: see queue.sh)
+# then assemble the figures with: python scripts/paper_figures/make_figures.py
+#
+# Every job reuses outputs that already exist unless OVERWRITE=True; after a model change, rerun with OVERWRITE=True
+# (other tools are not rerun either way, since rerun_tools=False). Figure names below are the file names in the paper
+# repo's Figures/ directory, which follow the figure numbers in the text (Supp<n>.pdf is Fig. S<n>).
+# The notebooks download any data they need.
+
+# ---------- benchmarking.ipynb: 10x and simulated datasets ----------
+# hgmm_12k: Fig3, Supp1-Supp2, Fig2 (hgmm rows); the no-empties model: Supp1 I-J
+benchmarking.ipynb bench_hgmm_12k --set dataset_name=\"hgmm_12k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+benchmarking.ipynb bench_hgmm_12k_no_empties --set dataset_name=\"hgmm_12k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[] --cfg remove_empties=True
+# per-barcode failures of each method (Supp3; uses both hgmm_12k runs above)
+hgmm_failure_modes.ipynb hgmm_failure_modes --set overwrite=$OVERWRITE
+# pbmc8k: Fig5, Supp10-Supp13, Supp20-Supp22 (cell-type and empty-droplet sensitivity); the no-empties model: Supp10 M-O
+benchmarking.ipynb bench_pbmc8k --set dataset_name=\"pbmc8k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+benchmarking.ipynb bench_pbmc8k_no_empties --set dataset_name=\"pbmc8k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[] --cfg remove_empties=True
+# simulation: Fig9, Supp18; the no-empties model: Supp18 I-J
+benchmarking.ipynb bench_simulation1 --set dataset_name=\"simulation1_small_noise\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+benchmarking.ipynb bench_simulation1_no_empties --set dataset_name=\"simulation1_small_noise\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[] --cfg remove_empties=True
+# kidney nuclei: Supp4. melanoma: Fig10, Supp25
+benchmarking.ipynb bench_kidney_nuclei_10k --set dataset_name=\"kidney_nuclei_10k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+benchmarking.ipynb bench_melanoma --set dataset_name=\"melanoma\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+# CellSweep only (these figures show no other tools): ATAC (Fig4 C-D), pbmc33k (Supp23), mouse PBMC (Supp24)
+benchmarking.ipynb bench_ATAC_hgmm_10k --set dataset_name=\"ATAC_hgmm_10k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]
+benchmarking.ipynb bench_pbmc33k --set dataset_name=\"pbmc33k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]
+benchmarking.ipynb bench_pbmc_mouse_5k --set dataset_name=\"pbmc_mouse_5k\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]
+
+# ---------- pbmc8k idempotency (Fig7, Supp17; CellBender on CPU unless the notebook sets use_cuda) and runtime (Fig8) ----------
+idempotency.ipynb idempotency_pbmc8k --set alternative_tools=[\"cellbender\",\"soupx\",\"decontx\",\"scar\",\"cellsweep_no_empties\"] --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+runtime.ipynb runtime_pbmc8k --set docker=\"$DOCKER\"   # no threads override: the notebook times 1 and 16 threads itself
+
+# ---------- pbmc8k label granularity and number of empty barcodes: Supp19 ----------
+granularity.ipynb granularity --set overwrite=$OVERWRITE --set threads=$THREADS
+
+# ---------- Smart-seq2 human-mouse mixture: Fig4 A-B ----------
+technologies.ipynb technologies_smartseq_10x --set dataset_name=\"smartseq_10x\" --set overwrite=$OVERWRITE --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+
+# ---------- Visium HD xenograft: Fig4 E-F, Supp7 (S7), Supp8 (S8); species-mixing analyses for the response letter ----------
+spatial.ipynb spatial_visium_human_mouse --set dataset_name=\"visium_human_mouse\" --set overwrite=$OVERWRITE --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1
+
+# ---------- Visium HD mouse brain: Supp9 (S9) ----------
+# CellSweep is run with the saved labels of the original run (Leiden labels depend on the scanpy/umap/numba versions)
+spatial_mouse_brain.ipynb spatial_mouse_brain --set overwrite=$OVERWRITE --set threads=$THREADS
+
+# ---------- Janssen et al. scRNA-seq and snRNA-seq: Supp5 (S5, janssen_accuracy) ----------
+janssen_snrna.ipynb janssen_snrna --set overwrite=$OVERWRITE --set threads=$THREADS --set verbose=1
+
+# ---------- 8 cubed: Fig6, Fig2 (8 cubed rows), Supp14-Supp15, and Trem2 (Supp16) ----------
+# plates: 8cube.ipynb's setup cells, the CellSweep/SoupX/DecontX runs (cell 30) and the signal/noise stats and plots
+# (cell 35); outputs go into the notebook. The runs reuse existing outputs (set overwrite in cell 3 to rerun CellSweep)
+!8cube_plates $PYTHON scripts/paper_figures/run_notebook_cells.py 8cube.ipynb --cells 1,3,4,30,35
+# Trem2: 8cube.ipynb's setup cells, then its Trem2 section (CellSweep run and Supp16 bar plots); outputs go into the notebook
+!8cube_trem2 $PYTHON scripts/paper_figures/run_notebook_cells.py 8cube.ipynb --cells 1,3,4,38-56
+
+# ---------- melanoma discovery analysis: Fig10 ----------
+melanoma_discovery.ipynb melanoma_discovery
+
+# ---------- parameter sweep: Supp25, Supp26, Supp28 (S25, S26, S28); Supp27 comes from simulations.ipynb ----------
+parameter_sweep.ipynb parameter_sweep --set overwrite=$OVERWRITE --set threads=$THREADS
+
+# ---------- Fig2: simulation sensitivity and the summary heatmap (uses the benchmark, 8 cubed and runtime outputs above) ----------
+summary_heatmap.ipynb summary_heatmap --set overwrite=$OVERWRITE
+
+# ---------- simulations 5-6 (CellSweep only; ambient from one cell type) and simulations.ipynb (R2.5 grid, R3.3 recovery) ----------
+benchmarking.ipynb bench_simulation5_ambient_dominant_type --set dataset_name=\"simulation5_ambient_dominant_type\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]
+benchmarking.ipynb bench_simulation6_ambient_rare_type --set dataset_name=\"simulation6_ambient_rare_type\" --set rerun_tools=False --set overwrite=$OVERWRITE --set scar_env=\"$SCAR_ENV\" --set docker=\"$DOCKER\" --set threads=$THREADS --set verbose=1 --set alternative_tools=[]
+simulations.ipynb simulations --set overwrite=$OVERWRITE

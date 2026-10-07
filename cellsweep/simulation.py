@@ -36,7 +36,9 @@ def simulate_cells(
     noise_logsd_empty = 0.8,   # empty droplets: very heterogeneous
     noise_logsd_cell = 0.5,    # cells: more constrained contamination
     bg_alpha: float = 0.1,   # background ambient load scaling
-    bg_leakage: float = 0.01   # fraction of ambient profile that leaks into all genes
+    bg_leakage: float = 0.01,   # fraction of ambient profile that leaks into all genes
+    ambient_source_weights: Optional[Union[np.ndarray, List[float]]] = None,  # relative contribution of each cell type to the ambient pool (default: type_proportions)
+    empty_ambient_scale: Annotated[float, Field(gt=0)] = 1.0,  # scales the ambient load of empty droplets relative to cells
 
 ):
     rng = np.random.default_rng(rng_seed)
@@ -106,7 +108,14 @@ def simulate_cells(
     lib_factors[is_empty] = 0.0
 
     # --- 5. Compute weighted ambient profile (overdispersed) ---
-    pop_expected = (type_proportions.reshape(-1, 1) * type_expected).sum(axis=0)
+    if ambient_source_weights is None:
+        source_weights = type_proportions
+    else:
+        source_weights = np.asarray(ambient_source_weights, dtype=float)
+        if source_weights.shape != (k,) or np.any(source_weights < 0) or source_weights.sum() <= 0:
+            raise ValueError("ambient_source_weights must have one non-negative weight per cell type")
+        source_weights = source_weights / source_weights.sum()
+    pop_expected = (source_weights.reshape(-1, 1) * type_expected).sum(axis=0)
     pop_expected /= pop_expected.sum()  # ensure proper probability distribution
     ambient_profile = (1 - bg_leakage) * pop_expected + bg_leakage * p_background
     ambient_profile /= ambient_profile.sum()
@@ -125,7 +134,7 @@ def simulate_cells(
         # --- 6a. Draw latent ambient load for this droplet ---
         if is_empty[i]:
             # Empty droplets have wide variation in ambient capture
-            lambda_i = rng.lognormal(mean=noise_logmean, sigma=noise_logsd_empty)
+            lambda_i = empty_ambient_scale * rng.lognormal(mean=noise_logmean, sigma=noise_logsd_empty)
         else:
             # Cell-containing droplets have more constrained contamination
             lambda_i = rng.lognormal(mean=noise_logmean, sigma=noise_logsd_cell)
@@ -212,7 +221,9 @@ def simulate_cells(
         libsize_logsd=libsize_logsd,
         dispersion=dispersion, beta=beta, 
         singleton_prob=singleton_prob, rng_seed=rng_seed,
-        type_proportions=type_proportions.tolist()
+        type_proportions=type_proportions.tolist(),
+        ambient_source_weights=source_weights.tolist(),
+        empty_ambient_scale=empty_ambient_scale
     )
     adata.uns["marker_sets"] = np.array(marker_sets)
 
