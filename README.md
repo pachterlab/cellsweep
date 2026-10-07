@@ -24,23 +24,23 @@ pip install cellsweep[analysis]==0.1.1
 ```
 
 ## Quickstart
-CellSweep has a single function denoise_count_matrix that takes a raw count matrix in an AnnData object and produces a denoised count matrix in another AnnData object. See a simple, fully worked example in the `notebooks/intro.ipynb` Jupyter Notebook.
+CellSweep has a single function denoise that takes a raw count matrix in an AnnData object and produces a denoised count matrix in another AnnData object. See a simple, fully worked example in the `notebooks/intro.ipynb` Jupyter Notebook.
 
 ### Python API
 ```python
 import cellsweep
-adata_cellsweep = cellsweep.denoise_count_matrix(adata_raw_path, adata_out=adata_cellsweep_path)  # see below for expected structure
+adata_cellsweep = cellsweep.denoise(adata_raw_path, adata_out=adata_cellsweep_path)  # see below for expected structure
 
 # for help
-help(cellsweep.denoise_count_matrix)
+help(cellsweep.denoise)
 ```
 
 ### Command line interface
 ```
-cellsweep denoise_count_matrix -o adata_cellsweep.h5ad adata_raw.h5ad  # see below for expected structure
+cellsweep denoise -o adata_cellsweep.h5ad adata_raw.h5ad  # see below for expected structure
 
 # for help
-cellsweep denoise_count_matrix --help
+cellsweep denoise --help
 ```
 
 There are many utility functions in the `cellsweep.utils` module for data processing, plotting, and analysis. See examples in our Jupyter Notebooks.

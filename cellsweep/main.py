@@ -40,7 +40,8 @@ def main():  # noqa: C901
     denoise_count_matrix_desc = "Denoise count matrix using cellsweep."
 
     parser_denoise_count_matrix = parent_subparsers.add_parser(
-        "denoise_count_matrix",
+        "denoise",
+        aliases=["denoise_count_matrix"],  # backwards compatibility
         parents=[parent],
         description=denoise_count_matrix_desc,
         help=denoise_count_matrix_desc,
@@ -243,7 +244,11 @@ def main():  # noqa: C901
         subparsers_actions = [action for action in parent_parser._actions if isinstance(action, argparse._SubParsersAction)]
         for subparsers_action in subparsers_actions:
             # Get all subparsers and print help
+            seen = set()
             for choice, subparser in subparsers_action.choices.items():
+                if id(subparser) in seen:  # skip aliases
+                    continue
+                seen.add(id(subparser))
                 print("Subparser '{}'".format(choice))
                 print(subparser.format_help())
         sys.exit(1)
@@ -259,6 +264,7 @@ def main():  # noqa: C901
         sys.exit(1)
     
     command_to_parser = {
+        "denoise": parser_denoise_count_matrix,
         "denoise_count_matrix": parser_denoise_count_matrix,
     }
     
@@ -269,7 +275,7 @@ def main():  # noqa: C901
             parent_parser.print_help(sys.stderr)
         sys.exit(1)
     
-    if args.command == "denoise_count_matrix":
+    if args.command in ("denoise", "denoise_count_matrix"):
         denoise_count_matrix(
             adata=args.adata,
             adata_out=args.adata_out,

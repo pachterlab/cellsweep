@@ -116,3 +116,24 @@ def test_cli_denoise_count_matrix_runs(tmp_path, small_adata, monkeypatch):
     assert calls["kwargs"]["adata"] == str(in_path)
     assert calls["kwargs"]["adata_out"] == str(out_path)
     assert out_path.exists()
+
+
+@pytest.mark.parametrize("command", ["denoise", "denoise_count_matrix"])
+def test_cli_denoise_and_legacy_alias(monkeypatch, command):
+    """`cellsweep denoise` and legacy `cellsweep denoise_count_matrix` dispatch identically."""
+    from cellsweep.main import main
+
+    calls = {}
+    monkeypatch.setattr("cellsweep.main.denoise_count_matrix", lambda **kwargs: calls.update(kwargs))
+    monkeypatch.setattr(sys, "argv", ["cellsweep", command, "in.h5ad", "-o", "out.h5ad"])
+
+    main()
+
+    assert calls["adata"] == "in.h5ad"
+    assert calls["adata_out"] == "out.h5ad"
+
+
+def test_python_denoise_alias():
+    import cellsweep
+
+    assert cellsweep.denoise is cellsweep.denoise_count_matrix

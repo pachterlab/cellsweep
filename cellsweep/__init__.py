@@ -1,6 +1,8 @@
 """cellsweep package initialization module."""
 
 from .model import denoise_count_matrix
+
+denoise = denoise_count_matrix  # short alias: cellsweep.denoise(...)
 # from .utils import *  # only imports what is in __all__ in .utils/__init__.py
 
 __version__ = "0.1.3"
