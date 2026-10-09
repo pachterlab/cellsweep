@@ -54,6 +54,8 @@ The input Anndata object/h5ad file should have the following structure:
     - `adata.obs[celltype_key]`: a column indicating the cell type of each cell.
     - `adata.obs[is_empty_key]` (optional): a boolean column indicating whether each cell is an empty droplet. If not provided, CellSweep will infer empty droplets using the `empty_droplet_method` argument.
 
+If a column is provided in any part of `adata`, then it will take priority over default internal calculations. For example, if `adata.obs[is_empty_key]` is provided, then CellSweep will not infer empty droplets and will use the provided column instead.
+
 Additional column inputs can be provided in advanced use cases. See the documentation for details.
 
 CellSweep returns a denoised Anndata object (and writes it to `adata_out`, if provided) with an updated `adata.X` and the following added fields. By default the empty droplets are removed from the output so it only contains the real cells; pass `keep_empties=True` (CLI: `--keep-empties`) to keep every input barcode.
