@@ -38,6 +38,7 @@ n_pcs: 25
 n_neighbors: 20
 leiden_resolution: 1.0
 marker_genes: null
+merge_orthologs: False  # merge human and mouse genes with the same symbol (e.g. EZH2 and Ezh2) into one feature before running the tools; outputs go to data/hgmm_12k_merged_orthologs and output/hgmm_12k_merged_orthologs
 
 # output file names
 adata_path_cellsweep_name: hgmm_12k_output_cellsweep.h5ad

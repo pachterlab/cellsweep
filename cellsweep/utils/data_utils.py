@@ -261,6 +261,97 @@ def check_counts_less_equal(adata_raw, adata_denoised):
 
     return diff_ok
 
+def merge_orthologs_by_symbol(adata, human_prefix="hg19_", mouse_prefix="mm10_", genome_column="genome", merged_genome="merged"):
+    """
+    Merge human and mouse genes that share a gene symbol (case-insensitive, e.g. mouse Ezh2 with human EZH2) into one
+    feature whose counts are the sum of the two, so that cross-species contamination lands on features that the cell's
+    own species also expresses. Only symbols that occur exactly once in each species are merged; all other genes keep
+    their species prefix. Merged features are named by the human symbol without prefix, and adata.var records the
+    constituent genes in f"{human_prefix}gene" and f"{mouse_prefix}gene" (see split_merged_orthologs).
+    """
+    var_names = adata.var_names.to_series(index=np.arange(adata.n_vars))
+    is_human = var_names.str.startswith(human_prefix).values
+    is_mouse = var_names.str.startswith(mouse_prefix).values
+    symbol = var_names.str.split("_", n=1).str[1].str.upper()
+    human_symbols = symbol[is_human].drop_duplicates(keep=False)
+    mouse_symbols = symbol[is_mouse].drop_duplicates(keep=False)
+    shared = pd.Index(human_symbols.values).intersection(pd.Index(mouse_symbols.values))
+    human_idx = pd.Series(human_symbols.index, index=human_symbols.values)[shared].values
+    mouse_idx = pd.Series(mouse_symbols.index, index=mouse_symbols.values)[shared].values
+
+    is_merged = np.zeros(adata.n_vars, dtype=bool)
+    is_merged[human_idx] = True
+    is_merged[mouse_idx] = True
+    unmerged_idx = np.where(~is_merged)[0]
+
+    X = adata.X if sparse.issparse(adata.X) else sparse.csr_matrix(adata.X)
+    X = X.tocsc()
+    X_merged = sparse.hstack([X[:, human_idx] + X[:, mouse_idx], X[:, unmerged_idx]]).tocsr()
+
+    var_merged = pd.DataFrame(index=pd.Index(var_names.values[human_idx]).str.replace(human_prefix, "", n=1))
+    var_merged[genome_column] = merged_genome
+    var_merged[f"{human_prefix}gene"] = var_names.values[human_idx]
+    var_merged[f"{mouse_prefix}gene"] = var_names.values[mouse_idx]
+    var_unmerged = adata.var.iloc[unmerged_idx][[genome_column]].copy() if genome_column in adata.var.columns else pd.DataFrame(index=adata.var_names[unmerged_idx])
+    var_unmerged[f"{human_prefix}gene"] = np.where(is_human[unmerged_idx], var_names.values[unmerged_idx], None)
+    var_unmerged[f"{mouse_prefix}gene"] = np.where(is_mouse[unmerged_idx], var_names.values[unmerged_idx], None)
+
+    return ad.AnnData(X=X_merged, obs=adata.obs.copy(), var=pd.concat([var_merged, var_unmerged]), uns=adata.uns.copy())
+
+def split_merged_orthologs(adata_merged, adata_raw, genome_by_cell, merged_var=None, human_prefix="hg19_", mouse_prefix="mm10_", human_genome="hg19"):
+    """
+    Map a (denoised) matrix on the features of merge_orthologs_by_symbol back onto the species-specific genes of
+    adata_raw, using the raw species-specific counts as ground truth. For a merged feature with denoised count x in a
+    cell whose own species had raw counts s and the other species raw counts n on that gene, the count in excess of the
+    true endogenous count, clipped to [0, n], is assigned to the other species' gene (residual contamination) and the
+    rest to the own-species gene (so s - x is lost signal, and counts a tool adds beyond the raw total s + n stay with
+    the cell's own species, as they would in an unmerged matrix). Applied to the merged raw matrix, this returns
+    adata_raw exactly. genome_by_cell gives each cell's true species (human_genome or not) and must cover every cell
+    of adata_merged. merged_var (the .var of merge_orthologs_by_symbol's output) gives the constituent genes of each
+    feature when adata_merged.var lacks them, e.g. for the output of another tool. Returns an AnnData with the cells of
+    adata_merged and the genes of adata_raw.
+    """
+    cells = adata_merged.obs_names
+    adata_raw = adata_raw[cells].copy()
+    is_human_cell = (genome_by_cell.reindex(cells) == human_genome).values.astype(float)
+    D_human, D_mouse = sparse.diags(is_human_cell), sparse.diags(1 - is_human_cell)
+
+    var = adata_merged.var if merged_var is None else merged_var.reindex(adata_merged.var_names)
+    if f"{human_prefix}gene" not in var.columns:
+        raise ValueError(f"no '{human_prefix}gene' column in adata_merged.var; pass merged_var from merge_orthologs_by_symbol")
+    merged_mask = var[f"{human_prefix}gene"].notna().values & var[f"{mouse_prefix}gene"].notna().values
+    X = adata_merged.X if sparse.issparse(adata_merged.X) else sparse.csr_matrix(adata_merged.X)
+    X = X.tocsc().astype(np.float64)
+
+    raw_col = pd.Series(np.arange(adata_raw.n_vars), index=adata_raw.var_names)
+    raw_X = (adata_raw.X if sparse.issparse(adata_raw.X) else sparse.csr_matrix(adata_raw.X)).tocsc().astype(np.float64)
+
+    human_cols = raw_col[var.loc[merged_mask, f"{human_prefix}gene"].values].values
+    mouse_cols = raw_col[var.loc[merged_mask, f"{mouse_prefix}gene"].values].values
+    X_m = X[:, np.where(merged_mask)[0]]
+    own_raw = D_human @ raw_X[:, human_cols] + D_mouse @ raw_X[:, mouse_cols]
+    other_raw = D_human @ raw_X[:, mouse_cols] + D_mouse @ raw_X[:, human_cols]
+    other = (X_m - X_m.minimum(own_raw)).minimum(other_raw)
+    own = X_m - other
+
+    # assemble the output in COO form: merged features split into two genes, unmerged features copied to their gene
+    blocks = [(D_human @ own + D_mouse @ other, human_cols), (D_human @ other + D_mouse @ own, mouse_cols)]
+    unmerged = np.where(~merged_mask)[0]
+    unmerged_genes = var.index[unmerged]
+    keep = unmerged_genes.isin(raw_col.index)
+    blocks.append((X[:, unmerged[keep]], raw_col[unmerged_genes[keep]].values))
+
+    rows, cols, vals = [], [], []
+    for block, col_map in blocks:
+        block = sparse.coo_matrix(block)
+        rows.append(block.row)
+        cols.append(col_map[block.col])
+        vals.append(block.data)
+    X_split = sparse.csr_matrix((np.concatenate(vals), (np.concatenate(rows), np.concatenate(cols))), shape=(adata_merged.n_obs, adata_raw.n_vars))
+    X_split.eliminate_zeros()
+
+    return ad.AnnData(X=X_split, obs=adata_merged.obs.copy(), var=adata_raw.var.copy())
+
 def zero_out_low_counts(adata, threshold=0.5):
     X = adata.X
 

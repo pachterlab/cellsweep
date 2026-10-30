@@ -82,11 +82,14 @@ def cube_scatter(plate, tissue, ct, tool):
 
 
 def fig6():
-    spec = [(L, plate, *cts) for L, (plate, cts) in zip("BCDE", [(pl, c) for pl in CUBE_CELLTYPES for c in CUBE_CELLTYPES[pl]])]
-    p = {L: titled(cube_scatter(pl, t, c, "cellsweep"), [f"Plate: {pl}", f"Tissue: {tt}", f"Celltype: {ct}"], f"{F}/_Fig6{L}.png", title_size=14)
-         for L, pl, t, c, tt, ct in spec}
-    a = pad_width(f"{ASSETS}/Fig6A_8cube_schematic.png", 0.62, f"{F}/_Fig6A.png")   # static schematic
-    assemble([[("A", a)], [("B", p["B"]), ("C", p["C"])], [("D", p["D"]), ("E", p["E"])]], "Fig6", width_in=7.0)
+    # columns: the four cell types; rows: CellSweep (B-E) and CellSweep without non-cellular barcodes (F-I)
+    spec = [(plate, *cts) for plate in CUBE_CELLTYPES for cts in CUBE_CELLTYPES[plate]]
+    top = [titled(cube_scatter(pl, t, c, "cellsweep"), [f"Plate: {pl}", f"Tissue: {tt}", f"Celltype: {ct}"], f"{F}/_Fig6{L}.png", title_size=14)
+           for L, (pl, t, c, tt, ct) in zip("BCDE", spec)]
+    bottom = [cube_scatter(pl, t, c, "cellsweep_no_empties") for pl, t, c, _, _ in spec]
+    a = pad_width(f"{ASSETS}/Fig6A_8cube_schematic.png", 0.5, f"{F}/_Fig6A.png")   # static schematic
+    assemble([[("A", a)], list(zip("BCDE", top)), list(zip("FGHI", bottom))], "Fig6", width_in=7.0,
+             row_labels=["", "CellSweep", "CellSweep\n(no empties)"], row_label_width=0.05, letter_size=14)
 
 
 def fig7():
