@@ -14,8 +14,28 @@ from pydantic import ConfigDict, Field, validate_call
 from .utils import infer_empty_droplets, load_adata, setup_logger
 
 
+def _ensure_is_empty(adata, celltype_key, is_empty_key, empty_label, empty_droplet_method, umi_cutoff, expected_cells, verbose, quiet, logger):
+    """
+    Make sure adata.obs[is_empty_key] exists. An existing column is left untouched. Otherwise, barcodes whose cell-type
+    label equals `empty_label` are marked empty (missing labels are not, since they can be unannotated cells), and if no
+    barcode has that label, empty droplets are inferred from UMI counts.
+    """
+    if is_empty_key in adata.obs.columns:
+        return adata
+
+    if empty_label is not None:
+        labeled_empty = adata.obs[celltype_key].eq(empty_label).to_numpy(dtype=bool, na_value=False)
+        if labeled_empty.any():
+            logger.info(f"Marking {int(labeled_empty.sum())} barcodes as empty from label {empty_label!r} in adata.obs[{celltype_key!r}].")
+            adata.obs[is_empty_key] = labeled_empty
+            return adata
+
+    logger.info(f"Inferring empty droplets since {is_empty_key!r} not found in adata.obs.")
+    return infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, is_empty_key=is_empty_key, verbose=verbose, quiet=quiet, logger=logger)
+
+
 #* Take the mean expression of each gene across all cells of a given cell type, and normalize to sum to 1.
-def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, is_empty_key="is_empty", celltype_profile_key="celltype_profile", verbose=0, quiet=False, logger=None):
+def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, is_empty_key="is_empty", celltype_profile_key="celltype_profile", verbose=0, quiet=False, logger=None, empty_label="Empty Droplet"):
     """
     input: adata with adata.obs: is_empty (optional), celltype
     output: adata with adata.obs: is_empty, celltype, and adata.uns: celltype_profile, celltype_names, celltype_profile_genes
@@ -34,9 +54,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
     if celltype_key not in adata.obs:
         raise KeyError(f"{celltype_key!r} not found in adata.obs")
 
-    if is_empty_key not in adata.obs.columns:
-        logger.info(f"Inferring empty droplets since {is_empty_key!r} not found in adata.obs.")
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff, expected_cells=expected_cells, is_empty_key=is_empty_key, verbose=verbose, quiet=quiet)
+    adata = _ensure_is_empty(adata, celltype_key, is_empty_key, empty_label, empty_droplet_method, umi_cutoff, expected_cells, verbose, quiet, logger)
 
     is_empty = np.asarray(adata.obs[is_empty_key].copy(), dtype=bool)
 
@@ -54,7 +72,7 @@ def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method=
 
     # Compute mean expression per cell type
     for i, ct in enumerate(unique_cts):
-        mask = (adata.obs[celltype_key] == ct).values
+        mask = (adata.obs[celltype_key] == ct).values & ~is_empty
         n_cells = mask.sum()
         if n_cells == 0:
             continue
@@ -625,6 +643,7 @@ def denoise(
     log_file: Optional[str] = None,
     celltype_key: str = "celltype",
     is_empty_key: str = "is_empty",
+    empty_label: Optional[str] = "Empty Droplet",
     **em_kwargs,
 ):
     """
@@ -646,7 +665,8 @@ def denoise(
 
           * `celltype` : categorical cell-type label for each cell (column name set by `celltype_key`)
           * `is_empty` (optional) : boolean marking non-cellular barcodes (column name set by `is_empty_key`).
-            If absent, they are inferred using `empty_droplet_method` and stored under this column.
+            If absent, barcodes labeled `empty_label` are marked empty; if there are none, they are inferred
+            using `empty_droplet_method`. The result is stored under this column.
           * `init_alpha` (optional) : initial estimate of fraction of ambient contamination per cell;
             defaults to the `init_alpha` argument if missing.
 
@@ -720,6 +740,12 @@ def denoise(
 
     is_empty_key : str, default "is_empty"
         Column in `adata.obs` marking non-cellular barcodes. Written here if inferred.
+
+    empty_label : str | None, default "Empty Droplet"
+        Cell-type label that marks a barcode as empty when `adata.obs[is_empty_key]` is not present.
+        Barcodes with a missing label are not treated as empty. Ignored if `adata.obs[is_empty_key]`
+        is present. If None, or if no barcode has this label, empty droplets are inferred using
+        `empty_droplet_method`.
 
     **em_kwargs
         Advanced EM hyperparameters. Most users will not need to change these from
@@ -890,11 +916,7 @@ def denoise(
         raise KeyError(f"adata.obs must have column {celltype_key!r}.")
 
     # ensure empty droplets are present
-    if is_empty_key not in adata.obs.columns:
-        logger.info("Inferring empty droplets.")
-        adata = infer_empty_droplets(adata, method=empty_droplet_method, umi_cutoff=umi_cutoff,
-                                     expected_cells=expected_cells, is_empty_key=is_empty_key,
-                                     verbose=verbose, quiet=quiet, logger=logger)
+    adata = _ensure_is_empty(adata, celltype_key, is_empty_key, empty_label, empty_droplet_method, umi_cutoff, expected_cells, verbose, quiet, logger)
 
     if celltype_profile_key not in adata.uns or "celltype_names" not in adata.uns:
         logger.info("Inferring celltype profiles.")

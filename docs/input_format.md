@@ -12,8 +12,10 @@ The input AnnData object (or `.h5ad` file) should have the following structure.
   {func}`cellsweep.utils.data_utils.determine_cell_types` for one way to produce these.
 
 `adata.obs["is_empty"]` *(optional)*
-: Boolean column marking non-cellular barcodes (empty droplets). If missing, CellSweep
-  infers them with the `empty_droplet_method` argument, using `umi_cutoff` or
+: Boolean column marking non-cellular barcodes (empty droplets). If missing, barcodes
+  whose cell-type label equals the `empty_label` argument (default `"Empty Droplet"`) are
+  marked empty. Barcodes with a missing label are not. If no barcode has that label,
+  CellSweep infers them with the `empty_droplet_method` argument, using `umi_cutoff` or
   `expected_cells` if given.
 
 `adata.obs["init_alpha"]` *(optional)*
@@ -48,6 +50,7 @@ different names, pass the matching argument to {func}`cellsweep.denoise` (or the
 | --- | --- | --- |
 | `adata.obs` cell-type labels | `celltype_key` | `"celltype"` |
 | `adata.obs` empty-droplet flags | `is_empty_key` | `"is_empty"` |
+| Cell-type label marking empty droplets | `empty_label` | `"Empty Droplet"` |
 | `adata.uns` cell-type profiles | `celltype_profile_key` | `"celltype_profile"` |
 | `adata.var` ambient profile | `ambient_profile_key` | `"ambient_profile"` |
 | `adata.var` bulk profile | `bulk_profile_key` | `"bulk_profile"` |

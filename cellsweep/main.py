@@ -56,7 +56,7 @@ def build_parser():
     parser_denoise.add_argument(
         "adata",
         type=str,
-        help="Path to input AnnData file (.h5ad) containing raw count matrix in .X.",
+        help="Path to input AnnData file (.h5ad) containing raw count matrix in .X. Optionally, `adata.obs[celltype_key]` is a column indicating the cell type of each cell, and `adata.obs[is_empty_key]` is a boolean column indicating whether each cell is an empty droplet. If these columns are not present, they will be inferred.",
     )
     parser_denoise.add_argument(
         "-o",
@@ -274,6 +274,12 @@ def build_parser():
         default="is_empty",
         help="adata.obs column marking non-cellular barcodes; written here if inferred.",
     )
+    parser_denoise.add_argument(
+        "--empty-label",
+        type=str,
+        default="Empty Droplet",
+        help="Cell-type label that marks a barcode as empty when the `is_empty` column is not present.",
+    )
 
     # backwards compatibility: accept the old underscore spellings (e.g. --max_iter) without listing them in --help
     for option_string, action in list(parser_denoise._option_string_actions.items()):
@@ -377,5 +383,6 @@ def main():  # noqa: C901
             log_file=args.log_file,
             celltype_key=args.celltype_key,
             is_empty_key=args.is_empty_key,
+            empty_label=args.empty_label,
         )
         

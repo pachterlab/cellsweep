@@ -38,6 +38,74 @@ def test_infer_celltype_profile(small_adata):
     assert len(adata.uns["celltype_names"]) > 0
 
 
+def test_infer_celltype_profile_ignores_labels_on_empties(small_adata):
+    """A real cell-type label on an empty droplet does not change that cell type's profile."""
+    labeled = small_adata.copy()
+    labeled.obs["celltype"] = ["A", "A", "B", "A"]
+    ref = infer_celltype_profile(small_adata.copy(), celltype_key="celltype")
+    out = infer_celltype_profile(labeled, celltype_key="celltype")
+    np.testing.assert_allclose(out.uns["celltype_profile"], ref.uns["celltype_profile"])
+
+
+# -----------------------
+# empty_label
+# -----------------------
+@pytest.fixture
+def no_flag_adata(small_adata):
+    """No is_empty column, and the labeled empty droplet has enough counts to pass a UMI cutoff of 1."""
+    adata = small_adata.copy()
+    del adata.obs["is_empty"]
+    adata.X[3] = [1, 1, 1]
+    return adata
+
+
+def test_empty_label_marks_empties(no_flag_adata):
+    out = denoise(no_flag_adata, keep_empties=True, umi_cutoff=1, max_iter=2, verbose=-1, quiet=True)
+    assert out.obs["is_empty"].tolist() == [False, False, False, True]
+    assert "Empty Droplet" not in out.uns["celltype_names"]
+
+
+def test_empty_label_custom(no_flag_adata):
+    no_flag_adata.obs["celltype"] = ["A", "A", "B", "blank"]
+    out = denoise(no_flag_adata, keep_empties=True, empty_label="blank", umi_cutoff=1, max_iter=2, verbose=-1, quiet=True)
+    assert out.obs["is_empty"].tolist() == [False, False, False, True]
+
+
+def test_empty_label_none_uses_umi_inference(no_flag_adata):
+    out = denoise(no_flag_adata, keep_empties=True, empty_label=None, umi_cutoff=1, max_iter=2, verbose=-1, quiet=True)
+    assert not out.obs["is_empty"].any()
+    assert "Empty Droplet" in out.uns["celltype_names"]
+
+
+def test_empty_label_missing_labels_are_not_empty(no_flag_adata):
+    """A missing label can be an unannotated cell, so it is never read as empty."""
+    no_flag_adata.obs["celltype"] = pd.Categorical(["A", None, "B", "Empty Droplet"])
+    out = denoise(no_flag_adata, keep_empties=True, umi_cutoff=1, max_iter=2, verbose=-1, quiet=True)
+    assert out.obs["is_empty"].tolist() == [False, False, False, True]
+
+
+@pytest.mark.parametrize("label", [None, "A", "only_on_empties"])
+def test_denoise_ignores_labels_on_empties(small_adata, label):
+    """When is_empty is True, the barcode's label has no effect on the output."""
+    small_adata.X[3] = [1, 1, 1]
+    ref = denoise(small_adata.copy(), keep_empties=True, max_iter=2, verbose=-1, quiet=True)
+    relabeled = small_adata.copy()
+    relabeled.obs["celltype"] = pd.Categorical(["A", "A", "B", label])
+    out = denoise(relabeled, keep_empties=True, max_iter=2, verbose=-1, quiet=True)
+
+    assert list(out.uns["celltype_names"]) == ["A", "B"]
+    np.testing.assert_array_equal(out.uns["p_hat"], ref.uns["p_hat"])
+    np.testing.assert_array_equal(out.obs["z_hat"], ref.obs["z_hat"])
+    np.testing.assert_array_equal(out.X.toarray() if sp.issparse(out.X) else out.X,
+                                  ref.X.toarray() if sp.issparse(ref.X) else ref.X)
+
+
+def test_is_empty_column_takes_priority_over_label(small_adata):
+    small_adata.obs["is_empty"] = [False, False, True, True]
+    out = denoise(small_adata, keep_empties=True, max_iter=2, verbose=-1, quiet=True)
+    assert out.obs["is_empty"].tolist() == [False, False, True, True]
+
+
 # -----------------------
 # denoise
 # -----------------------

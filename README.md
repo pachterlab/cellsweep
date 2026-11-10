@@ -51,8 +51,8 @@ There are many utility functions in the `cellsweep.utils` module for data proces
 The input Anndata object/h5ad file should have the following structure:
 - `adata.X` : cell count matrix (cells x genes)
 - `adata.obs`:
-    - `adata.obs[celltype_key]`: a column indicating the cell type of each cell.
-    - `adata.obs[is_empty_key]` (optional): a boolean column indicating whether each cell is an empty droplet. If not provided, CellSweep will infer empty droplets using the `empty_droplet_method` argument.
+    - `adata.obs[celltype_key]`: a column indicating the cell type of each cell. Labels on barcodes where `adata.obs[is_empty_key]` is True are ignored.
+    - `adata.obs[is_empty_key]` (optional): a boolean column indicating whether each cell is an empty droplet. If not provided, barcodes whose `adata.obs[celltype_key]` equals `empty_label` (default `"Empty Droplet"`) are marked empty. If no barcode has that label, CellSweep will infer empty droplets using the `empty_droplet_method` argument.
 
 If a column is provided in any part of `adata`, then it will take priority over default internal calculations. For example, if `adata.obs[is_empty_key]` is provided, then CellSweep will not infer empty droplets and will use the provided column instead.
 
