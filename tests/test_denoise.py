@@ -6,6 +6,7 @@ import scipy.sparse as sp
 import sys
 from cellsweep import denoise
 from cellsweep.model import infer_celltype_profile
+from cellsweep.utils.data_utils import infer_empty_droplets
 
 # -----------------------
 # Fixtures
@@ -104,6 +105,88 @@ def test_is_empty_column_takes_priority_over_label(small_adata):
     small_adata.obs["is_empty"] = [False, False, True, True]
     out = denoise(small_adata, keep_empties=True, max_iter=2, verbose=-1, quiet=True)
     assert out.obs["is_empty"].tolist() == [False, False, True, True]
+
+
+# -----------------------
+# infer_empty_droplets
+# -----------------------
+@pytest.fixture
+def droplet_adata():
+    """Barcodes with total UMIs of 100, 50, 10, and 1."""
+    X = np.array([[100, 0], [25, 25], [5, 5], [1, 0]])
+    return ad.AnnData(X=X, var=pd.DataFrame(index=["g1", "g2"]))
+
+
+@pytest.fixture
+def auto_detection_forbidden(monkeypatch):
+    """Fail if either automatic cutoff detection runs."""
+    def fail(*args, **kwargs):
+        raise AssertionError("automatic cutoff detection should not run")
+
+    monkeypatch.setattr("cellsweep.utils.data_utils.get_umi_cutoff_from_kneed", fail)
+    monkeypatch.setattr("cellsweep.utils.data_utils.get_umi_cutoff_from_adata", fail)
+
+
+@pytest.mark.parametrize("method", ["kneed", "mx_filter", "manual", "threshold"])
+def test_infer_empty_droplets_expected_cells(droplet_adata, auto_detection_forbidden, method):
+    out = infer_empty_droplets(droplet_adata, method=method, expected_cells=2, quiet=True)
+    assert out.obs["is_empty"].tolist() == [False, False, True, True]
+
+
+@pytest.mark.parametrize("method", ["kneed", "mx_filter", "manual", "threshold"])
+def test_infer_empty_droplets_umi_cutoff_beats_expected_cells(droplet_adata, auto_detection_forbidden, method):
+    out = infer_empty_droplets(droplet_adata, method=method, umi_cutoff=10, expected_cells=1, quiet=True)
+    assert out.obs["is_empty"].tolist() == [False, False, False, True]
+
+
+@pytest.mark.parametrize(
+    "kwargs, detector",
+    [
+        ({}, "get_umi_cutoff_from_kneed"),  # kneed is the default
+        ({"method": "kneed"}, "get_umi_cutoff_from_kneed"),
+        ({"method": "mx_filter"}, "get_umi_cutoff_from_adata"),
+    ],
+)
+def test_infer_empty_droplets_automatic_detection(droplet_adata, monkeypatch, kwargs, detector):
+    monkeypatch.setattr(f"cellsweep.utils.data_utils.{detector}", lambda *a, **kw: 50)
+    out = infer_empty_droplets(droplet_adata, quiet=True, **kwargs)
+    assert out.obs["is_empty"].tolist() == [False, False, True, True]
+
+
+@pytest.mark.parametrize("method", ["manual", "threshold"])
+def test_infer_empty_droplets_manual_requires_cutoff(droplet_adata, method):
+    with pytest.raises(ValueError, match="requires either umi_cutoff or expected_cells"):
+        infer_empty_droplets(droplet_adata, method=method, quiet=True)
+
+
+def test_infer_empty_droplets_kneed_finds_knee():
+    rng = np.random.default_rng(0)
+    n_cells = 2000
+    totals = np.concatenate([rng.lognormal(np.log(5000), 0.4, n_cells), rng.lognormal(np.log(30), 0.6, 50000)]).round()
+    adata = ad.AnnData(X=sp.csr_matrix(totals.reshape(-1, 1)))
+    out = infer_empty_droplets(adata, quiet=True)
+    assert 0.5 * n_cells < (~out.obs["is_empty"]).sum() < 2 * n_cells
+
+
+def test_infer_empty_droplets_kneed_no_knee_raises():
+    adata = ad.AnnData(X=np.array([[1.0], [2.0], [3.0]]))  # all at or below min_counts
+    with pytest.raises(ValueError, match="Could not detect a knee"):
+        infer_empty_droplets(adata, quiet=True)
+
+
+def test_infer_empty_droplets_mx_filter_without_sklearn(droplet_adata, monkeypatch):
+    monkeypatch.setitem(sys.modules, "sklearn.mixture", None)  # makes the import raise ImportError
+    with pytest.raises(ImportError, match=r"cellsweep\[analysis\]"):
+        infer_empty_droplets(droplet_adata, method="mx_filter", quiet=True)
+
+    # a manual cutoff does not need scikit-learn
+    out = infer_empty_droplets(droplet_adata, method="mx_filter", expected_cells=2, quiet=True)
+    assert out.obs["is_empty"].tolist() == [False, False, True, True]
+
+
+def test_infer_empty_droplets_invalid_method(droplet_adata):
+    with pytest.raises(ValueError, match="Invalid method"):
+        infer_empty_droplets(droplet_adata, method="nope", umi_cutoff=10, quiet=True)
 
 
 # -----------------------
@@ -271,6 +354,27 @@ def test_cli_keep_empties_flag(monkeypatch):
     main()
 
     assert calls["keep_empties"] is True
+
+
+@pytest.mark.parametrize(
+    "extra_args, expected",
+    [
+        ([], "kneed"),
+        (["--empty-droplet-method", "kneed"], "kneed"),
+        (["--empty-droplet-method", "mx_filter"], "mx_filter"),
+        (["--empty-droplet-method", "manual", "--umi-cutoff", "100"], "manual"),
+    ],
+)
+def test_cli_empty_droplet_method(monkeypatch, extra_args, expected):
+    from cellsweep.main import main
+
+    calls = {}
+    monkeypatch.setattr("cellsweep.main.denoise", lambda **kwargs: calls.update(kwargs))
+    monkeypatch.setattr(sys, "argv", ["cellsweep", "denoise", "in.h5ad", "-o", "out.h5ad", *extra_args])
+
+    main()
+
+    assert calls["empty_droplet_method"] == expected
 
 
 def test_python_denoise_alias():

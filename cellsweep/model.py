@@ -35,7 +35,7 @@ def _ensure_is_empty(adata, celltype_key, is_empty_key, empty_label, empty_dropl
 
 
 #* Take the mean expression of each gene across all cells of a given cell type, and normalize to sum to 1.
-def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="threshold", umi_cutoff=None, expected_cells=None, is_empty_key="is_empty", celltype_profile_key="celltype_profile", verbose=0, quiet=False, logger=None, empty_label="Empty Droplet"):
+def infer_celltype_profile(adata, celltype_key="celltype", empty_droplet_method="kneed", umi_cutoff=None, expected_cells=None, is_empty_key="is_empty", celltype_profile_key="celltype_profile", verbose=0, quiet=False, logger=None, empty_label="Empty Droplet"):
     """
     input: adata with adata.obs: is_empty (optional), celltype
     output: adata with adata.obs: is_empty, celltype, and adata.uns: celltype_profile, celltype_names, celltype_profile_genes
@@ -633,7 +633,7 @@ def denoise(
     keep_empties: bool = False,
     threads: Annotated[int, Field(gt=0)] = 1,
     freeze_ambient_profile: bool = True,
-    empty_droplet_method: Optional[str] = "threshold",
+    empty_droplet_method: Optional[str] = "kneed",
     umi_cutoff: Optional[Annotated[int, Field(ge=0)]] = None,
     expected_cells: Optional[Annotated[int, Field(ge=0)]] = None,
     random_state: Optional[Annotated[int, Field(ge=0)]] = 42,
@@ -709,15 +709,18 @@ def denoise(
         mixture of cell-type profiles and its mixture weights are updated during training.
         Empty droplets always have alpha fixed at 1 (ambient + bulk only).
 
-    empty_droplet_method : str, default "threshold"
+    empty_droplet_method : str, default "kneed"
         Strategy to infer non-cellular barcodes if `adata.obs[is_empty_key]` is not present.
-        Options include "threshold" or "mx_filter".
+        "kneed" and "mx_filter" detect the UMI cutoff automatically ("mx_filter" requires
+        scikit-learn). "manual" requires `umi_cutoff` or `expected_cells`, and is selected
+        automatically when either is given.
 
     umi_cutoff : int | None, default None
-        Optional absolute UMI count threshold for classifying droplets as empty.
+        Optional absolute UMI count threshold for classifying droplets as empty. Takes
+        precedence over `expected_cells`.
 
     expected_cells : int | None, default None
-        Expected number of real cells, used when estimating thresholds.
+        Expected number of real cells, used to set the UMI cutoff when `umi_cutoff` is not given.
 
     random_state: int | None, default 42
         Random seed for stochastic rounding. Only necessary if `round_X=True`.

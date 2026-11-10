@@ -5,10 +5,10 @@ import numpy as np
 import urllib.request
 import tarfile
 from scipy import io, sparse
-from scipy.ndimage import gaussian_filter1d
 from scipy.stats import entropy
 import anndata as ad
 import pandas as pd
+from kneed import KneeLocator
 from .logger_utils import setup_logger
 
 def take_adata_cell_gene_intersection(adata1, adata2):
@@ -51,10 +51,10 @@ def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, 
 
     #* empty droplet filtering
     if filter_empty_droplets:
-        logger.info(f"Filtering empty droplets using 'infer_empty_droplets' function with method 'threshold'. This is done by calculating the total UMI counts for each cell and removing those that fall below a certain threshold, which helps to eliminate empty droplets that do not contain any cells.")
+        logger.info(f"Filtering empty droplets using 'infer_empty_droplets' function. This is done by calculating the total UMI counts for each cell and removing those that fall below a certain threshold, which helps to eliminate empty droplets that do not contain any cells.")
         if "is_empty" not in adata.obs.columns:
             logger.info(f"'is_empty' column not found in adata.obs. Using 'infer_empty_droplets' function to identify empty droplets.")
-            adata = infer_empty_droplets(adata, method="threshold", umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet, logger=logger)
+            adata = infer_empty_droplets(adata, umi_cutoff=umi_cutoff, expected_cells=expected_cells, verbose=verbose, quiet=quiet, logger=logger)
         adata = adata[~adata.obs["is_empty"]].copy()
         logger.info(f"After filtering empty droplets, adata shape: {adata.shape}")
     
@@ -146,35 +146,50 @@ def run_scanpy_preprocessing_and_clustering(adata, filter_empty_droplets=False, 
     logger.info(f"Done!")
     return adata
 
-valid_empty_droplet_methods = {"threshold", "mx_filter"}
-def infer_empty_droplets(adata, method="threshold", umi_cutoff=None, expected_cells=None, is_empty_key="is_empty", verbose=0, quiet=False, logger=None):
+valid_empty_droplet_methods = {"kneed", "mx_filter", "manual"}
+def infer_empty_droplets(adata, method="kneed", umi_cutoff=None, expected_cells=None, is_empty_key="is_empty", verbose=0, quiet=False, logger=None):
     """
     input: adata
 
     output: adata with adata.obs[is_empty_key] (default "is_empty")
 
-      - is_empty: boolean indicating whether each cell is an empty droplet or not. This is inferred using a simple heuristic: if the total counts for a cell are below a certain threshold (e.g., 100), it is considered an empty droplet. This threshold can be adjusted based on the dataset and expected cell types.
+      - is_empty: boolean indicating whether each cell is an empty droplet or not. A barcode is empty if its total counts are below a UMI cutoff.
+
+    The cutoff comes from `method`:
+      - "kneed" (default): automatic knee detection on the barcode rank curve.
+      - "mx_filter": automatic two-component Gaussian mixture on log counts. Requires scikit-learn.
+      - "manual": uses umi_cutoff, or else the cutoff implied by expected_cells. One of them is required.
+
+    Passing umi_cutoff or expected_cells always selects "manual", and umi_cutoff takes precedence over expected_cells.
     """
     if not logger:
         logger = setup_logger(verbose=verbose, quiet=quiet)
     # adata = adata.copy()
-    if method == "threshold":
+    if method == "threshold":  # former name of "manual", still used by older scripts
+        logger.warning("empty droplet method 'threshold' has been renamed to 'manual'.")
+        method = "manual"
+    if method not in valid_empty_droplet_methods:
+        raise ValueError(f"Invalid method {method!r} for inferring empty droplets. Valid methods are: {valid_empty_droplet_methods}")
+
+    if umi_cutoff is not None or expected_cells is not None:
+        method = "manual"
+
+    if method == "manual":
         if umi_cutoff is None:
             if expected_cells is None:
-                # raise ValueError("For method 'threshold', either umi_cutoff or expected_cells must be provided.")
-                logger.warning("Expected cells and UMI cutoff being determined automatically. This is still experimental. To determine manually, please provide either expected_cells or umi_cutoff as a parameter.")
-                expected_cells, umi_cutoff = automatic_umi_cutoff_detection(adata)
-            else:
-                umi_cutoff = determine_cutoff_umi_for_expected_cells(adata, expected_cells)
-        adata.obs[is_empty_key] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
+                raise ValueError("Empty droplet method 'manual' requires either umi_cutoff or expected_cells.")
+            umi_cutoff = determine_cutoff_umi_for_expected_cells(adata, expected_cells)
+    elif method == "kneed":
+        umi_cutoff = get_umi_cutoff_from_kneed(adata)
     elif method == "mx_filter":
-        if umi_cutoff is None:
-            logger.warning("UMI cutoff being determined automatically using mx_filter method. To determine manually, please provide umi_cutoff as a parameter.")
-            umi_cutoff = get_umi_cutoff_from_adata(adata, sum_axis=1, comps=[2], select_axis=None)
-        adata.obs[is_empty_key] = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
+        umi_cutoff = get_umi_cutoff_from_adata(adata, sum_axis=1, comps=[2], select_axis=None)
     #!!! add more methods here
-    else:
-        raise ValueError(f"Invalid method {method!r} for inferring empty droplets. Valid methods are: {valid_empty_droplet_methods}")
+
+    is_empty = np.ravel(adata.X.sum(axis=1)) < umi_cutoff
+    adata.obs[is_empty_key] = is_empty
+
+    if method != "manual":
+        logger.warning(f"Empty droplets determined automatically with method {method!r}: UMI cutoff {umi_cutoff:g}, {int((~is_empty).sum())} barcodes called as cells. Automatic detection can be off by several fold. Please check these values against your experiment, and provide either expected_cells or umi_cutoff to set the cutoff manually.")
 
     return adata
 
@@ -198,7 +213,7 @@ def determine_cell_types(adata, method="celltypist", filter_empty=True, empty_co
         logger.info(f"Filtering empty droplets using column '{empty_column}' in adata.obs. If this column is not present, it will be inferred using method '{method}' with umi_cutoff={umi_cutoff} and expected_cells={expected_cells}.")
         if empty_column not in adata.obs.columns:
             logger.info(f"'{empty_column}' column not found in adata.obs. Inferring empty droplets using method '{method}' with umi_cutoff={umi_cutoff} and expected_cells={expected_cells}.")
-            adata = infer_empty_droplets(adata, method="threshold", umi_cutoff=umi_cutoff, expected_cells=expected_cells, is_empty_key=empty_column, verbose=verbose, quiet=quiet)
+            adata = infer_empty_droplets(adata, umi_cutoff=umi_cutoff, expected_cells=expected_cells, is_empty_key=empty_column, verbose=verbose, quiet=quiet)
         real_mask = ~adata.obs[empty_column].astype(bool)
         adata_real = adata[real_mask].copy()
     else:
@@ -435,25 +450,21 @@ def matrices_equal(A, B):
     # Case 3: dense arrays
     return np.array_equal(A, B)
 
-def automatic_umi_cutoff_detection(adata, min_counts=10):
-    counts = np.sort(np.ravel(adata.X.sum(axis=1)))[::-1]
-    counts = counts[counts > min_counts]
-    ranks = np.arange(1, len(counts) + 1)
+def get_umi_cutoff_from_kneed(adata, min_counts=10):
+    """Return the UMI total at the knee of the barcode rank curve, on linear axes."""
+    totals = np.ravel(adata.X.sum(axis=1))
+    totals = totals[totals > min_counts]
 
-    x = ranks  # np.log10(ranks)
-    y = np.log10(counts)
+    # one point per distinct UMI total, at the last rank holding that total
+    umis, n_barcodes = np.unique(totals, return_counts=True)
+    umis = umis[::-1]
+    ranks = np.cumsum(n_barcodes[::-1])
 
-    # smooth to reduce noise in tail
-    y_smooth = gaussian_filter1d(y, sigma=2)
-
-    # second derivative
-    d2 = np.gradient(np.gradient(y_smooth, x), x)
-
-    knee_idx = np.argmin(d2)   # most negative curvature
-    knee_rank_barcode = ranks[knee_idx]
-    knee_count_umi = counts[knee_idx]
-
-    return knee_rank_barcode, knee_count_umi
+    # online=True keeps searching past the first knee, which can sit among the top few barcodes
+    cutoff = KneeLocator(ranks, umis, curve="convex", direction="decreasing", online=True).knee_y if umis.size > 1 else None
+    if cutoff is None:
+        raise ValueError("Could not detect a knee in the barcode rank curve. Please provide either umi_cutoff or expected_cells.")
+    return cutoff
 
 
 def normalize_by_median_gene_expression(adata, layer=None, min_genes=None, min_cells=None, normalize=True, nonzero=True):
@@ -563,7 +574,10 @@ def normalize_by_median_gene_expression(adata, layer=None, min_genes=None, min_c
 
 
 def gmm(x, v, comps):
-    from sklearn.mixture import GaussianMixture
+    try:
+        from sklearn.mixture import GaussianMixture
+    except ImportError:
+        raise ImportError("scikit-learn is required for automatic cutoff detection with empty_droplet_method='mx_filter'. Please install scikit-learn, reinstall cellsweep with pip install cellsweep[analysis], or provide umi_cutoff or expected_cells.")
     n_comps = comps.pop(0)
 
     gm = GaussianMixture(n_components=n_comps, random_state=42)

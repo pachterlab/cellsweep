@@ -15,8 +15,10 @@ The input AnnData object (or `.h5ad` file) should have the following structure.
 : Boolean column marking non-cellular barcodes (empty droplets). If missing, barcodes
   whose cell-type label equals the `empty_label` argument (default `"Empty Droplet"`) are
   marked empty. Barcodes with a missing label are not. If no barcode has that label,
-  CellSweep infers them with the `empty_droplet_method` argument, using `umi_cutoff` or
-  `expected_cells` if given.
+  CellSweep infers them from a UMI cutoff. If `umi_cutoff` or `expected_cells` is given, it
+  sets the cutoff. Otherwise the cutoff is detected automatically with the
+  `empty_droplet_method` argument (`"kneed"` by default, or `"mx_filter"`). Automatic
+  detection can be off by several fold, so providing one of these values is recommended.
 
 `adata.obs["init_alpha"]` *(optional)*
 : Initial estimate of each cell's ambient contamination fraction. If missing, the

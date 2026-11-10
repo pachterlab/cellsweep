@@ -2193,7 +2193,7 @@ def detect_doublets_human_mouse(adata_raw, fraction_doublet=0.15, plot_empty=Fal
     
     adata_raw_original = adata_raw.copy()
     if not plot_empty and "is_empty" not in adata_raw.obs.columns:
-        adata_raw = infer_empty_droplets(adata_raw, method="threshold", umi_cutoff=umi_cutoff, expected_cells=expected_cells)  # adds adata.obs["is_empty"]
+        adata_raw = infer_empty_droplets(adata_raw, umi_cutoff=umi_cutoff, expected_cells=expected_cells)  # adds adata.obs["is_empty"]
         adata_raw = adata_raw[~adata_raw.obs["is_empty"]].copy()
     
     if "hg19_total_counts" not in adata_raw.obs.columns:

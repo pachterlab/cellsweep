@@ -89,9 +89,9 @@ def build_parser():
     parser_denoise.add_argument(
         "--empty-droplet-method",
         type=str,
-        default="threshold",
-        choices=["threshold"],
-        help="Strategy to infer empty droplets if `is_empty` is not present."
+        default="kneed",
+        choices=["kneed", "mx_filter", "manual"],
+        help="Strategy to infer empty droplets if `is_empty` is not present. kneed and mx_filter detect the UMI cutoff automatically (mx_filter requires scikit-learn). manual requires --umi-cutoff or --expected-cells, and is selected automatically when either is given."
     )
     parser_denoise.add_argument(
         "--umi-cutoff",
